@@ -1,6 +1,6 @@
 // Manages application instance and the message loop
 
-use super::error::{Result, UiError};
+use super::error::Result;
 use windows::{
     Win32::{
         Foundation::{HINSTANCE, HWND},
@@ -32,7 +32,7 @@ impl App {
             // HWND::default() (which is HWND(0)) means retrieve messages for any window
             // belonging to the current thread.
             while GetMessageW(&mut msg, Some(HWND::default()), 0, 0).as_bool() {
-                TranslateMessage(&msg);
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
         }

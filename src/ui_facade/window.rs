@@ -5,10 +5,10 @@ use super::error::{Result, UiError};
 use std::ffi::c_void;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT, UpdateWindow},
         Graphics::Gdi::{COLOR_WINDOW, HBRUSH},
-        UI::WindowsAndMessaging::{GWLP_USERDATA},
-        Graphics::Gdi::{PAINTSTRUCT, BeginPaint, EndPaint, UpdateWindow},
+        UI::WindowsAndMessaging::GWLP_USERDATA,
         UI::WindowsAndMessaging::*,
     },
     core::{HSTRING, PCWSTR, w},
@@ -30,8 +30,8 @@ pub struct Window {
 impl Window {
     pub fn show(&self) {
         unsafe {
-            ShowWindow(self.hwnd, SW_SHOWDEFAULT);
-            UpdateWindow(self.hwnd); // Ensure WM_PAINT is sent if needed
+            let _ = ShowWindow(self.hwnd, SW_SHOWDEFAULT);
+            let _ = UpdateWindow(self.hwnd); // Ensure WM_PAINT is sent if needed
         }
     }
     // Add more methods like set_title, add_control etc. later
@@ -202,9 +202,9 @@ extern "system" fn facade_wnd_proc(
                             // Basic WM_PAINT handling, can be expanded with a callback
                             println!("WM_PAINT for HWND {:?}", hwnd);
                             let mut ps = PAINTSTRUCT::default();
-                            let hdc = BeginPaint(hwnd, &mut ps);
+                            let _hdc = BeginPaint(hwnd, &mut ps);
                             // FillRect(hdc, &ps.rcPaint, HBRUSH((COLOR_WINDOW.0 + 1) as isize)); // Example
-                            EndPaint(hwnd, &ps);
+                            let _ = EndPaint(hwnd, &ps);
                             return LRESULT(0);
                         }
                         // Handle other messages like WM_COMMAND, WM_NOTIFY, WM_SIZE etc.

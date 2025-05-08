@@ -5,7 +5,6 @@ use windows::core::Error as WinError;
 #[derive(Debug)]
 pub enum UiError {
     Win32(WinError),
-    Initialization(&'static str),
     WindowCreationFailed,
     ClassRegistrationFailed,
     // Add more specific errors as the facade grows
@@ -23,7 +22,6 @@ impl std::fmt::Display for UiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             UiError::Win32(e) => write!(f, "Win32 Error: {}", e),
-            UiError::Initialization(s) => write!(f, "Initialization Error: {}", s),
             UiError::WindowCreationFailed => write!(f, "Window creation failed"),
             UiError::ClassRegistrationFailed => write!(f, "Window class registration failed"),
         }
