@@ -1,109 +1,39 @@
-// P0.3: Basic main.rs and Window
+// Declare the ui_facade module
+mod ui_facade;
 
-#![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
+// Use the facade's components
+use ui_facade::{App, UiResult, WindowBuilder};
+// Still need PostQuitMessage for the on_destroy callback
+use windows::Win32::UI::WindowsAndMessaging::PostQuitMessage;
 
-use std::ffi::c_void;
-use windows::{
-    Win32::{
-        Foundation::{GetLastError, HMODULE, HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::{
-            BeginPaint,
-            COLOR_WINDOW, // Moved here and accessed as COLOR_WINDOW.0
-            EndPaint,
-            /*FillRect, GetStockObject,*/ HBRUSH,
-            PAINTSTRUCT, /*WHITE_BRUSH,*/
-        },
-        System::LibraryLoader::GetModuleHandleW,
-        UI::WindowsAndMessaging::*, // For CS_*, WS_*, IDI_*, IDC_*, WM_*, etc.
-    },
-    core::*,
-};
+fn main() -> UiResult<()> {
+    // main now returns the facade's Result type
+    // 1. Initialize the application facade
+    let app = App::new()?;
+    println!("App instance: {:?}", app.instance);
 
-fn main() -> Result<()> {
-    unsafe {
-        let instance = GetModuleHandleW(None)?;
-        let hinstance: HMODULE = instance.into();
-
-        let window_class_name = w!("SourcePackerWindowClass");
-
-        let wc = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
-            lpfnWndProc: Some(wnd_proc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: hinstance.into(), // Corrected: HMODULE to HINSTANCE
-            hIcon: LoadIconW(None, IDI_APPLICATION)?,
-            hCursor: LoadCursorW(None, IDC_ARROW)?,
-            // COLOR_WINDOW is SYS_COLOR_INDEX(u32), access its value with .0
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void),
-            lpszMenuName: PCWSTR::null(),
-            lpszClassName: window_class_name,
-            hIconSm: LoadIconW(None, IDI_APPLICATION)?,
-        };
-
-        let atom = RegisterClassExW(&wc);
-        if atom == 0 {
-            println!(
-                "Failed to register window class. Error: {:?}",
-                GetLastError()
-            );
-            return Err(Error::from_win32());
-        }
-
-        // CreateWindowExW in recent windows-rs returns Result<HWND, Error>
-        // Use '?' to propagate error or get the HWND
-        let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            window_class_name,
-            w!("SourcePacker - Basic Window"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            800,
-            600,
-            None,                   // Parent window: None for top-level
-            None,                   // Menu: None for no menu
-            Some(hinstance.into()), // Corrected: Option<HINSTANCE>
-            None,
-        )?; // This '?' handles the Result from CreateWindowExW
-
-        // The ShowWindow and UpdateWindow calls are not strictly necessary
-        // if WS_VISIBLE is used in CreateWindowExW and if the system
-        // sends an initial WM_PAINT, but they don't hurt.
-        // ShowWindow(hwnd, SW_SHOWDEFAULT);
-        // UpdateWindow(hwnd)?;
-
-        let mut msg = MSG::default();
-        // HWND::default() for GetMessageW means messages for any window on this thread
-        while GetMessageW(&mut msg, Some(HWND::default()), 0, 0).as_bool() {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-    Ok(())
-}
-
-extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    unsafe {
-        match msg {
-            WM_DESTROY => {
-                println!("WM_DESTROY received");
-                PostQuitMessage(0);
-                LRESULT(0)
+    // 2. Use the WindowBuilder to configure and create the main window
+    let main_window = WindowBuilder::new(app)
+        .title("SourcePacker - UI Facade")
+        .size(800, 600) // Explicit size
+        .on_destroy(|| {
+            // This callback is executed when WM_DESTROY is received
+            println!("Main window on_destroy callback: Quitting application.");
+            unsafe {
+                PostQuitMessage(0); // Signal the message loop to terminate
             }
-            WM_PAINT => {
-                println!("WM_PAINT received");
-                let mut ps = PAINTSTRUCT::default();
-                let _hdc = BeginPaint(hwnd, &mut ps); // Prefix with _ if not used yet
+        })
+        .build()?; // This creates the window
 
-                // Example: FillRect(...) would go here if uncommented
-                // and FillRect, GetStockObject, WHITE_BRUSH were used.
+    println!("Window HWND: {:?}", main_window.hwnd);
 
-                EndPaint(hwnd, &ps);
-                LRESULT(0)
-            }
-            _ => DefWindowProcW(hwnd, msg, wparam, lparam),
-        }
-    }
+    // 3. Show the window
+    main_window.show();
+
+    // 4. Run the application's message loop
+    println!("Running app loop...");
+    let run_result = app.run();
+    println!("App loop exited.");
+
+    run_result // Return the result of the app run
 }
