@@ -1,4 +1,4 @@
-// Declare the ui_facade module
+mod core;
 mod ui_facade;
 
 // Use the facade's components
