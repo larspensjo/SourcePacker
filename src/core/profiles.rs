@@ -1,5 +1,3 @@
-// src/core/profiles.rs
-
 use super::models::Profile; // Using Profile from the parent 'core' module's re-export
 use directories::ProjectDirs;
 use serde_json;

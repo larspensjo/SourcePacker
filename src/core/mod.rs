@@ -1,6 +1,7 @@
 pub mod file_system;
 pub mod models;
 pub mod profiles;
+pub mod state_manager;
 
 // Re-export
 pub use file_system::scan_directory;
@@ -14,3 +15,5 @@ pub use profiles::{
     load_profile,
     save_profile,
 };
+
+pub use state_manager::{apply_profile_to_tree, update_folder_selection};
