@@ -1,3 +1,4 @@
+pub mod archiver;
 pub mod file_system;
 pub mod models;
 pub mod profiles;
@@ -16,4 +17,5 @@ pub use profiles::{
     save_profile,
 };
 
+pub use archiver::create_archive_content;
 pub use state_manager::{apply_profile_to_tree, update_folder_selection};
