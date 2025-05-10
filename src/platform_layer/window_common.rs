@@ -5,7 +5,7 @@ use super::types::{AppEvent, CheckState, PlatformCommand, WindowId}; // For even
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM, ERROR_INVALID_WINDOW_HANDLE},
         Graphics::Gdi::{BeginPaint, COLOR_WINDOW, EndPaint, FillRect, HBRUSH, PAINTSTRUCT}, // For basic painting
         System::SystemServices::IMAGE_DOS_HEADER, // Used to get base address for HINSTANCE
         UI::WindowsAndMessaging::*,
@@ -265,23 +265,73 @@ impl Win32ApiInternalState {
                     }
                 }
             }
+
             WM_CLOSE => {
                 println!(
                     "Platform: WM_CLOSE for HWND {:?}, WindowId {:?}",
                     hwnd, window_id
                 );
-                app_event_to_send = Some(AppEvent::WindowCloseRequested { window_id });
-                // Default behavior: if no event handler or it doesn't stop it, we destroy.
-                // Here, we just send the event. AppLogic must send CloseWindow command
-                // which should then call DestroyWindow.
-                // If app_logic doesn't handle it/send CloseWindow, nothing happens yet.
-                // A more robust system: if app_event_to_send is handled and NO CloseWindow command
-                // is returned, then we DON'T call DestroyWindow.
-                // For now, we assume AppLogic will send CloseWindow if it wants to proceed.
-                // Let's change this: if WindowCloseRequested isn't "vetoed" by app logic returning
-                // a specific command to *not* close, then proceed to destroy.
-                // For now, the platform will *not* destroy on WM_CLOSE by default. AppLogic must command it.
+                let close_requested_event = AppEvent::WindowCloseRequested { window_id };
+                let mut commands_from_app_logic = Vec::new(); // To store commands from AppLogic
+
+                // Immediately process the event and get commands from AppLogic
+                if let Some(handler) = event_handler_opt {
+                    if let Ok(mut handler_guard) = handler.lock() {
+                        // Get commands from AppLogic in response to WindowCloseRequested
+                        commands_from_app_logic = handler_guard.handle_event(close_requested_event);
+                    } else {
+                        eprintln!("Platform: Failed to lock event handler during WM_CLOSE.");
+                    }
+                } else {
+                    eprintln!("Platform: Event handler not available during WM_CLOSE.");
+                }
+
+                // Now, check if AppLogic actually commanded the window to close
+                let mut app_logic_confirmed_close = false;
+                for cmd in commands_from_app_logic { // Iterate over the received commands
+                    if let PlatformCommand::CloseWindow { window_id: cmd_window_id } = cmd {
+                        if cmd_window_id == window_id {
+                            app_logic_confirmed_close = true;
+                            // We don't need to process other commands here if we're destroying.
+                            // If other commands ARE important even on close, this logic would need adjustment
+                            // or those commands should be queued differently.
+                            break;
+                        }
+                    }
+                    // If AppLogic returns other commands besides CloseWindow, they are currently ignored here.
+                    // If they need processing even if window isn't closing, this structure would need change.
+                    // For WM_CLOSE, the primary decision is "to destroy or not to destroy".
+                }
+
+                if app_logic_confirmed_close {
+                    println!("Platform: AppLogic confirmed close for WindowId {:?}. Calling DestroyWindow directly.", window_id);
+                    // AppLogic agrees, so we initiate the destruction.
+                    // DestroyWindow will eventually lead to WM_DESTROY.
+                    unsafe {
+                        // Calling DestroyWindow here.
+                        // The fixed destroy_native_window is not called directly from here,
+                        // because this is the point of decision.
+                        if DestroyWindow(hwnd).is_err() {
+                            let err = GetLastError();
+                            // ERROR_INVALID_WINDOW_HANDLE (1400) can happen if, for some reason,
+                            // it was already destroyed between WM_CLOSE and this call.
+                            if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
+                                eprintln!("DestroyWindow call directly from WM_CLOSE failed for {:?}. Error: {:?}", window_id, err);
+                            }
+                        }
+                    }
+                } else {
+                    println!("Platform: AppLogic did not command CloseWindow for WindowId {:?}. Window will not close now.", window_id);
+                    // AppLogic does not want to close (e.g., user clicked "Cancel" on a dialog).
+                    // We do nothing to destroy the window.
+                }
+
+                // In both cases (we called DestroyWindow or we didn't based on AppLogic's decision),
+                // we return LRESULT(0) to signify that WM_CLOSE has been fully handled by our application
+                // and the OS should NOT perform its default action (which is to call DestroyWindow).
+                return LRESULT(0);
             }
+
             WM_DESTROY => {
                 println!(
                     "Platform: WM_DESTROY for HWND {:?}, WindowId {:?}",
@@ -290,9 +340,11 @@ impl Win32ApiInternalState {
                 app_event_to_send = Some(AppEvent::WindowDestroyed { window_id });
 
                 // Clean up this window's entry from the internal state.
+                println!("WM_DESTROY: Before call to self.windows.write()");
                 if let Some(mut windows_map_guard) = self.windows.write().ok() {
                     windows_map_guard.remove(&window_id);
                 }
+                println!("WM_DESTROY: Beforfe call to self.decrement_active_windows()");
                 // Decrement active window count. This might trigger PostQuitMessage.
                 self.decrement_active_windows();
             }
@@ -437,32 +489,55 @@ pub(crate) fn destroy_native_window(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.windows.read().ok() {
-        if let Some(window_data) = windows_guard.get(&window_id) {
+    let hwnd_to_destroy: Option<HWND>; // Variable to store HWND outside the lock
+
+    // Scope for the read lock to get the HWND
+    {
+        let windows_read_guard = internal_state.windows.read().map_err(|_| {
+            PlatformError::OperationFailed(
+                "Failed to acquire read lock on windows map for destroy_native_window".into(),
+            )
+        })?; // Get read lock
+
+        hwnd_to_destroy = windows_read_guard.get(&window_id).map(|data| data.hwnd);
+    } // Read lock is released here
+
+    if let Some(hwnd) = hwnd_to_destroy {
+        if !hwnd.is_invalid() {
+            println!(
+                "Platform: Calling DestroyWindow for HWND {:?}, WindowId {:?}",
+                hwnd, window_id
+            );
             unsafe {
-                if DestroyWindow(window_data.hwnd).is_err() {
-                    // DestroyWindow itself might fail if HWND is already invalid,
-                    // but WM_DESTROY and WM_NCDESTROY should still be processed by the system.
-                    eprintln!(
-                        "DestroyWindow call failed for {:?}, HWND possibly already invalid. Error: {:?}",
-                        window_id,
-                        GetLastError()
-                    );
+                // DestroyWindow sends WM_DESTROY then WM_NCDESTROY.
+                // Our WndProc handles removal from map and decrementing count in WM_DESTROY.
+                if DestroyWindow(hwnd).is_err() {
+                    let err = GetLastError();
+                    if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
+                        eprintln!(
+                            "DestroyWindow call failed for {:?}. Error: {:?}",
+                            window_id, err
+                        );
+                    } else {
+                        println!(
+                            "DestroyWindow call for {:?} reported invalid handle, likely already destroyed.",
+                            window_id
+                        );
+                    }
                 }
             }
-            // The actual removal from map and decrementing count happens in WM_DESTROY.
-            Ok(())
         } else {
-            // Window might have already been destroyed and removed.
             println!(
-                "Platform: WindowId {:?} not found for destroy_native_window, likely already processed.",
+                "Platform: Attempted to destroy an invalid HWND for WindowId {:?}",
                 window_id
             );
-            Ok(())
         }
+        Ok(())
     } else {
-        Err(PlatformError::OperationFailed(
-            "Failed to acquire read lock on windows map for destroy".into(),
-        ))
+        println!(
+            "Platform: WindowId {:?} not found for destroy_native_window, likely already processed.",
+            window_id
+        );
+        Ok(()) // Not an error if already gone
     }
 }

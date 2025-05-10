@@ -98,9 +98,17 @@ impl Win32ApiInternalState {
     /// and the application is in a quitting state.
     pub(crate) fn decrement_active_windows(&self) {
         let prev_count = self.active_windows_count.fetch_sub(1, Ordering::Relaxed);
-        if prev_count == 1 && self.is_quitting.load(Ordering::Relaxed) == 1 {
-            // Last window closed and we are trying to quit
-            println!("Platform: Last active window closed, posting WM_QUIT.");
+        println!(
+            "Platform: Active window count decremented, was {}, now {}.",
+            prev_count,
+            prev_count - 1
+        );
+
+        // If this was the last window, always post WM_QUIT.
+        // The is_quitting flag can be for more explicit "application quit" commands
+        // that might close all windows.
+        if prev_count == 1 {
+            println!("Platform: Last active window closed (or being destroyed), posting WM_QUIT.");
             unsafe { PostQuitMessage(0) };
         }
     }
