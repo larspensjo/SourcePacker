@@ -76,7 +76,17 @@ pub enum AppEvent {
         item_id: TreeItemId,
         new_state: CheckState,
     },
-    // Future: ButtonClicked, MenuAction, KeyPressed, etc.
+    /// Signals that a button was clicked.
+    ButtonClicked {
+        window_id: WindowId,
+        control_id: i32, // Using the raw control ID for now
+    },
+    /// Signals the result of a "Save File" dialog.
+    FileSaveDialogCompleted {
+        window_id: WindowId,
+        result: Option<std::path::PathBuf>, // Some(path) if successful, None if cancelled
+    },
+    // Future: MenuAction, KeyPressed, etc.
 }
 
 // --- Commands from App Logic to Platform ---
@@ -105,6 +115,14 @@ pub enum PlatformCommand {
         window_id: WindowId,
         item_id: TreeItemId,
         new_state: CheckState,
+    },
+    /// Shows a native "Save File" dialog.
+    ShowSaveFileDialog {
+        window_id: WindowId,
+        title: String,
+        default_filename: String,
+        /// Example: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
+        filter_spec: String,
     },
     // Future: CreateControl, ShowDialog, etc.
 }

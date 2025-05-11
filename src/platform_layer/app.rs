@@ -5,23 +5,37 @@ use super::window_common; // For window creation and WndProc // For TreeView spe
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE},
+        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM},
         System::{
             Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
             LibraryLoader::GetModuleHandleW,
         },
         UI::{
-            Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
+            Controls::{
+                Dialogs::{
+                    CommDlgExtendedError,
+                    // Corrected path for these
+                    GetSaveFileNameW,
+                    OFN_EXPLORER,
+                    OFN_EXTENSIONDIFFERENT,
+                    OFN_NOCHANGEDIR,
+                    OFN_OVERWRITEPROMPT,
+                    OFN_PATHMUSTEXIST,
+                    OPENFILENAMEW,
+                },
+                ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+            },
             WindowsAndMessaging::{
                 DispatchMessageW, GetMessageW, MSG, PostQuitMessage, TranslateMessage,
             },
         },
     },
-    core::PCWSTR,
+    core::{HSTRING, PCWSTR},
 };
 
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, RwLock, Weak,
     atomic::{AtomicUsize, Ordering},
@@ -104,9 +118,6 @@ impl Win32ApiInternalState {
             prev_count - 1
         );
 
-        // If this was the last window, always post WM_QUIT.
-        // The is_quitting flag can be for more explicit "application quit" commands
-        // that might close all windows.
         if prev_count == 1 {
             println!("Platform: Last active window closed (or being destroyed), posting WM_QUIT.");
             unsafe { PostQuitMessage(0) };
@@ -124,16 +135,10 @@ impl Win32ApiInternalState {
     }
 
     /// Internally processes a list of platform commands.
-    /// This is called from the WndProc after the app logic's event handler returns commands.
-    /// It avoids re-acquiring locks unnecessarily if called from the UI thread.
-    pub fn process_commands_from_event_handler(
-        self: &Arc<Self>, // Takes Arc<Self> just like handle_window_message
-        commands: Vec<PlatformCommand>,
-    ) {
+    /// This is called from the WndProc after the app logic's event handler returns commands,
+    /// or directly after a synchronous operation like a file dialog.
+    pub fn process_commands_from_event_handler(self: &Arc<Self>, commands: Vec<PlatformCommand>) {
         for cmd in commands {
-            // We need to match on the command and call the appropriate
-            // existing helper functions from window_common or control_treeview.
-            // These helpers already take `&Arc<Win32ApiInternalState>`.
             let result = match cmd {
                 PlatformCommand::SetWindowTitle { window_id, title } => {
                     window_common::set_window_title(self, window_id, &title)
@@ -142,8 +147,6 @@ impl Win32ApiInternalState {
                     window_common::show_window(self, window_id, true)
                 }
                 PlatformCommand::CloseWindow { window_id } => {
-                    // This command from AppLogic means "yes, actually destroy the window now"
-                    // It's different from send_close_message which just posts WM_CLOSE.
                     window_common::destroy_native_window(self, window_id)
                 }
                 PlatformCommand::PopulateTreeView { window_id, items } => {
@@ -155,7 +158,20 @@ impl Win32ApiInternalState {
                     new_state,
                 } => control_treeview::update_treeview_item_visual_state(
                     self, window_id, item_id, new_state,
-                ), // Add other commands here as they are implemented
+                ),
+                PlatformCommand::ShowSaveFileDialog {
+                    window_id,
+                    title,
+                    default_filename,
+                    filter_spec,
+                } => {
+                    // This command is handled by PlatformInterface::execute_command directly.
+                    // It's listed here to show it's a valid command, but processing logic is in execute_command.
+                    eprintln!(
+                        "Platform: ShowSaveFileDialog command received in process_commands_from_event_handler, this is unexpected as it should be handled by execute_command directly."
+                    );
+                    Ok(()) // No-op here, handled elsewhere
+                }
             };
 
             if let Err(e) = result {
@@ -170,80 +186,115 @@ impl Win32ApiInternalState {
 
 impl Drop for Win32ApiInternalState {
     fn drop(&mut self) {
-        // Uninitialize COM when the platform state is dropped.
-        // This should happen when the PlatformInterface is dropped, effectively at app exit.
         println!("Platform: Win32ApiInternalState dropped, calling CoUninitialize.");
         unsafe { CoUninitialize() };
     }
 }
 
 /// The primary interface to the platform abstraction layer.
-///
-/// It allows the application logic to create and manage native UI elements
-/// (like windows and controls) and to run the application's main event loop.
-/// This struct encapsulates the platform-specific state and operations.
 pub struct PlatformInterface {
-    /// Holds the internal state of the Win32 platform layer, shared via an Arc.
     internal_state: Arc<Win32ApiInternalState>,
 }
 
 impl PlatformInterface {
-    /// Creates a new instance of the platform interface.
-    ///
-    /// This initializes necessary platform components (like COM and Common Controls)
-    /// and prepares the layer for creating UI elements. It should typically be
-    /// called once at application startup.
-    /// The `app_name_for_class` is used to create a unique window class name.
     pub fn new(app_name_for_class: String) -> PlatformResult<Self> {
         let internal_state = Win32ApiInternalState::new(app_name_for_class)?;
-
-        // Register the window class. This should ideally happen only once.
-        // We pass the Arc'd internal_state to window_common::register_window_class
-        // so it can set it as GWLP_USERDATA for the class if needed, or so that
-        // create_native_window can pass it via lpCreateParams.
         window_common::register_window_class(&internal_state)?;
         println!("Platform: Window class registration attempted during PlatformInterface::new().");
-
         Ok(PlatformInterface { internal_state })
     }
 
-    /// Creates a new native window based on the provided configuration.
-    ///
-    /// The application logic specifies desired properties like title and size.
-    /// The platform layer handles the actual Win32 window creation and returns
-    /// a `WindowId` that the application logic can use to refer to this window.
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_window_id();
-        let hwnd = window_common::create_native_window(
-            &self.internal_state, // Pass Arc<Win32ApiInternalState>
-            window_id,
-            &config.title,
-            config.width,
-            config.height,
-        )?;
 
-        // Store native window data
-        let native_data = window_common::NativeWindowData {
-            hwnd,
+        // 1. Create a PRELIMINARY NativeWindowData and insert it.
+        // The HWND will be HWND(0) initially and updated after CreateWindowExW.
+        // hwnd_button_generate will be updated by WM_CREATE.
+        let preliminary_native_data = window_common::NativeWindowData {
+            hwnd: HWND(std::ptr::null_mut()), // Placeholder, will be updated after creation
             id: window_id,
-            treeview_state: None, // Initially no treeview state
+            treeview_state: None,
+            hwnd_button_generate: None,
         };
         self.internal_state
             .windows
             .write()
-            .unwrap()
-            .insert(window_id, native_data);
+            .map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to lock windows map for preliminary insert".into(),
+                )
+            })?
+            .insert(window_id, preliminary_native_data);
+
+        println!(
+            "Platform: Inserted preliminary NativeWindowData for WindowId {:?}",
+            window_id
+        );
+
+        // 2. Create the native window. WM_CREATE will now find its entry in the map.
+        let hwnd = match window_common::create_native_window(
+            &self.internal_state,
+            window_id,
+            &config.title,
+            config.width,
+            config.height,
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                // If window creation fails, remove the preliminary entry
+                self.internal_state
+                    .windows
+                    .write()
+                    .unwrap()
+                    .remove(&window_id);
+                println!(
+                    "Platform: Removed preliminary NativeWindowData for WindowId {:?} due to creation failure.",
+                    window_id
+                );
+                return Err(e);
+            }
+        };
+
+        println!(
+            "Platform: Native window created with HWND {:?} for WindowId {:?}",
+            hwnd, window_id
+        );
+
+        // 3. Update the HWND in the existing NativeWindowData entry.
+        //    The hwnd_button_generate should have been set by WM_CREATE by now.
+        match self.internal_state.windows.write() {
+            Ok(mut windows_map_guard) => {
+                if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                    window_data.hwnd = hwnd;
+                    println!(
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}.",
+                        window_id, window_data.hwnd_button_generate
+                    );
+                } else {
+                    // This would be a serious issue if the preliminary entry vanished
+                    eprintln!(
+                        "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
+                        window_id
+                    );
+                    return Err(PlatformError::WindowCreationFailed(
+                        "Failed to update HWND for preliminary window data: entry missing"
+                            .to_string(),
+                    ));
+                }
+            }
+            Err(_) => {
+                return Err(PlatformError::OperationFailed(
+                    "Failed to lock windows map for HWND update".into(),
+                ));
+            }
+        }
+
         self.internal_state
             .active_windows_count
             .fetch_add(1, Ordering::Relaxed);
-
         Ok(window_id)
     }
 
-    /// Executes a platform-agnostic command sent by the application logic.
-    ///
-    /// This method translates `PlatformCommand`s into specific native UI operations.
-    /// For example, it can change a window's title, populate a tree view, or show a window.
     pub fn execute_command(&self, command: PlatformCommand) -> PlatformResult<()> {
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
@@ -253,10 +304,6 @@ impl PlatformInterface {
                 window_common::show_window(&self.internal_state, window_id, true)
             }
             PlatformCommand::CloseWindow { window_id } => {
-                // This sends WM_CLOSE. The app logic will then get WindowCloseRequested.
-                // If app logic confirms, it should issue another CloseWindow or similar,
-                // or platform directly proceeds with DestroyWindow in WndProc on WM_CLOSE.
-                // For now, WM_CLOSE directly leads to DestroyWindow in our current WndProc.
                 window_common::send_close_message(&self.internal_state, window_id)
             }
             PlatformCommand::PopulateTreeView { window_id, items } => {
@@ -272,60 +319,153 @@ impl PlatformInterface {
                 item_id,
                 new_state,
             ),
+            PlatformCommand::ShowSaveFileDialog {
+                window_id,
+                title,
+                default_filename,
+                filter_spec,
+            } => self.handle_show_save_file_dialog(window_id, title, default_filename, filter_spec),
         }
     }
 
-    /// Runs the main application event loop.
-    ///
-    /// This method takes control and processes native OS messages. It continuously
-    /// dispatches events to the provided `event_handler` (from the application logic)
-    /// until the application quits. This function will block the current thread.
-    pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
-        // Store a weak reference to the event handler in the internal state
-        // so the WndProc can access it without creating a reference cycle.
-        *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
+    fn handle_show_save_file_dialog(
+        &self,
+        window_id: WindowId,
+        title: String,
+        default_filename: String,
+        filter_spec: String,
+    ) -> PlatformResult<()> {
+        let hwnd_owner = {
+            let windows_guard = self.internal_state.windows.read().map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to acquire read lock for windows map (save dialog)".into(),
+                )
+            })?;
+            windows_guard
+                .get(&window_id)
+                .map(|data| data.hwnd)
+                .ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!(
+                        "WindowId {:?} not found for ShowSaveFileDialog",
+                        window_id
+                    ))
+                })?
+        };
 
-        // Main message loop
-        // This is taken from your original ui_facade/app.rs
+        let mut file_buffer: Vec<u16> = vec![0; 2048]; // MAX_PATH is usually 260, this is generous
+        if !default_filename.is_empty() {
+            let default_name_utf16: Vec<u16> = default_filename.encode_utf16().collect();
+            let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
+            file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
+            // Null termination is handled by the buffer initialization if len_to_copy < file_buffer.len()
+        }
+
+        let title_hstring = HSTRING::from(title);
+        // The filter_spec string from AppLogic should be correctly formatted,
+        // e.g., "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
+        // .encode_utf16() will preserve these nulls.
+        let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
+
+        let mut ofn = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: hwnd_owner,
+            lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
+            nMaxFile: file_buffer.len() as u32,
+            lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
+            lpstrTitle: PCWSTR(title_hstring.as_ptr()),
+            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
+            ..Default::default()
+        };
+
+        let save_result = unsafe { GetSaveFileNameW(&mut ofn) }.as_bool();
+        let mut path_result: Option<PathBuf> = None;
+
+        if save_result {
+            // Find the first null terminator to get the actual length of the path
+            let len = file_buffer
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(file_buffer.len());
+            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
+            path_result = Some(PathBuf::from(path_str));
+            println!(
+                "Platform: Save dialog returned path: {:?}",
+                path_result.as_ref().unwrap()
+            );
+        } else {
+            // Check CommDlgExtendedError only if GetSaveFileNameW returns FALSE.
+            // A return value of 0 from CommDlgExtendedError means the dialog was cancelled by the user.
+            // Any other non-zero value indicates an error.
+            let error_code = unsafe { CommDlgExtendedError() };
+            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
+                eprintln!(
+                    "Platform: GetSaveFileNameW failed. CommDlgExtendedError: {:?}",
+                    error_code
+                );
+            } else {
+                println!("Platform: Save dialog cancelled by user.");
+            }
+        }
+
+        // Send event back to AppLogic
+        let event = AppEvent::FileSaveDialogCompleted {
+            window_id,
+            result: path_result,
+        };
+        let commands_from_handler = if let Some(handler_arc) = self
+            .internal_state
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                handler_guard.handle_event(event)
+            } else {
+                eprintln!("Platform: Failed to lock event handler after save dialog.");
+                vec![]
+            }
+        } else {
+            eprintln!("Platform: Event handler not available after save dialog.");
+            vec![]
+        };
+
+        if !commands_from_handler.is_empty() {
+            self.internal_state
+                .process_commands_from_event_handler(commands_from_handler);
+        }
+        Ok(())
+    }
+
+    pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
+        *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
         unsafe {
             let mut msg = MSG::default();
-            // HWND::default() (None for GetMessageW) retrieves messages for any window
-            // belonging to the current thread.
             loop {
-                let result: windows::core::BOOL = GetMessageW(&mut msg, None, 0, 0);
-
+                let result = GetMessageW(&mut msg, None, 0, 0);
                 if result.0 > 0 {
-                    // Message retrieved (not WM_QUIT)
-                    // result.as_bool() would also work here if result.0 is guaranteed non-negative on success
-                    let _ = TranslateMessage(&msg); // This is unsafe
-                    DispatchMessageW(&msg); // This is unsafe
+                    let _ = TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
                 } else if result.0 == 0 {
-                    // WM_QUIT received
                     println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
                     break;
                 } else {
-                    // result.0 == -1, an error occurred
                     let last_error = GetLastError();
                     eprintln!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
-                    // Convert the HRESULT from GetLastError into a windows::core::Error
-                    let win_error = windows::core::Error::from_win32();
                     return Err(PlatformError::OperationFailed(format!(
                         "GetMessageW failed: {}",
-                        win_error // This is windows::core::Error
+                        windows::core::Error::from_win32()
                     )));
                 }
             }
         }
-
-        // Application is quitting, call on_quit on the event handler.
         if let Ok(mut handler_guard) = event_handler.lock() {
             handler_guard.on_quit();
         }
-
-        // Clear the event handler reference from internal state
         *self.internal_state.event_handler.lock().unwrap() = None;
         println!("Platform: Message loop exited cleanly.");
         Ok(())

@@ -1,7 +1,7 @@
 use super::app::Win32ApiInternalState;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId};
-use super::window_common::NativeWindowData; // To access and modify treeview_state
+use super::window_common::{BUTTON_AREA_HEIGHT, NativeWindowData};
 
 use windows::{
     Win32::{
@@ -78,17 +78,20 @@ fn ensure_treeview_exists_and_get_state<'a>(
             TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES;
         let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(tvs_styles);
 
+        let tv_width = client_rect.right - client_rect.left;
+        let tv_height = client_rect.bottom - client_rect.top - BUTTON_AREA_HEIGHT;
+
         let hwnd_tv = unsafe {
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),                   // dwExStyle
-                WC_TREEVIEWW,                         // lpClassName
-                PCWSTR::null(),                       // lpWindowName (no title for a control)
-                combined_style,                       // dwStyle
-                0,                                    // X
-                0,                                    // Y
-                client_rect.right - client_rect.left, // nWidth
-                client_rect.bottom - client_rect.top, // nHeight
-                Some(window_data.hwnd),               // hWndParent
+                WINDOW_EX_STYLE(0),     // dwExStyle
+                WC_TREEVIEWW,           // lpClassName
+                PCWSTR::null(),         // lpWindowName (no title for a control)
+                combined_style,         // dwStyle
+                0,                      // X
+                0,                      // Y
+                tv_width,               // nWidth
+                tv_height,              // nHeight (adjusted for button area)
+                Some(window_data.hwnd), // hWndParent
                 Some(HMENU(ID_TREEVIEW_CTRL as *mut c_void)),
                 Some(internal_state.h_instance), // hInstance
                 None,                            // lpParam
@@ -272,26 +275,21 @@ pub(crate) fn handle_treeview_notification(
 ) -> Option<AppEvent> {
     let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) };
 
-    // Check if the notification is from our TreeView control.
-    // We compare `nmhdr.idFrom` (control ID) with our known ID.
     if nmhdr.idFrom as i32 != ID_TREEVIEW_CTRL {
-        return None; // Notification not from our treeview
+        return None;
     }
 
-    // Now, check if this window actually has a treeview and if the hwndFrom matches
-    let windows_guard = internal_state.windows.read().ok()?; // Use .ok()? to exit if lock fails
+    let windows_guard = internal_state.windows.read().ok()?;
     let window_data = windows_guard.get(&window_id)?;
     let tv_state = window_data.treeview_state.as_ref()?;
 
     if nmhdr.hwndFrom != tv_state.hwnd {
-        return None; // Notification from a control with the same ID, but not our treeview instance's HWND
+        return None;
     }
 
-    // It's a notification from our TreeView. Check the code.
     if nmhdr.code == TVN_ITEMCHANGEDW {
         let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
 
-        // Check if the state image (checkbox) actually changed
         if (nmtv.itemNew.mask.0 & TVIF_STATE.0) != 0
             && (nmtv.itemNew.stateMask.0 & TVIS_STATEIMAGEMASK.0) != 0
         {
@@ -299,15 +297,12 @@ pub(crate) fn handle_treeview_notification(
             let new_state_idx = (nmtv.itemNew.state.0 & TVIS_STATEIMAGEMASK.0) >> 12;
 
             if old_state_idx != new_state_idx {
-                // Checkbox state genuinely changed.
-                // The nmtv.itemNew.lParam contains the app-specific TreeItemId.0 we stored.
                 let item_app_id_val = nmtv.itemNew.lParam.0 as u64;
                 let toggled_item_id = TreeItemId(item_app_id_val);
 
-                // Verify this item_id exists in our map (sanity check, it should if lParam was set correctly)
                 if !tv_state.item_id_to_htreeitem.contains_key(&toggled_item_id) {
                     eprintln!(
-                        "Platform TreeView: Received toggle for an unknown TreeItemId {:?} from lParam. This is unexpected.",
+                        "Platform TreeView: Received toggle for an unknown TreeItemId {:?} from lParam.",
                         toggled_item_id
                     );
                     return None;
@@ -318,12 +313,10 @@ pub(crate) fn handle_treeview_notification(
                 } else {
                     CheckState::Unchecked
                 };
-
                 println!(
                     "Platform TreeView: Item {:?} toggled to {:?}",
                     toggled_item_id, new_check_state
                 );
-
                 return Some(AppEvent::TreeViewItemToggled {
                     window_id,
                     item_id: toggled_item_id,
@@ -332,6 +325,5 @@ pub(crate) fn handle_treeview_notification(
             }
         }
     }
-    // Other TreeView notifications (TVN_SELCHANGED, TVN_KEYDOWN, etc.) could be handled here.
     None
 }

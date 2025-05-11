@@ -4,7 +4,11 @@ use crate::platform_layer::{
     WindowId,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::{Path, PathBuf}; // For writing the archive file
+
+// Define control IDs used by app_logic to identify controls, must match platform layer
+pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002; // Matches platform_layer's ID
 
 /// Maps a `PathBuf` (unique identifier for a FileNode) to the `TreeItemId` currently
 /// representing it in the UI. This map is rebuilt during `PopulateTreeView`.
@@ -20,6 +24,10 @@ pub struct MyAppLogic {
     path_to_tree_item_id: PathToTreeItemIdMap,
     /// Counter to generate unique `TreeItemId`s during descriptor building.
     next_tree_item_id_counter: u64,
+    /// The root path used for the last directory scan.
+    root_path_for_scan: PathBuf,
+    /// Temporarily stores content of the generated archive before saving.
+    pending_archive_content: Option<String>,
 }
 
 impl MyAppLogic {
@@ -29,6 +37,8 @@ impl MyAppLogic {
             file_nodes_cache: Vec::new(),
             path_to_tree_item_id: HashMap::new(),
             next_tree_item_id_counter: 1,
+            root_path_for_scan: PathBuf::new(), // Initialize empty, set in on_main_window_created
+            pending_archive_content: None,
         }
     }
 
@@ -59,7 +69,7 @@ impl MyAppLogic {
                 is_folder: node.is_dir,
                 state: match node.state {
                     FileState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked,
+                    _ => CheckState::Unchecked, // Default to unchecked for Deselected/Unknown
                 },
                 // Recursive call passes the mutable refs along
                 children: Self::build_tree_item_descriptors_recursive(
@@ -80,21 +90,23 @@ impl MyAppLogic {
 
         // --- Actual data loading ---
         // Modify this path and patterns as needed for your project structure
-        let root_path_for_scan = PathBuf::from("."); // Scans the directory where the executable runs
+        let root_path = PathBuf::from("."); // Scans the directory where the executable runs
+        self.root_path_for_scan = root_path.clone(); // Store it
+
         // Example: scan for .rs and .toml files in src, and Cargo.toml in root
         let whitelist_patterns = vec![
             "src/**/*.rs".to_string(),
             "src/**/*.toml".to_string(),
             "Cargo.toml".to_string(),
-            "*.md".to_string(), // Include markdown files
+            "doc/*.md".to_string(), // Include markdown files
         ];
 
         println!(
             "AppLogic: Scanning directory {:?} with patterns: {:?}",
-            root_path_for_scan, whitelist_patterns
+            self.root_path_for_scan, whitelist_patterns
         );
 
-        match core::scan_directory(&root_path_for_scan, &whitelist_patterns) {
+        match core::scan_directory(&self.root_path_for_scan, &whitelist_patterns) {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
                 println!(
@@ -104,14 +116,14 @@ impl MyAppLogic {
                 if self.file_nodes_cache.is_empty() {
                     println!(
                         "AppLogic: No files matched whitelist patterns in {:?}. Tree will be empty.",
-                        root_path_for_scan
+                        self.root_path_for_scan
                     );
                 }
             }
             Err(e) => {
                 eprintln!(
                     "AppLogic: Failed to scan directory {:?}: {}",
-                    root_path_for_scan, e
+                    self.root_path_for_scan, e
                 );
                 let error_node_path = PathBuf::from("/error_node");
                 self.file_nodes_cache = vec![FileNode::new(
@@ -222,14 +234,12 @@ impl PlatformEventHandler for MyAppLogic {
                 if self.main_window_id == Some(window_id) {
                     println!("AppLogic: Main window destroyed notification received.");
                     self.main_window_id = None;
-                    // The platform layer's app.rs should manage PostQuitMessage
-                    // based on its active_windows_count and quit signals.
                 }
             }
             AppEvent::TreeViewItemToggled {
                 window_id,
-                item_id,   // This is the TreeItemId from the UI event
-                new_state, // This is the CheckState from the UI event (Checked or Unchecked)
+                item_id,
+                new_state,
             } => {
                 println!(
                     "AppLogic: TreeItem {:?} in window {:?} toggled to UI state {:?}.",
@@ -245,7 +255,6 @@ impl PlatformEventHandler for MyAppLogic {
                 }
 
                 if let Some(path_for_model_update) = path_of_toggled_node {
-                    // Block for mutable model update
                     {
                         let node_to_update_model_for = Self::find_filenode_mut(
                             &mut self.file_nodes_cache,
@@ -258,7 +267,6 @@ impl PlatformEventHandler for MyAppLogic {
                                 // If UI unchecks, model becomes Deselected
                                 CheckState::Unchecked => FileState::Deselected,
                             };
-
                             core::state_manager::update_folder_selection(
                                 node_model,
                                 new_model_file_state,
@@ -269,7 +277,7 @@ impl PlatformEventHandler for MyAppLogic {
                                 path_for_model_update
                             );
                         }
-                    } // Mutable borrow of self.file_nodes_cache ends here
+                    }
 
                     // Perform a non-mutable find to get a reference for collecting visual updates
                     if let Some(root_node_for_visual_update) =
@@ -280,7 +288,6 @@ impl PlatformEventHandler for MyAppLogic {
                             root_node_for_visual_update,
                             &mut visual_updates_list,
                         );
-
                         println!(
                             "AppLogic: Requesting {} visual updates for TreeView after toggle.",
                             visual_updates_list.len()
@@ -305,7 +312,67 @@ impl PlatformEventHandler for MyAppLogic {
                     );
                 }
             }
-            AppEvent::WindowResized { .. } => { /* Ignored for now */ }
+            AppEvent::ButtonClicked {
+                window_id,
+                control_id,
+            } => {
+                if self.main_window_id == Some(window_id)
+                    && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
+                {
+                    println!("AppLogic: 'Generate Archive' button clicked.");
+                    match core::create_archive_content(
+                        &self.file_nodes_cache,
+                        &self.root_path_for_scan,
+                    ) {
+                        Ok(content) => {
+                            self.pending_archive_content = Some(content);
+                            commands.push(PlatformCommand::ShowSaveFileDialog {
+                                window_id,
+                                title: "Save Archive As".to_string(),
+                                default_filename: "archive.txt".to_string(),
+                                filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
+                                    .to_string(),
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!("AppLogic: Failed to create archive content: {}", e);
+                            // Future: Show a message box to the user via a PlatformCommand
+                            // For now, just log. If content generation fails, pending_archive_content remains None.
+                        }
+                    }
+                }
+            }
+            AppEvent::FileSaveDialogCompleted { window_id, result } => {
+                if self.main_window_id == Some(window_id) {
+                    match result {
+                        Some(path) => {
+                            if let Some(content) = self.pending_archive_content.take() {
+                                println!("AppLogic: Saving archive to {:?}", path);
+                                match fs::write(&path, content) {
+                                    Ok(_) => println!(
+                                        "AppLogic: Successfully saved archive to {:?}",
+                                        path
+                                    ),
+                                    Err(e) => eprintln!(
+                                        "AppLogic: Failed to write archive to {:?}: {}",
+                                        path, e
+                                    ),
+                                }
+                            } else {
+                                eprintln!(
+                                    "AppLogic: FileSaveDialogCompleted with path, but no pending content to save."
+                                );
+                            }
+                        }
+                        None => {
+                            println!("AppLogic: File save dialog cancelled by user.");
+                            self.pending_archive_content = None; // Clear pending content if cancelled
+                        }
+                    }
+                }
+            }
+            AppEvent::WindowResized { .. } => { /* Ignored for now by app logic, platform handles layout */
+            }
         }
         commands
     }
