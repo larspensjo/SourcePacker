@@ -32,6 +32,7 @@ pub fn create_archive_content(
     }
 
     while let Some(node) = buffer.pop() {
+        println!("create_archive_content: processing node: {:?}", node.path);
         if node.is_dir {
             // If it's a directory, add its children to the buffer for traversal (in reverse)
             for child in node.children.iter().rev() {

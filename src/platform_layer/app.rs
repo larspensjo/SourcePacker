@@ -108,8 +108,6 @@ impl Win32ApiInternalState {
         WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
     }
 
-    /// Decrements the active window count and posts WM_QUIT if it reaches zero
-    /// and the application is in a quitting state.
     pub(crate) fn decrement_active_windows(&self) {
         let prev_count = self.active_windows_count.fetch_sub(1, Ordering::Relaxed);
         println!(
@@ -124,8 +122,6 @@ impl Win32ApiInternalState {
         }
     }
 
-    /// Marks the application as attempting to quit.
-    /// If no windows are active, posts WM_QUIT immediately.
     pub(crate) fn signal_quit_intent(&self) {
         self.is_quitting.store(1, Ordering::Relaxed);
         if self.active_windows_count.load(Ordering::Relaxed) == 0 {
@@ -134,9 +130,114 @@ impl Win32ApiInternalState {
         }
     }
 
-    /// Internally processes a list of platform commands.
-    /// This is called from the WndProc after the app logic's event handler returns commands,
-    /// or directly after a synchronous operation like a file dialog.
+    /// Centralized logic for showing the save file dialog.
+    /// This method is called by both PlatformInterface::execute_command and by
+    /// Win32ApiInternalState::process_commands_from_event_handler.
+    /// It takes `&Arc<Self>` because `process_commands_from_event_handler` might be called recursively.
+    fn _handle_show_save_file_dialog_impl(
+        self: &Arc<Self>, // Takes Arc<Self> to match how process_commands_from_event_handler is called
+        window_id: WindowId,
+        title: String,
+        default_filename: String,
+        filter_spec: String,
+    ) -> PlatformResult<()> {
+        let hwnd_owner = {
+            let windows_guard = self.windows.read().map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to acquire read lock for windows map (save dialog)".into(),
+                )
+            })?;
+            windows_guard
+                .get(&window_id)
+                .map(|data| data.hwnd)
+                .ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!(
+                        "WindowId {:?} not found for ShowSaveFileDialog",
+                        window_id
+                    ))
+                })?
+        };
+
+        let mut file_buffer: Vec<u16> = vec![0; 2048];
+        if !default_filename.is_empty() {
+            let default_name_utf16: Vec<u16> = default_filename.encode_utf16().collect();
+            let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
+            file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
+        }
+
+        let title_hstring = HSTRING::from(title);
+        let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
+
+        let mut ofn = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: hwnd_owner,
+            lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
+            nMaxFile: file_buffer.len() as u32,
+            lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
+            lpstrTitle: PCWSTR(title_hstring.as_ptr()),
+            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
+            ..Default::default()
+        };
+
+        let save_result = unsafe { GetSaveFileNameW(&mut ofn) }.as_bool();
+        let mut path_result: Option<PathBuf> = None;
+
+        if save_result {
+            let len = file_buffer
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(file_buffer.len());
+            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
+            path_result = Some(PathBuf::from(path_str));
+            println!(
+                "Platform: Save dialog returned path: {:?}",
+                path_result.as_ref().unwrap()
+            );
+        } else {
+            let error_code = unsafe { CommDlgExtendedError() };
+            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
+                eprintln!(
+                    "Platform: GetSaveFileNameW failed. CommDlgExtendedError: {:?}",
+                    error_code
+                );
+            } else {
+                println!("Platform: Save dialog cancelled by user.");
+            }
+        }
+
+        let event = AppEvent::FileSaveDialogCompleted {
+            window_id,
+            result: path_result,
+        };
+
+        // Send the event to AppLogic and process any commands it returns
+        let commands_from_dialog_completion = if let Some(handler_arc) = self
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                handler_guard.handle_event(event)
+            } else {
+                eprintln!("Platform: Failed to lock event handler after save dialog.");
+                vec![]
+            }
+        } else {
+            eprintln!(
+                "Platform: Event handler not available after save dialog (it might not have been set yet if called very early, or already dropped)."
+            );
+            vec![]
+        };
+
+        if !commands_from_dialog_completion.is_empty() {
+            // Call process_commands_from_event_handler on Arc<Self>
+            self.process_commands_from_event_handler(commands_from_dialog_completion);
+        }
+        Ok(())
+    }
+
     pub fn process_commands_from_event_handler(self: &Arc<Self>, commands: Vec<PlatformCommand>) {
         for cmd in commands {
             let result = match cmd {
@@ -164,14 +265,12 @@ impl Win32ApiInternalState {
                     title,
                     default_filename,
                     filter_spec,
-                } => {
-                    // This command is handled by PlatformInterface::execute_command directly.
-                    // It's listed here to show it's a valid command, but processing logic is in execute_command.
-                    eprintln!(
-                        "Platform: ShowSaveFileDialog command received in process_commands_from_event_handler, this is unexpected as it should be handled by execute_command directly."
-                    );
-                    Ok(()) // No-op here, handled elsewhere
-                }
+                } => self._handle_show_save_file_dialog_impl(
+                    window_id,
+                    title,
+                    default_filename,
+                    filter_spec,
+                ),
             };
 
             if let Err(e) = result {
@@ -207,9 +306,6 @@ impl PlatformInterface {
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_window_id();
 
-        // 1. Create a PRELIMINARY NativeWindowData and insert it.
-        // The HWND will be HWND(0) initially and updated after CreateWindowExW.
-        // hwnd_button_generate will be updated by WM_CREATE.
         let preliminary_native_data = window_common::NativeWindowData {
             hwnd: HWND(std::ptr::null_mut()), // Placeholder, will be updated after creation
             id: window_id,
@@ -231,7 +327,6 @@ impl PlatformInterface {
             window_id
         );
 
-        // 2. Create the native window. WM_CREATE will now find its entry in the map.
         let hwnd = match window_common::create_native_window(
             &self.internal_state,
             window_id,
@@ -260,8 +355,6 @@ impl PlatformInterface {
             hwnd, window_id
         );
 
-        // 3. Update the HWND in the existing NativeWindowData entry.
-        //    The hwnd_button_generate should have been set by WM_CREATE by now.
         match self.internal_state.windows.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
@@ -271,7 +364,6 @@ impl PlatformInterface {
                         window_id, window_data.hwnd_button_generate
                     );
                 } else {
-                    // This would be a serious issue if the preliminary entry vanished
                     eprintln!(
                         "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
                         window_id
@@ -324,119 +416,19 @@ impl PlatformInterface {
                 title,
                 default_filename,
                 filter_spec,
-            } => self.handle_show_save_file_dialog(window_id, title, default_filename, filter_spec),
-        }
-    }
-
-    fn handle_show_save_file_dialog(
-        &self,
-        window_id: WindowId,
-        title: String,
-        default_filename: String,
-        filter_spec: String,
-    ) -> PlatformResult<()> {
-        let hwnd_owner = {
-            let windows_guard = self.internal_state.windows.read().map_err(|_| {
-                PlatformError::OperationFailed(
-                    "Failed to acquire read lock for windows map (save dialog)".into(),
+            } => {
+                // Call the centralized internal handler via the internal_state Arc
+                self.internal_state._handle_show_save_file_dialog_impl(
+                    window_id,
+                    title,
+                    default_filename,
+                    filter_spec,
                 )
-            })?;
-            windows_guard
-                .get(&window_id)
-                .map(|data| data.hwnd)
-                .ok_or_else(|| {
-                    PlatformError::InvalidHandle(format!(
-                        "WindowId {:?} not found for ShowSaveFileDialog",
-                        window_id
-                    ))
-                })?
-        };
-
-        let mut file_buffer: Vec<u16> = vec![0; 2048]; // MAX_PATH is usually 260, this is generous
-        if !default_filename.is_empty() {
-            let default_name_utf16: Vec<u16> = default_filename.encode_utf16().collect();
-            let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
-            file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
-            // Null termination is handled by the buffer initialization if len_to_copy < file_buffer.len()
-        }
-
-        let title_hstring = HSTRING::from(title);
-        // The filter_spec string from AppLogic should be correctly formatted,
-        // e.g., "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
-        // .encode_utf16() will preserve these nulls.
-        let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
-
-        let mut ofn = OPENFILENAMEW {
-            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
-            hwndOwner: hwnd_owner,
-            lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
-            nMaxFile: file_buffer.len() as u32,
-            lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
-            lpstrTitle: PCWSTR(title_hstring.as_ptr()),
-            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
-            ..Default::default()
-        };
-
-        let save_result = unsafe { GetSaveFileNameW(&mut ofn) }.as_bool();
-        let mut path_result: Option<PathBuf> = None;
-
-        if save_result {
-            // Find the first null terminator to get the actual length of the path
-            let len = file_buffer
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(file_buffer.len());
-            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
-            path_result = Some(PathBuf::from(path_str));
-            println!(
-                "Platform: Save dialog returned path: {:?}",
-                path_result.as_ref().unwrap()
-            );
-        } else {
-            // Check CommDlgExtendedError only if GetSaveFileNameW returns FALSE.
-            // A return value of 0 from CommDlgExtendedError means the dialog was cancelled by the user.
-            // Any other non-zero value indicates an error.
-            let error_code = unsafe { CommDlgExtendedError() };
-            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
-                eprintln!(
-                    "Platform: GetSaveFileNameW failed. CommDlgExtendedError: {:?}",
-                    error_code
-                );
-            } else {
-                println!("Platform: Save dialog cancelled by user.");
             }
         }
-
-        // Send event back to AppLogic
-        let event = AppEvent::FileSaveDialogCompleted {
-            window_id,
-            result: path_result,
-        };
-        let commands_from_handler = if let Some(handler_arc) = self
-            .internal_state
-            .event_handler
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|wh| wh.upgrade())
-        {
-            if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event)
-            } else {
-                eprintln!("Platform: Failed to lock event handler after save dialog.");
-                vec![]
-            }
-        } else {
-            eprintln!("Platform: Event handler not available after save dialog.");
-            vec![]
-        };
-
-        if !commands_from_handler.is_empty() {
-            self.internal_state
-                .process_commands_from_event_handler(commands_from_handler);
-        }
-        Ok(())
     }
+
+    // Removed PlatformInterface::handle_show_save_file_dialog as its logic is now in Win32ApiInternalState::_handle_show_save_file_dialog_impl
 
     pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
