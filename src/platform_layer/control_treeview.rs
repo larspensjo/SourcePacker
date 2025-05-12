@@ -7,8 +7,8 @@ use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM},
         UI::Controls::{
-            HTREEITEM, NMHDR, NMTREEVIEWW, TVGN_CHILD, TVGN_NEXT, TVI_LAST, TVIF_CHILDREN,
-            TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
+            HTREEITEM, NM_CLICK, NMHDR, NMTREEVIEWW, TVGN_CHILD, TVGN_NEXT, TVI_LAST,
+            TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
             TVIS_STATEIMAGEMASK, TVITEMEXW, TVITEMEXW_CHILDREN, TVM_DELETEITEM, TVM_GETITEMW,
             TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SETITEMW, TVN_ITEMCHANGEDW, TVS_CHECKBOXES,
             TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, WC_TREEVIEWW,
@@ -35,7 +35,7 @@ pub(crate) struct TreeViewInternalState {
     item_id_to_htreeitem: HashMap<TreeItemId, HTREEITEM>,
     /// Maps native `HTREEITEM` back to the application-provided `TreeItemId`.
     /// Used for processing notifications.
-    htreeitem_to_item_id: HashMap<isize, TreeItemId>,
+    pub(crate) htreeitem_to_item_id: HashMap<isize, TreeItemId>,
 }
 
 impl TreeViewInternalState {
@@ -74,9 +74,10 @@ fn ensure_treeview_exists_and_get_state<'a>(
         let mut client_rect = RECT::default();
         unsafe { GetClientRect(window_data.hwnd, &mut client_rect)? };
 
-        let tvs_styles =
-            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES;
-        let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(tvs_styles);
+        let tvs_style = WINDOW_STYLE(
+            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES,
+        );
+        let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
 
         let tv_width = client_rect.right - client_rect.left;
         let tv_height = client_rect.bottom - client_rect.top - BUTTON_AREA_HEIGHT;
@@ -265,10 +266,12 @@ pub(crate) fn update_treeview_item_visual_state(
     }
 }
 
-/// Handles `WM_NOTIFY` messages specifically for TreeView controls.
-/// If the notification is relevant (e.g., item check state changed),
+/// Notice: There is no `TVN_ITEMCHANGEDW` notifications for TreeView controls.
+/// This will NOT be reliably called for checkbox state changes
+/// when using TVS_CHECKBOXES. Intsead, that is handled by NM_CLICK -> custom message.
+/// This function could handle other item changes like selection, if needed.
 /// it translates it into an `AppEvent` and returns it.
-pub(crate) fn handle_treeview_notification(
+pub(crate) fn handle_treeview_itemchanged_notification(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     lparam: LPARAM, // LPARAM of WM_NOTIFY, which is LPNMHDR
@@ -286,44 +289,9 @@ pub(crate) fn handle_treeview_notification(
     if nmhdr.hwndFrom != tv_state.hwnd {
         return None;
     }
-
-    if nmhdr.code == TVN_ITEMCHANGEDW {
-        let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
-
-        if (nmtv.itemNew.mask.0 & TVIF_STATE.0) != 0
-            && (nmtv.itemNew.stateMask.0 & TVIS_STATEIMAGEMASK.0) != 0
-        {
-            let old_state_idx = (nmtv.itemOld.state.0 & TVIS_STATEIMAGEMASK.0) >> 12;
-            let new_state_idx = (nmtv.itemNew.state.0 & TVIS_STATEIMAGEMASK.0) >> 12;
-
-            if old_state_idx != new_state_idx {
-                let item_app_id_val = nmtv.itemNew.lParam.0 as u64;
-                let toggled_item_id = TreeItemId(item_app_id_val);
-
-                if !tv_state.item_id_to_htreeitem.contains_key(&toggled_item_id) {
-                    eprintln!(
-                        "Platform TreeView: Received toggle for an unknown TreeItemId {:?} from lParam.",
-                        toggled_item_id
-                    );
-                    return None;
-                }
-
-                let new_check_state = if new_state_idx == 2 {
-                    CheckState::Checked
-                } else {
-                    CheckState::Unchecked
-                };
-                println!(
-                    "Platform TreeView: Item {:?} toggled to {:?}",
-                    toggled_item_id, new_check_state
-                );
-                return Some(AppEvent::TreeViewItemToggled {
-                    window_id,
-                    item_id: toggled_item_id,
-                    new_state: new_check_state,
-                });
-            }
-        }
-    }
     None
+    // let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
+    // Currently, no AppEvents are generated from TVN_ITEMCHANGEDW.
+    // If selection change events were needed, they would be handled here.
+    // Checkbox changes are handled via NM_CLICK -> custom message.
 }

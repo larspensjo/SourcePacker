@@ -1,15 +1,20 @@
 use super::app::Win32ApiInternalState; // The shared internal state
 use super::control_treeview; // For TreeView specific data and event handling
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, CheckState, PlatformCommand, WindowId}; // For event generation
+use super::types::{AppEvent, CheckState, PlatformCommand, TreeItemId, WindowId};
 
 use windows::{
     Win32::{
         Foundation::{
-            ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM,
+            ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
         },
         Graphics::Gdi::{BeginPaint, COLOR_WINDOW, EndPaint, FillRect, HBRUSH, PAINTSTRUCT}, // For basic painting
         System::SystemServices::IMAGE_DOS_HEADER, // Used to get base address for HINSTANCE
+        UI::Controls::{
+            HTREEITEM, NM_CLICK, NMHDR, NMMOUSE, TVHITTESTINFO, TVHITTESTINFO_FLAGS,
+            TVHT_ONITEMSTATEICON, TVIF_PARAM, TVIF_STATE, TVIS_STATEIMAGEMASK, TVITEMEXW,
+            TVM_GETITEMW, TVM_HITTEST, TVN_ITEMCHANGEDW,
+        },
         UI::WindowsAndMessaging::*,
     },
     core::{HSTRING, PCWSTR},
@@ -21,6 +26,9 @@ use std::sync::{Arc, Mutex};
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
 const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON"); // Helper for button class name
+
+// Custom message for TreeView checkbox clicks
+pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
 // Layout constants
 pub const BUTTON_AREA_HEIGHT: i32 = 50; // Also used in other files.
@@ -34,10 +42,8 @@ const BUTTON_HEIGHT: i32 = 30;
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
-    pub(crate) id: WindowId, // The platform-agnostic ID for this window
-    /// State specific to a TreeView control, if one exists in this window.
+    pub(crate) id: WindowId,
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
-    /// Handle to the "Generate Archive" button, if created.
     pub(crate) hwnd_button_generate: Option<HWND>,
 }
 
@@ -49,11 +55,6 @@ struct WindowCreationContext {
     window_id: WindowId,
 }
 
-/// Registers the main window class for the application.
-///
-/// This function should be called once, typically during platform initialization,
-/// before any windows are created. It uses the application name from `Win32ApiInternalState`
-/// to create a unique class name.
 pub(crate) fn register_window_class(
     internal_state: &Arc<Win32ApiInternalState>,
 ) -> PlatformResult<()> {
@@ -64,7 +65,6 @@ pub(crate) fn register_window_class(
     let class_name_pcwstr = PCWSTR(class_name_hstring.as_ptr());
 
     unsafe {
-        // Check if class is already registered
         let mut wc_test = WNDCLASSEXW::default();
         if GetClassInfoExW(
             Some(internal_state.h_instance),
@@ -73,23 +73,22 @@ pub(crate) fn register_window_class(
         )
         .is_ok()
         {
-            // Class already registered, no need to do it again.
             return Ok(());
         }
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC, // CS_OWNDC can be useful for custom rendering
+            style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
             lpfnWndProc: Some(facade_wnd_proc_router),
             cbClsExtra: 0,
-            cbWndExtra: 0, // We use GWLP_USERDATA for per-instance context
+            cbWndExtra: 0,
             hInstance: internal_state.h_instance,
-            hIcon: LoadIconW(None, IDI_APPLICATION)?, // Default application icon
-            hCursor: LoadCursorW(None, IDC_ARROW)?,   // Default arrow cursor
-            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void), // Default window background
+            hIcon: LoadIconW(None, IDI_APPLICATION)?,
+            hCursor: LoadCursorW(None, IDC_ARROW)?,
+            hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void),
             lpszMenuName: PCWSTR::null(),
             lpszClassName: class_name_pcwstr,
-            hIconSm: LoadIconW(None, IDI_APPLICATION)?, // Small icon
+            hIconSm: LoadIconW(None, IDI_APPLICATION)?,
         };
 
         if RegisterClassExW(&wc) == 0 {
@@ -104,10 +103,6 @@ pub(crate) fn register_window_class(
     }
 }
 
-/// Creates a native Win32 window.
-///
-/// This function handles the `CreateWindowExW` call and sets up the
-/// initial context for the window's `WndProc`.
 pub(crate) fn create_native_window(
     internal_state_arc: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
@@ -129,19 +124,19 @@ pub(crate) fn create_native_window(
 
     unsafe {
         let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),                           // dwExStyle
-            &class_name_hstring,                                  // lpClassName
-            &HSTRING::from(title),                                // lpWindowName
-            WS_OVERLAPPEDWINDOW,                                  // dwStyle
-            CW_USEDEFAULT,                                        // X
-            CW_USEDEFAULT,                                        // Y
-            width,                                                // nWidth
-            height,                                               // nHeight
-            None,                                                 // hWndParent
-            None,                                                 // hMenu
-            Some(internal_state_arc.h_instance),                  // hInstance
-            Some(Box::into_raw(creation_context) as *mut c_void), // lpParam
-        )?; // The '?' operator will convert windows::core::Error to PlatformError::Win32
+            WINDOW_EX_STYLE::default(),
+            &class_name_hstring,
+            &HSTRING::from(title),
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            width,
+            height,
+            None,
+            None,
+            Some(internal_state_arc.h_instance),
+            Some(Box::into_raw(creation_context) as *mut c_void),
+        )?;
 
         Ok(hwnd)
     }
@@ -165,7 +160,7 @@ unsafe extern "system" fn facade_wnd_proc_router(
         let create_struct = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let context_raw_ptr = create_struct.lpCreateParams as *mut WindowCreationContext;
         unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, context_raw_ptr as isize) };
-        context_raw_ptr // Return for immediate use if needed
+        context_raw_ptr
     } else {
         unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowCreationContext }
     };
@@ -175,8 +170,7 @@ unsafe extern "system" fn facade_wnd_proc_router(
         return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
 
-    // We have a valid pointer to our context.
-    let context = unsafe { &*context_ptr }; // Convert raw pointer to reference. Safe as long as context lives.
+    let context = unsafe { &*context_ptr };
     let internal_state_arc = &context.internal_state_arc;
     let window_id = context.window_id;
 
@@ -185,8 +179,8 @@ unsafe extern "system" fn facade_wnd_proc_router(
 
     // If WM_NCDESTROY, the context is about to be invalid, so we reclaim and drop the Box.
     if msg == WM_NCDESTROY {
-        let _ = unsafe { Box::from_raw(context_ptr) }; // This drops the WindowCreationContext.
-        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) }; // Clear the pointer.
+        let _ = unsafe { Box::from_raw(context_ptr) };
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0) };
     }
 
     result
@@ -202,12 +196,7 @@ pub(crate) fn loword_from_wparam(wparam: WPARAM) -> i32 {
 
 #[inline]
 pub(crate) fn highord_from_wparam(wparam: WPARAM) -> i32 {
-    // For WPARAM, HIWORD is the upper 16 bits of the full usize.
-    // On 64-bit systems, wparam.0 is usize (u64).
-    // If we only care about the traditional 32-bit meaning,
-    // we might need to be careful, but for WM_COMMAND, hiword(wparam) is the notification code.
-    // Let's assume standard interpretation where it fits in 16 bits.
-    (wparam.0 >> 16) as i32 // This will take upper bits of the usize.
+    (wparam.0 >> 16) as i32
 }
 
 #[inline]
@@ -220,11 +209,9 @@ pub(crate) fn hiword_from_lparam(lparam: LPARAM) -> i32 {
     ((lparam.0 >> 16) & 0xFFFF) as i32
 }
 
-// Instance method on Win32ApiInternalState to handle window messages.
-// This is called by facade_wnd_proc_router.
 impl Win32ApiInternalState {
     fn handle_window_message(
-        self: &Arc<Self>, // Arc to Win32ApiInternalState
+        self: &Arc<Self>,
         hwnd: HWND,
         msg: u32,
         wparam: WPARAM,
@@ -249,14 +236,14 @@ impl Win32ApiInternalState {
                 unsafe {
                     match CreateWindowExW(
                         WINDOW_EX_STYLE(0),
-                        WC_BUTTON, // Button class
+                        WC_BUTTON,
                         &HSTRING::from("Generate Archive"),
                         WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
                         0,
                         0,
                         0,
-                        0,          // Positioned and sized in WM_SIZE
-                        Some(hwnd), // Parent
+                        0,
+                        Some(hwnd),
                         Some(HMENU(ID_BUTTON_GENERATE_ARCHIVE as *mut c_void)),
                         Some(self.h_instance),
                         None,
@@ -293,10 +280,6 @@ impl Win32ApiInternalState {
             WM_SIZE => {
                 let client_width = loword_from_lparam(lparam);
                 let client_height = hiword_from_lparam(lparam);
-                println!(
-                    "Platform: WM_SIZE for WindowId {:?}, new client_width: {}, client_height: {}",
-                    window_id, client_width, client_height
-                );
                 app_event_to_send = Some(AppEvent::WindowResized {
                     window_id,
                     width: client_width,
@@ -305,14 +288,9 @@ impl Win32ApiInternalState {
 
                 if let Some(windows_guard) = self.windows.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
-                        // Resize TreeView
                         if let Some(ref tv_state) = window_data.treeview_state {
                             if !tv_state.hwnd.is_invalid() {
                                 let tv_height = client_height - BUTTON_AREA_HEIGHT;
-                                println!(
-                                    "Platform: WM_SIZE resizing TreeView HWND {:?} to W:{}, H:{}",
-                                    tv_state.hwnd, client_width, tv_height
-                                );
                                 unsafe {
                                     let _ = MoveWindow(
                                         tv_state.hwnd,
@@ -336,10 +314,6 @@ impl Win32ApiInternalState {
                                     client_height - BUTTON_AREA_HEIGHT + BUTTON_Y_PADDING_IN_AREA;
                                 let btn_width = BUTTON_WIDTH;
                                 let btn_height = BUTTON_HEIGHT;
-                                println!(
-                                    "Platform: WM_SIZE moving button HWND {:?} to X:{}, Y:{}, W:{}, H:{}",
-                                    hwnd_btn, btn_x_pos, btn_y_pos, btn_width, btn_height
-                                );
                                 unsafe {
                                     let _ = MoveWindow(
                                         hwnd_btn, btn_x_pos, btn_y_pos, btn_width, btn_height, true,
@@ -348,78 +322,35 @@ impl Win32ApiInternalState {
                                         eprintln!("MoveWindow for Button failed: {:?}", e)
                                     });
                                 }
-                            } else {
-                                println!(
-                                    "Platform: WM_SIZE - button HWND is invalid for window_id {:?}.",
-                                    window_id
-                                );
                             }
-                        } else {
-                            println!(
-                                "Platform: WM_SIZE - hwnd_button_generate is None for window_id {:?}.",
-                                window_id
-                            );
                         }
                     }
-                } else {
-                    eprintln!("Platform: WM_SIZE - Failed to get read lock on windows map.");
                 }
             }
             WM_COMMAND => {
-                let control_id = loword_from_wparam(wparam); // Gets the control ID from WPARAM
-                let notification_code = highord_from_wparam(wparam); // Gets the notification code from WPARAM
-
-                if notification_code as u32 == BN_CLICKED {
-                    // Button click notification
-                    if control_id == ID_BUTTON_GENERATE_ARCHIVE {
-                        println!(
-                            "Platform: Generate Archive button (ID {}) clicked.",
-                            control_id
-                        );
-                        app_event_to_send = Some(AppEvent::ButtonClicked {
-                            window_id,
-                            control_id,
-                        });
-                    }
+                let control_id = loword_from_wparam(wparam);
+                let notification_code = highord_from_wparam(wparam);
+                if notification_code as u32 == BN_CLICKED
+                    && control_id == ID_BUTTON_GENERATE_ARCHIVE
+                {
+                    app_event_to_send = Some(AppEvent::ButtonClicked {
+                        window_id,
+                        control_id,
+                    });
                 }
             }
-
             WM_CLOSE => {
-                println!(
-                    "Platform: WM_CLOSE for HWND {:?}, WindowId {:?}",
-                    hwnd, window_id
-                );
                 let close_requested_event = AppEvent::WindowCloseRequested { window_id };
                 let mut commands_from_app_logic = Vec::new();
-
                 if let Some(handler) = event_handler_opt.clone() {
                     if let Ok(mut handler_guard) = handler.lock() {
                         commands_from_app_logic = handler_guard.handle_event(close_requested_event);
-                    } else {
-                        eprintln!("Platform: Failed to lock event handler during WM_CLOSE.");
-                    }
-                } else {
-                    eprintln!("Platform: Event handler not available during WM_CLOSE.");
-                }
-
-                let mut app_logic_confirmed_close = false;
-                for cmd in &commands_from_app_logic {
-                    if let PlatformCommand::CloseWindow {
-                        window_id: cmd_window_id,
-                    } = cmd
-                    {
-                        if *cmd_window_id == window_id {
-                            app_logic_confirmed_close = true;
-                            break;
-                        }
                     }
                 }
-
+                let app_logic_confirmed_close = commands_from_app_logic.iter().any(|cmd| {
+                    matches!(cmd, PlatformCommand::CloseWindow { window_id: cmd_window_id } if *cmd_window_id == window_id)
+                });
                 if app_logic_confirmed_close {
-                    println!(
-                        "Platform: AppLogic confirmed close for WindowId {:?}. Calling DestroyWindow.",
-                        window_id
-                    );
                     unsafe {
                         if DestroyWindow(hwnd).is_err() {
                             let err = GetLastError();
@@ -431,20 +362,10 @@ impl Win32ApiInternalState {
                             }
                         }
                     }
-                } else {
-                    println!(
-                        "Platform: AppLogic did not command CloseWindow for WindowId {:?}. Window will not close now.",
-                        window_id
-                    );
                 }
                 return LRESULT(0);
             }
-
             WM_DESTROY => {
-                println!(
-                    "Platform: WM_DESTROY for HWND {:?}, WindowId {:?}",
-                    hwnd, window_id
-                );
                 app_event_to_send = Some(AppEvent::WindowDestroyed { window_id });
                 if let Some(mut windows_map_guard) = self.windows.write().ok() {
                     windows_map_guard.remove(&window_id);
@@ -452,10 +373,6 @@ impl Win32ApiInternalState {
                 self.decrement_active_windows();
             }
             WM_NCDESTROY => {
-                println!(
-                    "Platform: WM_NCDESTROY for HWND {:?}, WindowId {:?}",
-                    hwnd, window_id
-                );
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
             }
             WM_PAINT => {
@@ -474,11 +391,113 @@ impl Win32ApiInternalState {
                 return LRESULT(0);
             }
             WM_NOTIFY => {
-                if let Some(event) =
-                    control_treeview::handle_treeview_notification(self, window_id, lparam)
+                let nmhdr_ptr = lparam.0 as *const NMHDR; // Pointer to NMHDR
+                if nmhdr_ptr.is_null() {
+                    return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+                }
+                let nmhdr = unsafe { &*nmhdr_ptr };
+
+                if nmhdr.idFrom as i32 == control_treeview::ID_TREEVIEW_CTRL {
+                    match nmhdr.code {
+                        NM_CLICK => {
+                            // For NM_CLICK on TreeView, lParam is a pointer to NMMOUSE
+                            let nmmouse_ptr = lparam.0 as *const NMMOUSE;
+                            if nmmouse_ptr.is_null() {
+                                return LRESULT(0); // Should not happen if nmhdr_ptr was valid
+                            }
+                            let nmmouse = unsafe { &*nmmouse_ptr };
+
+                            if let Some(windows_guard_for_click) = self.windows.read().ok() {
+                                if let Some(window_data_for_click) =
+                                    windows_guard_for_click.get(&window_id)
+                                {
+                                    if let Some(ref tv_state_for_click) =
+                                        window_data_for_click.treeview_state
+                                    {
+                                        // Use nmmouse.pt for coordinates relative to the client area of the control
+                                        let mut tv_click_point = nmmouse.pt;
+
+                                        // TVM_HITTEST expects coordinates relative to the TreeView's client area.
+                                        // NMMOUSE.pt are already in client coordinates of the control.
+                                        // If they were screen coordinates, you'd use ScreenToClient.
+
+                                        let mut tvht_info = TVHITTESTINFO {
+                                            pt: tv_click_point,
+                                            flags: TVHITTESTINFO_FLAGS(0), // Initialize flags
+                                            hItem: HTREEITEM(0),
+                                        };
+
+                                        let h_item_hit = HTREEITEM(
+                                            unsafe {
+                                                SendMessageW(
+                                                    tv_state_for_click.hwnd,
+                                                    TVM_HITTEST,
+                                                    Some(WPARAM(0)),
+                                                    Some(LPARAM(&mut tvht_info as *mut _ as isize)),
+                                                )
+                                            }
+                                            .0,
+                                        );
+
+                                        // Check if h_item_hit is valid and if the click was on the state icon
+                                        if h_item_hit.0 != 0
+                                            && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0
+                                        {
+                                            println!(
+                                                "Platform: NM_CLICK on TreeView checkbox for hItem {:?}. Posting custom message.",
+                                                h_item_hit
+                                            );
+                                            unsafe {
+                                                if PostMessageW(
+                                                    Some(hwnd),
+                                                    WM_APP_TREEVIEW_CHECKBOX_CLICKED,
+                                                    WPARAM(h_item_hit.0 as usize),
+                                                    LPARAM(0),
+                                                )
+                                                .is_err()
+                                                {
+                                                    eprintln!(
+                                                        "Platform: Failed to post WM_APP_TREEVIEW_CHECKBOX_CLICKED. Error: {:?}",
+                                                        GetLastError()
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        TVN_ITEMCHANGEDW => {
+                            if let Some(event) =
+                                control_treeview::handle_treeview_itemchanged_notification(
+                                    self, window_id, lparam,
+                                )
+                            {
+                                app_event_to_send = Some(event);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            WM_APP_TREEVIEW_CHECKBOX_CLICKED => {
+                println!("Platform: Received WM_APP_TREEVIEW_CHECKBOX_CLICKED");
+                let h_item_val = wparam.0 as isize;
+                if h_item_val == 0 {
+                    return LRESULT(0);
+                }
+                let h_item_from_message = HTREEITEM(h_item_val);
+                if let Some(event) = self.get_tree_item_toggle_event(window_id, h_item_from_message)
                 {
                     app_event_to_send = Some(event);
                 }
+            }
+            // Add WM_GETMINMAXINFO handler to prevent window from becoming too small
+            WM_GETMINMAXINFO => {
+                let mmi = unsafe { &mut *(lparam.0 as *mut MINMAXINFO) };
+                mmi.ptMinTrackSize.x = 300;
+                mmi.ptMinTrackSize.y = 200;
+                return LRESULT(0);
             }
             _ => {
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
@@ -490,11 +509,7 @@ impl Win32ApiInternalState {
             if let Some(handler) = event_handler_opt {
                 if let Ok(mut handler_guard) = handler.lock() {
                     commands_to_execute = handler_guard.handle_event(event);
-                } else {
-                    eprintln!("Platform: Failed to lock event handler.");
                 }
-            } else {
-                eprintln!("Platform: Event handler is not available.");
             }
         }
 
@@ -504,9 +519,66 @@ impl Win32ApiInternalState {
 
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     }
-}
 
-// Public helper functions for PlatformInterface to call
+    fn get_tree_item_toggle_event(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        h_item: HTREEITEM,
+    ) -> Option<AppEvent> {
+        let windows_guard = self.windows.read().ok()?;
+        let window_data = windows_guard.get(&window_id)?;
+        let tv_state = window_data.treeview_state.as_ref()?;
+
+        let mut tv_item_get = TVITEMEXW {
+            mask: TVIF_STATE | TVIF_PARAM,
+            hItem: h_item,
+            stateMask: TVIS_STATEIMAGEMASK.0,
+            lParam: LPARAM(0),
+            ..Default::default()
+        };
+
+        let get_item_result = unsafe {
+            SendMessageW(
+                tv_state.hwnd,
+                TVM_GETITEMW,
+                Some(WPARAM(0)),
+                Some(LPARAM(&mut tv_item_get as *mut _ as isize)),
+            )
+        };
+
+        if get_item_result.0 == 0 {
+            eprintln!(
+                "Platform: TVM_GETITEMW failed for hItem {:?}. Error: {:?}",
+                h_item,
+                unsafe { GetLastError() }
+            );
+            return None;
+        }
+
+        let state_image_idx = (tv_item_get.state & TVIS_STATEIMAGEMASK.0) >> 12;
+        let new_check_state = if state_image_idx == 2 {
+            CheckState::Checked
+        } else {
+            CheckState::Unchecked
+        };
+
+        let app_item_id_val = tv_item_get.lParam.0 as u64;
+        if app_item_id_val == 0 && !tv_state.htreeitem_to_item_id.contains_key(&(h_item.0)) {
+            eprintln!(
+                "Platform: Could not resolve app_item_id for hItem {:?} (lParam was 0, and map lookup failed).",
+                h_item
+            );
+            return None;
+        }
+        let app_item_id = TreeItemId(app_item_id_val);
+
+        Some(AppEvent::TreeViewItemToggled {
+            window_id,
+            item_id: app_item_id,
+            new_state: new_check_state,
+        })
+    }
+}
 
 pub(crate) fn set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -590,10 +662,6 @@ pub(crate) fn destroy_native_window(
 
     if let Some(hwnd) = hwnd_to_destroy {
         if !hwnd.is_invalid() {
-            println!(
-                "Platform: Calling DestroyWindow for HWND {:?}, WindowId {:?}",
-                hwnd, window_id
-            );
             unsafe {
                 if DestroyWindow(hwnd).is_err() {
                     let err = GetLastError();
@@ -602,26 +670,12 @@ pub(crate) fn destroy_native_window(
                             "DestroyWindow call failed for {:?}. Error: {:?}",
                             window_id, err
                         );
-                    } else {
-                        println!(
-                            "DestroyWindow call for {:?} reported invalid handle, likely already destroyed.",
-                            window_id
-                        );
                     }
                 }
             }
-        } else {
-            println!(
-                "Platform: Attempted to destroy an invalid HWND for WindowId {:?}",
-                window_id
-            );
         }
         Ok(())
     } else {
-        println!(
-            "Platform: WindowId {:?} not found for destroy_native_window, likely already processed.",
-            window_id
-        );
-        Ok(())
+        Ok(()) // Already destroyed or never existed, not an error for this operation
     }
 }
