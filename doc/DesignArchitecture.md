@@ -19,7 +19,7 @@ The user interface will be structured into two distinct layers: a high-level App
 This layer is responsible for the core user interface logic and application state management, entirely independent of any specific GUI toolkit (like Win32). It defines *what* the UI should represent and how it reacts to user interactions in a platform-agnostic manner. Its primary goals are:
 
 - **Platform Independence:** Contains no direct dependencies on native UI libraries (e.g., `windows-rs`).
-- **Testability:** Enables UI logic to be unit-tested without a running graphical environment.
+- **Testability:** Enables UI logic to be unit-tested without a running graphical environment. Use Dependency Injection (Function Pointers / Closures—Method) as a mehtod to mock free functions.
 - **Clear Semantics:** Focuses on application behavior and data manipulation, rather than rendering details.
 
 #### Key Concepts

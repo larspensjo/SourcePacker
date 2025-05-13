@@ -89,6 +89,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
 ## P2.7: Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)?
 *   That would take away almost all code from handle_event.
 
+## P2.8: Use AppData\Local instead of AppData\Roaming.
+
 # Phase 3: Enhancements & UX Improvements
 
 ## P3.1: Status Bar
