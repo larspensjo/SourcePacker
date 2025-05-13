@@ -3,7 +3,7 @@ use directories::ProjectDirs;
 use serde_json;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const PROFILE_FILE_EXTENSION: &str = "json";
 
@@ -93,31 +93,48 @@ fn is_valid_profile_name_char(c: char) -> bool {
 
 /// Saves a profile to a JSON file.
 /// The profile name from `profile.name` is used for the filename, after sanitization.
-pub fn save_profile(profile: &Profile, app_name: &str) -> Result<()> {
+fn save_profile_with_dir_provider<F>(
+    profile: &Profile,
+    app_name: &str,
+    dir_provider: F,
+) -> Result<()>
+where
+    F: FnOnce(&str) -> Option<PathBuf>,
+{
     if profile.name.trim().is_empty() || !profile.name.chars().all(is_valid_profile_name_char) {
         print!("Invalid profile name: {}", profile.name);
         return Err(ProfileError::InvalidProfileName(profile.name.clone()));
     }
 
-    let dir = get_profile_dir(app_name).ok_or(ProfileError::NoProjectDirectory)?;
+    let dir = dir_provider(app_name).ok_or(ProfileError::NoProjectDirectory)?;
     let sanitized_filename = sanitize_profile_name(&profile.name);
     let file_path = dir.join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
 
     let file = File::create(&file_path)?;
     let writer = BufWriter::new(file);
-    println!("save_profile: Saving profile to {:?}...", file_path);
+    println!(
+        "save_profile_with_dir_provider: Saving profile to {:?}...",
+        file_path
+    );
     serde_json::to_writer_pretty(writer, profile)?;
     Ok(())
 }
 
 /// Loads a profile from a JSON file.
 /// `profile_name` should be the user-facing name, which will be sanitized to find the filename.
-pub fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile> {
+fn load_profile_with_dir_provider<F>(
+    profile_name: &str,
+    app_name: &str,
+    dir_provider: F,
+) -> Result<Profile>
+where
+    F: FnOnce(&str) -> Option<PathBuf>,
+{
     if profile_name.trim().is_empty() || !profile_name.chars().all(is_valid_profile_name_char) {
         return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
     }
 
-    let dir = get_profile_dir(app_name).ok_or(ProfileError::NoProjectDirectory)?;
+    let dir = dir_provider(app_name).ok_or(ProfileError::NoProjectDirectory)?;
     let sanitized_filename = sanitize_profile_name(profile_name);
     let file_path = dir.join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
 
@@ -133,59 +150,71 @@ pub fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile> {
 
 /// Lists the names of all available profiles.
 /// Names are derived from the filenames in the profile directory.
-pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
-    let dir = match get_profile_dir(app_name) {
+fn list_profiles_with_dir_provider<F>(app_name: &str, dir_provider: F) -> Result<Vec<String>>
+where
+    F: FnOnce(&str) -> Option<PathBuf>,
+{
+    let dir = match dir_provider(app_name) {
         Some(d) => d,
         None => return Ok(Vec::new()), // No directory, so no profiles
     };
 
-    println!("list_profiles: Looking for profiles in {:?}", dir);
+    println!(
+        "list_profiles_with_dir_provider: Looking for profiles in {:?}",
+        dir
+    );
 
     let mut profile_names = Vec::new();
-    for entry_result in fs::read_dir(dir)? {
-        let entry = entry_result?;
-        let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == PROFILE_FILE_EXTENSION {
-                    if let Some(stem) = path.file_stem() {
-                        // For now, assume the stem is the "sanitized" name.
-                        // Reconstructing the original name perfectly if it had spaces
-                        // and the sanitized version replaced spaces might be tricky.
-                        // For simplicity, we return the stem as the profile name.
-                        // Consider storing the original name inside the JSON if this becomes an issue.
-                        profile_names.push(stem.to_string_lossy().into_owned());
+    if dir.exists() {
+        // Ensure directory exists before trying to read it
+        for entry_result in fs::read_dir(dir)? {
+            let entry = entry_result?;
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    if ext == PROFILE_FILE_EXTENSION {
+                        if let Some(stem) = path.file_stem() {
+                            profile_names.push(stem.to_string_lossy().into_owned());
+                        }
                     }
                 }
             }
         }
     }
-    profile_names.sort_unstable(); // For consistent listing
-    println!("list_profiles: Found profiles: {:?}", profile_names);
+    profile_names.sort_unstable();
+    println!(
+        "list_profiles_with_dir_provider: Found profiles: {:?}",
+        profile_names
+    );
     Ok(profile_names)
 }
 
+// --- Public API wrappers that use the real get_profile_dir ---
+
+/// Saves a profile to a JSON file.
+/// The profile name from `profile.name` is used for the filename, after sanitization.
+pub fn save_profile(profile: &Profile, app_name: &str) -> Result<()> {
+    save_profile_with_dir_provider(profile, app_name, get_profile_dir)
+}
+
+/// Loads a profile from a JSON file.
+/// `profile_name` should be the user-facing name, which will be sanitized to find the filename.
+pub fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile> {
+    load_profile_with_dir_provider(profile_name, app_name, get_profile_dir)
+}
+
+/// Lists the names of all available profiles.
+/// Names are derived from the filenames in the profile directory.
+pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
+    list_profiles_with_dir_provider(app_name, get_profile_dir)
+}
+
 #[cfg(test)]
-mod tests {
+mod profile_tests {
     use super::*;
     use std::collections::HashSet;
-    use std::{env, fs, path::PathBuf};
+    use std::fs; // Removed env, path::PathBuf as they are not used directly in test_save_and_load_profile_roundtrip
     use tempfile::TempDir;
-
-    // Helper to ensure a clean profile directory for each test function that needs it.
-    // This is tricky because ProjectDirs might point to a real user location.
-    // For robust tests, we should mock get_profile_dir or use a known temp location.
-    // However, `directories` crate doesn't easily allow overriding for tests.
-    // We will test `get_profile_dir` separately and assume it works for other tests,
-    // or use a more complex setup with environment variables if needed.
-    // For now, let's proceed with the understanding that tests *might* create
-    // files in a real (but test-specific) app data location.
-
-    // Inside src/core/profiles.rs, in test_get_profile_dir_creates_if_not_exists
-
-    // In src/core/profiles.rs, test_get_profile_dir_creates_if_not_exists
-
-    // In src/core/profiles.rs, test_get_profile_dir_creates_if_not_exists
 
     #[test]
     fn test_get_profile_dir_creates_if_not_exists() {
@@ -250,12 +279,6 @@ mod tests {
                         "Parent of app_name dir should be Organization. Parent was: {:?}",
                         org_level_dir
                     );
-
-                    // The qualifier "com" does not appear to form a directory segment on Windows
-                    // for config_dir with the current ProjectDirs usage.
-                    // So, we remove the check for it here.
-                    // If you wanted to verify its presence on other platforms where it might appear,
-                    // you'd need more complex cfg attributes.
                 } else {
                     panic!(
                         "App name directory {:?} has no parent (expected org level), which is unexpected.",
@@ -297,13 +320,30 @@ mod tests {
         }
     }
 
+    /// Helper to create a mock directory provider for tests.
+    /// It takes a `&TempDir` to ensure the directory exists for the lifetime of the test.
+    /// The `TempDir` itself handles cleanup on drop.
+    fn mock_dir_provider(temp_dir_path: &Path) -> impl FnOnce(&str) -> Option<PathBuf> + '_ {
+        // The mock function returns a clone of the TempDir's path.
+        // The real `get_profile_dir` creates the "profiles" subdirectory.
+        // For the mock, we'll also ensure this subdirectory exists within the temp dir.
+        let mock_profiles_path = temp_dir_path.to_path_buf(); // Using TempDir directly as the "profiles" dir
+        if !mock_profiles_path.exists() {
+            fs::create_dir_all(&mock_profiles_path)
+                .expect("Failed to create mock profiles path for test");
+        }
+
+        move |_app_name: &str| -> Option<PathBuf> { Some(mock_profiles_path.clone()) }
+    }
+
     #[test]
-    fn test_save_and_load_profile() -> Result<()> {
-        let temp_app_name = format!("SourcePackerTest_SaveLoad_{}", rand::random::<u32>());
-        let profile_name = "My Test Profile".to_string(); // Name with space
-        let root = PathBuf::from("/test/project");
+    fn test_save_and_load_profile_with_mock_dir() -> Result<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let app_name_for_test = "TestAppWithMockDir";
+        let profile_name = "My Mocked Profile".to_string();
+        let root = PathBuf::from("/mock/project");
         let mut selected = HashSet::new();
-        selected.insert(root.join("src/main.rs"));
+        selected.insert(root.join("src/mock_main.rs"));
         let patterns = vec!["*.rs".to_string()];
 
         let original_profile = Profile {
@@ -314,10 +354,18 @@ mod tests {
             whitelist_patterns: patterns.clone(),
         };
 
-        save_profile(&original_profile, &temp_app_name)?;
+        // Use the _with_dir_provider version with our mock
+        save_profile_with_dir_provider(
+            &original_profile,
+            app_name_for_test,
+            mock_dir_provider(temp_dir.path()),
+        )?;
 
-        // Load by the user-facing name
-        let loaded_profile = load_profile(&profile_name, &temp_app_name)?;
+        let loaded_profile = load_profile_with_dir_provider(
+            &profile_name,
+            app_name_for_test,
+            mock_dir_provider(temp_dir.path()),
+        )?;
 
         assert_eq!(loaded_profile.name, original_profile.name);
         assert_eq!(loaded_profile.root_folder, original_profile.root_folder);
@@ -330,180 +378,118 @@ mod tests {
             original_profile.whitelist_patterns
         );
 
-        // Clean up
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            let _ = fs::remove_dir_all(proj_dirs.config_dir());
-        }
+        // temp_dir will be dropped here, cleaning up automatically.
         Ok(())
     }
 
     #[test]
-    fn test_list_profiles() -> Result<()> {
-        let temp_app_name = format!("SourcePackerTest_List_{}", rand::random::<u32>());
+    fn test_list_profiles_with_mock_dir() -> Result<()> {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let app_name_for_test = "TestAppListMockDir";
 
-        // Ensure profile dir exists and is empty initially for this app_name
-        if let Some(dir_to_clean) = get_profile_dir(&temp_app_name) {
-            if dir_to_clean.exists() {
-                for entry in fs::read_dir(&dir_to_clean)? {
-                    fs::remove_file(entry?.path())?;
-                }
-            }
-        } else {
-            // If get_profile_dir returned None, create it for the test.
-            // This is a bit of a workaround due to not mocking get_profile_dir easily.
-            let proj_dirs = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name).unwrap();
-            fs::create_dir_all(proj_dirs.config_dir().join("profiles"))?;
-        }
+        // Ensure profile dir is initially "empty" (by using a fresh temp_dir)
+        let initial_listed_names =
+            list_profiles_with_dir_provider(app_name_for_test, mock_dir_provider(temp_dir.path()))?;
+        assert!(
+            initial_listed_names.is_empty(),
+            "Initially, no profiles should be listed from mock dir"
+        );
 
-        let profiles_to_create = vec!["Alpha Profile", "Beta_Profile", "Gamma-Profile"];
+        let profiles_to_create = vec!["Mock Alpha", "Mock_Beta", "Mock-Gamma"];
         for name_str in &profiles_to_create {
-            let p = Profile::new(name_str.to_string(), PathBuf::from("/tmp"));
-            save_profile(&p, &temp_app_name)?;
+            let p = Profile::new(name_str.to_string(), PathBuf::from("/tmp_mock"));
+            save_profile_with_dir_provider(
+                &p,
+                app_name_for_test,
+                mock_dir_provider(temp_dir.path()),
+            )?;
         }
 
-        let mut listed_names = list_profiles(&temp_app_name)?;
-        // list_profiles returns sanitized names (stems)
+        let mut listed_names =
+            list_profiles_with_dir_provider(app_name_for_test, mock_dir_provider(temp_dir.path()))?;
+
         let mut expected_sanitized_names: Vec<String> = profiles_to_create
             .iter()
             .map(|s| sanitize_profile_name(s))
             .collect();
 
-        listed_names.sort_unstable(); // Ensure order for comparison
+        listed_names.sort_unstable();
         expected_sanitized_names.sort_unstable();
 
         assert_eq!(listed_names, expected_sanitized_names);
-
-        // Clean up
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            let _ = fs::remove_dir_all(proj_dirs.config_dir());
-        }
         Ok(())
     }
 
     #[test]
-    fn test_load_non_existent_profile() {
-        let temp_app_name = format!("SourcePackerTest_LoadNonExistent_{}", rand::random::<u32>());
-        let result = load_profile("This Profile Does Not Exist", &temp_app_name);
+    fn test_load_non_existent_profile_with_mock_dir() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let app_name_for_test = "TestAppLoadNonExistentMockDir";
+        let result = load_profile_with_dir_provider(
+            "This Profile Does Not Exist In Mock",
+            app_name_for_test,
+            mock_dir_provider(temp_dir.path()),
+        );
         assert!(matches!(result, Err(ProfileError::ProfileNotFound(_))));
-        // Clean up
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            let _ = fs::remove_dir_all(proj_dirs.config_dir());
-        }
     }
 
     #[test]
-    fn test_invalid_profile_names_save() {
-        let temp_app_name = format!("SourcePackerTest_InvalidSave_{}", rand::random::<u32>());
-        let p_empty = Profile::new("".to_string(), PathBuf::from("/tmp"));
-        let p_invalid_char = Profile::new("My/Profile".to_string(), PathBuf::from("/tmp"));
+    fn test_invalid_profile_names_save_with_mock_dir() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let app_name_for_test = "TestAppInvalidSaveMockDir";
+        let p_empty = Profile::new("".to_string(), PathBuf::from("/tmp_mock"));
+        let p_invalid_char = Profile::new("My/MockProfile".to_string(), PathBuf::from("/tmp_mock"));
 
         assert!(matches!(
-            save_profile(&p_empty, &temp_app_name),
+            save_profile_with_dir_provider(
+                &p_empty,
+                app_name_for_test,
+                mock_dir_provider(temp_dir.path())
+            ),
             Err(ProfileError::InvalidProfileName(_))
         ));
         assert!(matches!(
-            save_profile(&p_invalid_char, &temp_app_name),
+            save_profile_with_dir_provider(
+                &p_invalid_char,
+                app_name_for_test,
+                mock_dir_provider(temp_dir.path())
+            ),
             Err(ProfileError::InvalidProfileName(_))
         ));
-        // Clean up
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            let _ = fs::remove_dir_all(proj_dirs.config_dir());
-        }
     }
 
     #[test]
-    fn test_invalid_profile_names_load() {
-        let temp_app_name = format!("SourcePackerTest_InvalidLoad_{}", rand::random::<u32>());
+    fn test_invalid_profile_names_load_with_mock_dir() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let app_name_for_test = "TestAppInvalidLoadMockDir";
         assert!(matches!(
-            load_profile("", &temp_app_name),
+            load_profile_with_dir_provider(
+                "",
+                app_name_for_test,
+                mock_dir_provider(temp_dir.path())
+            ),
             Err(ProfileError::InvalidProfileName(_))
         ));
         assert!(matches!(
-            load_profile("My/Profile", &temp_app_name),
+            load_profile_with_dir_provider(
+                "My/MockProfile",
+                app_name_for_test,
+                mock_dir_provider(temp_dir.path())
+            ),
             Err(ProfileError::InvalidProfileName(_))
         ));
-        // Clean up
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            let _ = fs::remove_dir_all(proj_dirs.config_dir());
-        }
     }
 
-    // Helper to point all profile operations at our temp directory.
-    fn with_temp_config_dir<T>(test: impl FnOnce() -> T) -> T {
-        let temp = TempDir::new().expect("create tempdir");
-        unsafe {
-            env::set_var("XDG_CONFIG_HOME", temp.path());
-            env::set_var("APPDATA", temp.path());
-        }
-        print!("Using temp config dir: {:?}", temp.path());
-        let result = test();
-        // cleanup happens automatically
-        result
-    }
+    // Remove the old `with_temp_config_dir` helper and tests that used it directly.
+    // `test_save_and_load_profile_roundtrip`, `test_list_profiles_returns_all_names`,
+    // `test_load_nonexistent_profile_errors` are now effectively replaced by their
+    // `_with_mock_dir` counterparts above.
 
-    const APP_NAME: &str = "SourcePackerTest";
+    // If you had other tests relying on the old `get_profile_dir` implicitly,
+    // you'd refactor them similarly to use `_with_dir_provider` and `mock_dir_provider`.
 
-    #[test]
-    fn test_save_and_load_profile_roundtrip() {
-        with_temp_config_dir(|| {
-            let initial_names = list_profiles(APP_NAME).expect("listing profiles");
-            assert_eq!(initial_names.len(), 0, "No profiles should exist at start");
-            // Build a Profile
-            let mut profile = Profile::new("mytest".into(), PathBuf::from("/project/root"));
-            profile.selected_paths.insert("foo".into());
-            profile.deselected_paths.insert("bar".into());
-            profile.whitelist_patterns.push("*.rs".into());
-
-            // Save it
-            save_profile(&profile, APP_NAME).expect("saving profile");
-
-            let profile_path = get_profile_dir(APP_NAME)
-                .expect("Profile directory not found")
-                .join("mytest.json");
-            assert!(profile_path.exists(), "profile file was not created");
-
-            // Load it back
-            let loaded = load_profile("mytest", APP_NAME).expect("loading profile");
-
-            // Destructure & assert each field
-            assert_eq!(loaded.name, profile.name);
-            assert_eq!(loaded.root_folder, profile.root_folder);
-            assert_eq!(loaded.selected_paths, profile.selected_paths);
-            assert_eq!(loaded.deselected_paths, profile.deselected_paths);
-            assert_eq!(loaded.whitelist_patterns, profile.whitelist_patterns);
-        });
-    }
-
-    #[test]
-    fn test_list_profiles_returns_all_names() {
-        with_temp_config_dir(|| {
-            let initial_names = list_profiles(APP_NAME).expect("listing profiles");
-            assert_eq!(initial_names.len(), 0, "No profiles should exist at start");
-            // Prepare two dummy profiles
-            let mut p1 = Profile::new("one".into(), PathBuf::from("/project/root"));
-            let mut p2 = Profile::new("two".into(), PathBuf::from("/project/root"));
-            save_profile(&p1, APP_NAME).unwrap();
-            save_profile(&p2, APP_NAME).unwrap();
-
-            // List them
-            let mut names = list_profiles(APP_NAME).expect("listing profiles");
-            names.sort();
-
-            // We expect exactly ["one", "two"]
-            assert_eq!(names, vec!["one".to_string(), "two".to_string()]);
-        });
-    }
-
-    #[test]
-    fn test_load_nonexistent_profile_errors() {
-        with_temp_config_dir(|| {
-            let err = load_profile("does_not_exist", APP_NAME).unwrap_err();
-            // You can match on your specific error enum variant if you have one:
-            assert!(
-                matches!(err, ProfileError::ProfileNotFound(_)),
-                "expected a ProfileNotFound error, got {:?}",
-                err
-            );
-        });
-    }
+    // The original `test_save_and_load_profile` and `test_list_profiles` that were not using `with_temp_config_dir`
+    // but were still problematic because they used the real profile dir, can be removed if the new
+    // `_with_mock_dir` tests cover their intent. Otherwise, refactor them too.
+    // Let's assume `test_save_and_load_profile_with_mock_dir` and `test_list_profiles_with_mock_dir`
+    // are the correct replacements for `test_save_and_load_profile_roundtrip` and `test_list_profiles_returns_all_names`.
 }

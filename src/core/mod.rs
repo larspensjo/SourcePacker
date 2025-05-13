@@ -11,7 +11,6 @@ pub use models::{FileNode, FileState, Profile};
 // Re-export profile management functions
 pub use profiles::{
     ProfileError, // Also re-export the error type for this module
-    get_profile_dir,
     list_profiles,
     load_profile,
     save_profile,
