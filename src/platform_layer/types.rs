@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 /// An opaque identifier for a native window, managed by the platform layer.
 ///
 /// The application logic layer uses this ID to refer to specific windows
@@ -60,7 +61,9 @@ pub struct TreeItemDescriptor {
 pub enum AppEvent {
     /// Signals that the user has requested to close a window (e.g., clicked the 'X' button).
     /// The application logic should decide whether to allow the close.
-    WindowCloseRequested { window_id: WindowId },
+    WindowCloseRequested {
+        window_id: WindowId,
+    },
     /// Signals that a window has been resized.
     WindowResized {
         window_id: WindowId,
@@ -69,7 +72,9 @@ pub enum AppEvent {
     },
     /// Signals that a window and its native resources have been destroyed.
     /// The `WindowId` should be considered invalid after this event.
-    WindowDestroyed { window_id: WindowId },
+    WindowDestroyed {
+        window_id: WindowId,
+    },
     /// Signals that a tree view item's check state has been changed by user interaction.
     TreeViewItemToggled {
         window_id: WindowId,
@@ -86,7 +91,13 @@ pub enum AppEvent {
         window_id: WindowId,
         result: Option<std::path::PathBuf>, // Some(path) if successful, None if cancelled
     },
-    // Future: MenuAction, KeyPressed, etc.
+    MenuLoadProfileClicked,
+    MenuSaveProfileAsClicked,
+    FileOpenDialogCompleted {
+        // Specifically for loading profiles
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    },
 }
 
 // --- Commands from App Logic to Platform ---
@@ -123,8 +134,14 @@ pub enum PlatformCommand {
         default_filename: String,
         /// Example: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
         filter_spec: String,
+        initial_dir: Option<PathBuf>,
     },
-    // Future: CreateControl, ShowDialog, etc.
+    ShowOpenFileDialog {
+        window_id: WindowId,
+        title: String,
+        filter_spec: String,
+        initial_dir: Option<PathBuf>,
+    },
 }
 
 // --- Trait for App Logic to Handle Events ---

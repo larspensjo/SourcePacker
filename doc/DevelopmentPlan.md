@@ -89,7 +89,14 @@ This plan breaks down the development of SourcePacker into small, incremental st
 ## P2.7: Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)?
 *   That would take away almost all code from handle_event.
 
-## P2.8: Use AppData\Local instead of AppData\Roaming.
+## P2.8: Some cleanup
+*   Use AppData\Local instead of AppData\Roaming.
+*   The error paths in MyAppLogic mostly eprintln!. You'll want to replace these with PlatformCommands to show error messages in a status field.
+*   The Win32ApiInternalState::handle_window_message is getting large. Some message handlers could be broken out into separate functions within that impl block for better organization if they grow more complex.
+*   Profile Name in create_profile_from_current_state: When saving, create_profile_from_current_state takes the new profile name. The original profile.name in MyAppLogic should perhaps be updated only after a successful save.
+*   `Win32ApiInternalState::process_commands_from_event_handler` and `PlatformInterface::execute_command` seem to do the same thing. That can't be right?
+*   There are some big functions in app.rs. I think it is possible to break out parts of them, and possibly finding common parts that can be re-used.
+*   MyAppLogic.handle_event() should be possible to split up. Either as member functions, or as separate functions.
 
 # Phase 3: Enhancements & UX Improvements
 

@@ -81,7 +81,7 @@ pub fn get_profile_dir(app_name: &str) -> Option<PathBuf> {
         .flatten() // If map returns None, flatten keeps it None
 }
 
-fn sanitize_profile_name(name: &str) -> String {
+pub fn sanitize_profile_name(name: &str) -> String {
     name.chars()
         .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
         .collect()

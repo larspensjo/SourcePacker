@@ -13,15 +13,9 @@ use windows::{
         UI::{
             Controls::{
                 Dialogs::{
-                    CommDlgExtendedError,
-                    // Corrected path for these
-                    GetSaveFileNameW,
-                    OFN_EXPLORER,
-                    OFN_EXTENSIONDIFFERENT,
-                    OFN_NOCHANGEDIR,
-                    OFN_OVERWRITEPROMPT,
-                    OFN_PATHMUSTEXIST,
-                    OPENFILENAMEW,
+                    CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER,
+                    OFN_EXTENSIONDIFFERENT, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
+                    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
                 },
                 ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
             },
@@ -135,11 +129,12 @@ impl Win32ApiInternalState {
     /// Win32ApiInternalState::process_commands_from_event_handler.
     /// It takes `&Arc<Self>` because `process_commands_from_event_handler` might be called recursively.
     fn _handle_show_save_file_dialog_impl(
-        self: &Arc<Self>, // Takes Arc<Self> to match how process_commands_from_event_handler is called
+        self: &Arc<Self>, // match how process_commands_from_event_handler is called
         window_id: WindowId,
         title: String,
         default_filename: String,
         filter_spec: String,
+        initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
         let hwnd_owner = {
             let windows_guard = self.windows.read().map_err(|_| {
@@ -168,6 +163,11 @@ impl Win32ApiInternalState {
         let title_hstring = HSTRING::from(title);
         let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
 
+        let initial_dir_hstring = initial_dir.map(|p| HSTRING::from(p.to_string_lossy().as_ref()));
+        let initial_dir_pcwstr = initial_dir_hstring
+            .as_ref()
+            .map_or(PCWSTR::null(), |h| PCWSTR(h.as_ptr()));
+
         let mut ofn = OPENFILENAMEW {
             lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
             hwndOwner: hwnd_owner,
@@ -175,6 +175,7 @@ impl Win32ApiInternalState {
             nMaxFile: file_buffer.len() as u32,
             lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
             lpstrTitle: PCWSTR(title_hstring.as_ptr()),
+            lpstrInitialDir: initial_dir_pcwstr, // Use it here
             Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
             ..Default::default()
         };
@@ -238,6 +239,109 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
+    fn _handle_show_open_file_dialog_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        title: String,
+        filter_spec: String,
+        initial_dir: Option<PathBuf>,
+    ) -> PlatformResult<()> {
+        let hwnd_owner = {
+            /* ... (same as _handle_show_save_file_dialog_impl to get hwnd_owner) ... */
+            let windows_guard = self.windows.read().map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to acquire read lock for windows map (open dialog)".into(),
+                )
+            })?;
+            windows_guard
+                .get(&window_id)
+                .map(|data| data.hwnd)
+                .ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!(
+                        "WindowId {:?} not found for ShowOpenFileDialog",
+                        window_id
+                    ))
+                })?
+        };
+
+        let mut file_buffer: Vec<u16> = vec![0; 2048]; // Buffer for the selected file path
+
+        let title_hstring = HSTRING::from(title);
+        let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
+        let initial_dir_hstring = initial_dir.map(|p| HSTRING::from(p.to_string_lossy().as_ref()));
+        let initial_dir_pcwstr = initial_dir_hstring
+            .as_ref()
+            .map_or(PCWSTR::null(), |h| PCWSTR(h.as_ptr()));
+
+        let mut ofn = OPENFILENAMEW {
+            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+            hwndOwner: hwnd_owner,
+            lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
+            nMaxFile: file_buffer.len() as u32,
+            lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
+            lpstrTitle: PCWSTR(title_hstring.as_ptr()),
+            lpstrInitialDir: initial_dir_pcwstr,
+            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR,
+            ..Default::default()
+        };
+
+        let open_result = unsafe { GetOpenFileNameW(&mut ofn) }.as_bool();
+        let mut path_result: Option<PathBuf> = None;
+
+        if open_result {
+            let len = file_buffer
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(file_buffer.len());
+            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
+            path_result = Some(PathBuf::from(path_str));
+            println!(
+                "Platform: Open dialog returned path: {:?}",
+                path_result.as_ref().unwrap()
+            );
+        } else {
+            let error_code = unsafe { CommDlgExtendedError() };
+            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
+                eprintln!(
+                    "Platform: GetOpenFileNameW failed. CommDlgExtendedError: {:?}",
+                    error_code
+                );
+            } else {
+                println!("Platform: Open dialog cancelled by user.");
+            }
+        }
+
+        let event = AppEvent::FileOpenDialogCompleted {
+            // Use the new specific event
+            window_id,
+            result: path_result,
+        };
+
+        // Send the event to AppLogic and process any commands it returns
+        let commands_from_dialog_completion = if let Some(handler_arc) = self
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                handler_guard.handle_event(event)
+            } else {
+                eprintln!("Platform: Failed to lock event handler after open dialog.");
+                vec![]
+            }
+        } else {
+            eprintln!("Platform: Event handler not available after open dialog.");
+            vec![]
+        };
+
+        if !commands_from_dialog_completion.is_empty() {
+            self.process_commands_from_event_handler(commands_from_dialog_completion);
+        }
+        Ok(())
+    }
+
     pub fn process_commands_from_event_handler(self: &Arc<Self>, commands: Vec<PlatformCommand>) {
         for cmd in commands {
             let result = match cmd {
@@ -265,11 +369,25 @@ impl Win32ApiInternalState {
                     title,
                     default_filename,
                     filter_spec,
+                    initial_dir, // Add initial_dir here
                 } => self._handle_show_save_file_dialog_impl(
                     window_id,
                     title,
                     default_filename,
                     filter_spec,
+                    initial_dir, // Pass it along
+                ),
+                PlatformCommand::ShowOpenFileDialog {
+                    // New case
+                    window_id,
+                    title,
+                    filter_spec,
+                    initial_dir,
+                } => self._handle_show_open_file_dialog_impl(
+                    window_id,
+                    title,
+                    filter_spec,
+                    initial_dir,
                 ),
             };
 
@@ -416,6 +534,7 @@ impl PlatformInterface {
                 title,
                 default_filename,
                 filter_spec,
+                initial_dir, // Add initial_dir here
             } => {
                 // Call the centralized internal handler via the internal_state Arc
                 self.internal_state._handle_show_save_file_dialog_impl(
@@ -423,8 +542,21 @@ impl PlatformInterface {
                     title,
                     default_filename,
                     filter_spec,
+                    initial_dir, // Pass it along
                 )
             }
+            PlatformCommand::ShowOpenFileDialog {
+                // New case
+                window_id,
+                title,
+                filter_spec,
+                initial_dir,
+            } => self.internal_state._handle_show_open_file_dialog_impl(
+                window_id,
+                title,
+                filter_spec,
+                initial_dir,
+            ),
         }
     }
 

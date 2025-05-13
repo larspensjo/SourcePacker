@@ -25,6 +25,9 @@ use std::sync::{Arc, Mutex};
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
+pub(crate) const ID_MENU_FILE_LOAD_PROFILE: i32 = 2001;
+pub(crate) const ID_MENU_FILE_SAVE_PROFILE_AS: i32 = 2002;
+
 const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON"); // Helper for button class name
 
 // Custom message for TreeView checkbox clicks
@@ -209,6 +212,44 @@ pub(crate) fn hiword_from_lparam(lparam: LPARAM) -> i32 {
     ((lparam.0 >> 16) & 0xFFFF) as i32
 }
 
+fn create_app_menu(hwnd: HWND) -> PlatformResult<()> {
+    unsafe {
+        let h_menu = CreateMenu()?;
+        let h_file_popup = CreatePopupMenu()?;
+
+        AppendMenuW(
+            h_file_popup,
+            MF_STRING,
+            ID_MENU_FILE_LOAD_PROFILE as usize, // Cast to usize for WPARAM/LPARAM equivalent
+            &HSTRING::from("Load Profile..."),
+        )?;
+        AppendMenuW(
+            h_file_popup,
+            MF_STRING,
+            ID_MENU_FILE_SAVE_PROFILE_AS as usize,
+            &HSTRING::from("Save Profile As..."),
+        )?;
+        // Consider adding MF_SEPARATOR and File->Exit later
+
+        AppendMenuW(
+            h_menu,
+            MF_POPUP,
+            h_file_popup.0 as usize,
+            &HSTRING::from("&File"),
+        )?;
+
+        if SetMenu(hwnd, Some(h_menu)).is_err() {
+            // DestroyMenu might be needed here on h_menu and h_file_popup if SetMenu fails
+            // For simplicity, just returning error.
+            return Err(PlatformError::OperationFailed(format!(
+                "SetMenu failed: {:?}",
+                GetLastError()
+            )));
+        }
+    }
+    Ok(())
+}
+
 impl Win32ApiInternalState {
     fn handle_window_message(
         self: &Arc<Self>,
@@ -233,6 +274,13 @@ impl Win32ApiInternalState {
                 // WM_CREATE doesn't usually override LRESULT but might produce events indirectly later
                 self.handle_wm_create(hwnd, wparam, lparam, window_id);
                 // No LRESULT override needed, DefWindowProc should be called after event processing
+                // Create menu for the main window
+                // Assuming WM_CREATE is only for the main window that needs a menu
+                // A more robust way would be to check if it's the primary window.
+                if create_app_menu(hwnd).is_err() {
+                    eprintln!("Platform: Failed to create application menu.");
+                    // Decide if this is fatal. For now, continue.
+                }
             }
             WM_SIZE => {
                 // Returns the event, no LRESULT override needed
@@ -510,20 +558,44 @@ impl Win32ApiInternalState {
     ) -> Option<AppEvent> {
         // Returns potential event, DefWindowProc called later
         let control_id = loword_from_wparam(wparam);
+        // For menu items, notification_code (high word of wparam) is 0 if from menu, 1 if from accelerator
         let notification_code = highord_from_wparam(wparam);
 
-        if notification_code as u32 == BN_CLICKED && control_id == ID_BUTTON_GENERATE_ARCHIVE {
-            println!(
-                "Platform: Generate Archive button (ID {}) clicked.",
-                control_id
-            );
-            Some(AppEvent::ButtonClicked {
-                window_id,
-                control_id,
-            })
-        } else {
-            None // No relevant command processed
+        if notification_code == 0 || notification_code == 1 {
+            // Menu or Accelerator
+            match control_id {
+                ID_BUTTON_GENERATE_ARCHIVE => { // This is unlikely to be hit if it's a button ID
+                    // Button clicks are usually BN_CLICKED in notification_code, handled separately
+                    // This case is only if menu item ID somehow conflicts with button ID and source is menu
+                    // For clarity, button clicks are BN_CLICKED. Here control_id is the command ID.
+                }
+                ID_MENU_FILE_LOAD_PROFILE => {
+                    println!("Platform: 'Load Profile' menu item clicked.");
+                    return Some(AppEvent::MenuLoadProfileClicked);
+                }
+                ID_MENU_FILE_SAVE_PROFILE_AS => {
+                    println!("Platform: 'Save Profile As' menu item clicked.");
+                    return Some(AppEvent::MenuSaveProfileAsClicked);
+                }
+                _ => {} // Other menu IDs
+            }
         }
+
+        // Handle button clicks via notification code if they also send WM_COMMAND
+        // (Typically BN_CLICKED comes as a notification_code within WM_COMMAND)
+        if notification_code as u32 == BN_CLICKED {
+            if control_id == ID_BUTTON_GENERATE_ARCHIVE {
+                println!(
+                    "Platform: Generate Archive button (ID {}) clicked via WM_COMMAND BN_CLICKED.",
+                    control_id
+                );
+                return Some(AppEvent::ButtonClicked {
+                    window_id,
+                    control_id,
+                });
+            }
+        }
+        None
     }
 
     fn handle_wm_close(

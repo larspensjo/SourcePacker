@@ -12,7 +12,7 @@ fn main() -> PlatformResult<()> {
     println!("Application Starting...");
 
     // 1. Initialize the Platform Layer
-    // The app name is used for things like the window class name.
+    // The app name is used for things like the window class name. It has to match APP_NAME_FOR_PROFILES :-(
     let platform_interface = match PlatformInterface::new("SourcePackerApp".to_string()) {
         Ok(pi) => pi,
         Err(e) => {
