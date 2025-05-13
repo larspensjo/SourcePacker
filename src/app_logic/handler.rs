@@ -382,3 +382,138 @@ impl PlatformEventHandler for MyAppLogic {
         // Perform any final cleanup for app_logic here if needed.
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*; // Bring MyAppLogic and other items into scope
+    use tempfile::NamedTempFile; // For creating temporary files in tests
+
+    #[test]
+    fn test_handle_button_click_generates_save_dialog() {
+        let mut logic = MyAppLogic::new();
+        logic.main_window_id = Some(WindowId(1));
+        logic.file_nodes_cache = vec![]; // empty tree
+        logic.root_path_for_scan = PathBuf::from(".");
+        // Ensure pending_archive_content is None initially
+        let cmds = logic.handle_event(AppEvent::ButtonClicked {
+            window_id: WindowId(1),
+            control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
+        });
+        // Expect a ShowSaveFileDialog command
+        assert!(matches!(
+            cmds.as_slice(),
+            [PlatformCommand::ShowSaveFileDialog { .. }]
+        ));
+    }
+
+    #[test]
+    fn test_handle_file_save_dialog_completed_with_path() {
+        let mut logic = MyAppLogic::new();
+        let main_id = WindowId(1);
+        logic.main_window_id = Some(main_id);
+        logic.pending_archive_content = Some("ARCHIVE CONTENT".to_string());
+
+        // Create a temp file and pass its path to the event
+        let tmp = NamedTempFile::new().unwrap();
+        let path = tmp.path().to_path_buf();
+        let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
+            window_id: main_id,
+            result: Some(path.clone()),
+        });
+
+        // No follow-up commands expected
+        assert!(cmds.is_empty());
+        // pending_archive_content should be cleared
+        assert_eq!(logic.pending_archive_content, None);
+        // And the file should have been written
+        let written = fs::read_to_string(path).unwrap();
+        assert_eq!(written, "ARCHIVE CONTENT");
+    }
+
+    #[test]
+    fn test_handle_file_save_dialog_cancelled() {
+        let mut logic = MyAppLogic::new();
+        let main_id = WindowId(1);
+        logic.main_window_id = Some(main_id);
+        logic.pending_archive_content = Some("WILL BE CLEARED".to_string());
+
+        // Simulate user cancelling the save dialog
+        let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
+            window_id: main_id,
+            result: None,
+        });
+
+        assert!(cmds.is_empty());
+        // pending content should be cleared on cancel
+        assert_eq!(logic.pending_archive_content, None);
+    }
+
+    #[test]
+    fn test_handle_treeview_item_toggled_updates_model_and_emits_visual_update() {
+        let mut logic = MyAppLogic::new();
+        let main_id = WindowId(1);
+        logic.main_window_id = Some(main_id);
+
+        // Prepare the cache + mapping
+        let foo_path = PathBuf::from("/tmp/foo");
+        logic.file_nodes_cache = vec![FileNode::new(foo_path.clone(), "foo".into(), false)];
+        logic
+            .path_to_tree_item_id
+            .insert(foo_path.clone(), TreeItemId(42));
+
+        let cmds = logic.handle_event(AppEvent::TreeViewItemToggled {
+            window_id: main_id,
+            item_id: TreeItemId(42),
+            new_state: CheckState::Checked,
+        });
+
+        // Exactly one command?
+        assert_eq!(cmds.len(), 1);
+
+        // Destructure it and compare each field
+        match &cmds[0] {
+            PlatformCommand::UpdateTreeItemVisualState {
+                window_id,
+                item_id,
+                new_state,
+            } => {
+                assert_eq!(*window_id, main_id);
+                assert_eq!(*item_id, TreeItemId(42));
+                assert_eq!(*new_state, CheckState::Checked);
+            }
+            other => panic!("expected UpdateTreeItemVisualState, got {:?}", other),
+        }
+    }
+    #[test]
+    fn test_handle_window_close_requested_generates_close_command() {
+        let mut logic = MyAppLogic::new();
+        let main_id = WindowId(7);
+        logic.main_window_id = Some(main_id);
+
+        let cmds = logic.handle_event(AppEvent::WindowCloseRequested { window_id: main_id });
+
+        // Exactly one command?
+        assert_eq!(cmds.len(), 1);
+
+        // Destructure it and compare the field
+        match &cmds[0] {
+            PlatformCommand::CloseWindow { window_id } => {
+                assert_eq!(*window_id, main_id);
+            }
+            other => panic!("expected CloseWindow, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_handle_window_destroyed_clears_main_window_id() {
+        let mut logic = MyAppLogic::new();
+        let main_id = WindowId(7);
+        logic.main_window_id = Some(main_id);
+
+        let cmds = logic.handle_event(AppEvent::WindowDestroyed { window_id: main_id });
+
+        // No commands, but main_window_id should be dropped
+        assert!(cmds.is_empty());
+        assert_eq!(logic.main_window_id, None);
+    }
+}
