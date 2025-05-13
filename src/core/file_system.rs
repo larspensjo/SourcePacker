@@ -73,128 +73,20 @@ pub fn scan_directory(
         .map(|s| Pattern::new(s))
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    // We'll build the tree using a HashMap to easily link children to their parents.
-    // The key is the path of the directory, and the value is its FileNode representation.
     let mut tree_nodes: HashMap<PathBuf, FileNode> = HashMap::new();
-    let mut top_level_nodes: Vec<FileNode> = Vec::new(); // For items directly under root_path
-
-    // WalkDir iterates entries breadth-first by default if min_depth/max_depth are not used.
-    // We want depth-first or process files first to ensure parent dirs are created.
-    // WalkDir processes entries as they are discovered, which can be complex for tree building.
-    // A simpler approach for this tree structure:
-    // 1. Iterate all entries.
-    // 2. For each file, check whitelist. If it matches, ensure its parent directories exist in our tree.
-    // 3. Then, construct the hierarchy.
+    let mut top_level_nodes: Vec<FileNode> = Vec::new();
 
     // Use WalkDir to get all entries.
     // min_depth(1) to skip the root_path itself as an entry, we handle it as the container.
     for entry_result in WalkDir::new(root_path).min_depth(1) {
-        let entry = entry_result?;
-        let path = entry.path().to_path_buf();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.file_type().is_dir();
-
-        if is_dir {
-            // For directories, we don't add them immediately unless a child file forces their creation.
-            // We'll create FileNode for directories on-demand.
-            continue;
-        }
-
-        // It's a file, check against whitelist patterns.
-        // Patterns should typically be relative to the root_path or absolute.
-        // For simplicity, let's assume patterns match against the file name or path relative to root.
-        let mut matches_whitelist = false;
-        if !whitelist_patterns.is_empty() {
-            for pattern in &whitelist_patterns {
-                // Try matching against the full path for flexibility
-                if pattern.matches_path(&path) {
-                    matches_whitelist = true;
-                    break;
-                }
-                // Also try matching against path relative to root_path
-                if let Ok(relative_path) = path.strip_prefix(root_path) {
-                    if pattern.matches_path(relative_path) {
-                        matches_whitelist = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if matches_whitelist {
-            // If a file matches, ensure all its parent directories up to root_path are in `tree_nodes`.
-            let mut current_path_for_ascent = path.clone(); // Path of the matched file
-            let mut child_node_to_add_to_parent: Option<FileNode> =
-                Some(FileNode::new(path.clone(), name.clone(), false));
-
-            // Iterate upwards from the file's parent to the root_path's parent
-            loop {
-                // Get the parent of the current path for ascent
-                let parent_path_opt = current_path_for_ascent.parent();
-
-                // If no parent, or parent is outside the root, or parent is root's parent, stop.
-                match parent_path_opt {
-                    None => break, // Should not happen if path is well-formed under root
-                    Some(p_ref) if p_ref == root_path.parent().unwrap_or_else(|| Path::new("")) => {
-                        break;
-                    }
-                    Some(p_ref) if p_ref != root_path && !p_ref.starts_with(root_path) => break,
-                    Some(parent_path_ref) => {
-                        // parent_path_ref is a &Path
-                        let parent_path_owned = parent_path_ref.to_path_buf(); // Create owned PathBuf
-
-                        let parent_node = tree_nodes
-                            .entry(parent_path_owned.clone()) // Use cloned owned path for entry
-                            .or_insert_with(|| {
-                                FileNode::new(
-                                    parent_path_owned.clone(), // Use cloned owned path
-                                    parent_path_owned
-                                        .file_name()
-                                        .unwrap_or_default()
-                                        .to_string_lossy()
-                                        .into_owned(),
-                                    true, // It's a directory because it's a parent
-                                )
-                            });
-
-                        if let Some(child_node) = child_node_to_add_to_parent.take() {
-                            if !parent_node
-                                .children
-                                .iter()
-                                .any(|c| c.path == child_node.path)
-                            {
-                                parent_node.children.push(child_node);
-                            }
-                        }
-
-                        // The current parent now becomes the path to ascend from in the next iteration
-                        current_path_for_ascent = parent_path_owned; // Assign the *owned* PathBuf
-
-                        // If the parent we just processed IS the root_path, we're done ascending for this file.
-                        // Any `child_node_to_add_to_parent` should have been None (already added).
-                        // If original file was directly under root, it's handled after this loop.
-                        if current_path_for_ascent == root_path {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // After the loop, if child_node_to_add_to_parent still has a value,
-            // it means the original matched file was directly under the root_path.
-            if let Some(direct_child_of_root) = child_node_to_add_to_parent.take() {
-                if let Some(p) = direct_child_of_root.path.parent() {
-                    if p == root_path {
-                        if !top_level_nodes
-                            .iter()
-                            .any(|n| n.path == direct_child_of_root.path)
-                        {
-                            top_level_nodes.push(direct_child_of_root);
-                        }
-                    }
-                }
-            }
-        }
+        let entry = entry_result?; // Propagate WalkDir errors
+        process_entry(
+            entry,
+            root_path,
+            &whitelist_patterns,
+            &mut tree_nodes,
+            &mut top_level_nodes,
+        )?; // Propagate our custom errors
     }
 
     // Assemble top_level_nodes by adding directories from tree_nodes that are direct children of root_path
@@ -205,7 +97,6 @@ pub fn scan_directory(
             if let Some(parent_path) = dir_path.parent() {
                 if parent_path == root_path {
                     // This directory is a direct child of root_path.
-                    // Check if it's already effectively in top_level_nodes (e.g. if a child file added it)
                     // The tree_nodes map holds the definitive versions of directories with their children.
                     if !top_level_nodes.iter().any(|n| n.path == dir_path) {
                         top_level_nodes.push(node);
@@ -218,6 +109,110 @@ pub fn scan_directory(
     // Sort nodes alphabetically by name for consistent display
     sort_file_nodes_recursively(&mut top_level_nodes);
     Ok(top_level_nodes)
+}
+
+/// Processes a single directory entry from WalkDir.
+/// If it's a whitelisted file, it adds the file and its necessary parent directories
+/// to the `tree_nodes` map and `top_level_nodes` vector.
+fn process_entry(
+    entry: walkdir::DirEntry,
+    root_path: &Path,
+    whitelist_patterns: &[Pattern],
+    tree_nodes: &mut HashMap<PathBuf, FileNode>,
+    top_level_nodes: &mut Vec<FileNode>,
+) -> Result<()> {
+    let path = entry.path().to_path_buf();
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let is_dir = entry.file_type().is_dir();
+
+    if is_dir {
+        // Directories are created on-demand when a child file necessitates them.
+        return Ok(());
+    }
+
+    // It's a file, check against whitelist patterns.
+    let mut matches_whitelist = false;
+    if !whitelist_patterns.is_empty() {
+        for pattern in whitelist_patterns {
+            if pattern.matches_path(&path) {
+                matches_whitelist = true;
+                break;
+            }
+            if let Ok(relative_path) = path.strip_prefix(root_path) {
+                if pattern.matches_path(relative_path) {
+                    matches_whitelist = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if matches_whitelist {
+        // If a file matches, ensure all its parent directories up to root_path are in `tree_nodes`.
+        let mut current_path_for_ascent = path.clone();
+        let mut child_node_to_add_to_parent: Option<FileNode> =
+            Some(FileNode::new(path.clone(), name.clone(), false));
+
+        // Iterate upwards from the file's parent to the root_path's parent
+        loop {
+            let parent_path_opt = current_path_for_ascent.parent();
+            match parent_path_opt {
+                None => break,
+                Some(p_ref) if p_ref == root_path.parent().unwrap_or_else(|| Path::new("")) => {
+                    break;
+                }
+                Some(p_ref) if p_ref != root_path && !p_ref.starts_with(root_path) => break,
+                Some(parent_path_ref) => {
+                    let parent_path_owned = parent_path_ref.to_path_buf();
+                    let parent_node =
+                        tree_nodes
+                            .entry(parent_path_owned.clone())
+                            .or_insert_with(|| {
+                                FileNode::new(
+                                    parent_path_owned.clone(),
+                                    parent_path_owned
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .into_owned(),
+                                    true, // It's a directory because it's a parent
+                                )
+                            });
+
+                    if let Some(child_node) = child_node_to_add_to_parent.take() {
+                        if !parent_node
+                            .children
+                            .iter()
+                            .any(|c| c.path == child_node.path)
+                        {
+                            parent_node.children.push(child_node);
+                        }
+                    }
+
+                    current_path_for_ascent = parent_path_owned;
+                    if current_path_for_ascent == root_path {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // After the loop, if child_node_to_add_to_parent still has a value,
+        // it means the original matched file was directly under the root_path.
+        if let Some(direct_child_of_root) = child_node_to_add_to_parent.take() {
+            if let Some(p) = direct_child_of_root.path.parent() {
+                if p == root_path {
+                    if !top_level_nodes
+                        .iter()
+                        .any(|n| n.path == direct_child_of_root.path)
+                    {
+                        top_level_nodes.push(direct_child_of_root);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {

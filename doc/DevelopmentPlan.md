@@ -86,6 +86,9 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Implement logic to store/retrieve the last used profile name (e.g., in a simple config file or registry).
 *   On startup, attempt to load this profile.
 
+## P2.7: Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)?
+*   That would take away almost all code from handle_event.
+
 # Phase 3: Enhancements & UX Improvements
 
 ## P3.1: Status Bar
