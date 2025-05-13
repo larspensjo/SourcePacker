@@ -45,7 +45,7 @@ pub(crate) struct Win32ApiInternalState {
     pub(crate) h_instance: HINSTANCE,
     pub(crate) next_window_id_counter: AtomicUsize,
     /// Maps platform-agnostic `WindowId` to native `HWND` and associated window data.
-    pub(crate) windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
+    pub(crate) window_map: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     /// A weak reference to the event handler provided by the application logic.
     /// Stored to be accessible by the WndProc. Weak to avoid cycles if event_handler holds PlatformInterface.
     pub(crate) event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
@@ -89,7 +89,7 @@ impl Win32ApiInternalState {
             Ok(Arc::new(Self {
                 h_instance,
                 next_window_id_counter: AtomicUsize::new(1),
-                windows: RwLock::new(HashMap::new()),
+                window_map: RwLock::new(HashMap::new()),
                 event_handler: Mutex::new(None),
                 app_name_for_class,
                 active_windows_count: AtomicUsize::new(0),
@@ -124,6 +124,25 @@ impl Win32ApiInternalState {
         }
     }
 
+    /// Look up the HWND for a given WindowId, or return an error if not found.
+    fn get_hwnd_owner(&self, window_id: WindowId) -> PlatformResult<HWND> {
+        // 1) Try to acquire a read-lock on the windows map
+        let windows_guard = self.window_map.read().map_err(|_| {
+            PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
+        })?;
+
+        // 2) Find the entry, or return InvalidHandle if absent
+        windows_guard
+            .get(&window_id)
+            .map(|data| data.hwnd)
+            .ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "WindowId {:?} not found for get_hwnd_owner",
+                    window_id
+                ))
+            })
+    }
+
     /// Centralized logic for showing the save file dialog.
     /// This method is called by both PlatformInterface::execute_command and by
     /// Win32ApiInternalState::process_commands_from_event_handler.
@@ -136,22 +155,7 @@ impl Win32ApiInternalState {
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
-        let hwnd_owner = {
-            let windows_guard = self.windows.read().map_err(|_| {
-                PlatformError::OperationFailed(
-                    "Failed to acquire read lock for windows map (save dialog)".into(),
-                )
-            })?;
-            windows_guard
-                .get(&window_id)
-                .map(|data| data.hwnd)
-                .ok_or_else(|| {
-                    PlatformError::InvalidHandle(format!(
-                        "WindowId {:?} not found for ShowSaveFileDialog",
-                        window_id
-                    ))
-                })?
-        };
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
 
         let mut file_buffer: Vec<u16> = vec![0; 2048];
         if !default_filename.is_empty() {
@@ -246,23 +250,7 @@ impl Win32ApiInternalState {
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
-        let hwnd_owner = {
-            /* ... (same as _handle_show_save_file_dialog_impl to get hwnd_owner) ... */
-            let windows_guard = self.windows.read().map_err(|_| {
-                PlatformError::OperationFailed(
-                    "Failed to acquire read lock for windows map (open dialog)".into(),
-                )
-            })?;
-            windows_guard
-                .get(&window_id)
-                .map(|data| data.hwnd)
-                .ok_or_else(|| {
-                    PlatformError::InvalidHandle(format!(
-                        "WindowId {:?} not found for ShowOpenFileDialog",
-                        window_id
-                    ))
-                })?
-        };
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
 
         let mut file_buffer: Vec<u16> = vec![0; 2048]; // Buffer for the selected file path
 
@@ -431,7 +419,7 @@ impl PlatformInterface {
             hwnd_button_generate: None,
         };
         self.internal_state
-            .windows
+            .window_map
             .write()
             .map_err(|_| {
                 PlatformError::OperationFailed(
@@ -456,7 +444,7 @@ impl PlatformInterface {
             Err(e) => {
                 // If window creation fails, remove the preliminary entry
                 self.internal_state
-                    .windows
+                    .window_map
                     .write()
                     .unwrap()
                     .remove(&window_id);
@@ -473,7 +461,7 @@ impl PlatformInterface {
             hwnd, window_id
         );
 
-        match self.internal_state.windows.write() {
+        match self.internal_state.window_map.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;

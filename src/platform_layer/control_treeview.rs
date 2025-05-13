@@ -112,7 +112,7 @@ pub(crate) fn populate_treeview(
     window_id: WindowId,
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
-    let mut windows_guard = internal_state.windows.write().map_err(|_| {
+    let mut windows_guard = internal_state.window_map.write().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire write lock for windows map".into())
     })?;
 
@@ -209,7 +209,7 @@ pub(crate) fn update_treeview_item_visual_state(
     item_id: TreeItemId,
     new_check_state: CheckState,
 ) -> PlatformResult<()> {
-    let windows_guard = internal_state.windows.read().map_err(|_| {
+    let windows_guard = internal_state.window_map.read().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire read lock for windows map".into())
     })?;
 
@@ -282,7 +282,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
         return None;
     }
 
-    let windows_guard = internal_state.windows.read().ok()?;
+    let windows_guard = internal_state.window_map.read().ok()?;
     let window_data = windows_guard.get(&window_id)?;
     let tv_state = window_data.treeview_state.as_ref()?;
 

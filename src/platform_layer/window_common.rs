@@ -363,7 +363,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
         h_item: HTREEITEM,
     ) -> Option<AppEvent> {
-        let windows_guard = self.windows.read().ok()?;
+        let windows_guard = self.window_map.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
         let tv_state = window_data.treeview_state.as_ref()?;
 
@@ -450,7 +450,7 @@ impl Win32ApiInternalState {
                         "Platform: Generate Archive button created successfully with HWND {:?}.",
                         h_btn
                     );
-                    if let Some(mut windows_map_guard) = self.windows.write().ok() {
+                    if let Some(mut windows_map_guard) = self.window_map.write().ok() {
                         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                             window_data.hwnd_button_generate = Some(h_btn);
                         } else {
@@ -491,7 +491,7 @@ impl Win32ApiInternalState {
         );
 
         // Logic for resizing child controls (TreeView, Button)
-        if let Some(windows_guard) = self.windows.read().ok() {
+        if let Some(windows_guard) = self.window_map.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
                 // Resize TreeView
                 if let Some(ref tv_state) = window_data.treeview_state {
@@ -683,7 +683,7 @@ impl Win32ApiInternalState {
     ) -> Option<AppEvent> {
         // Returns event, DefWindowProc called later
         println!("Platform: WM_DESTROY for WindowId {:?}", window_id);
-        if let Some(mut windows_map_guard) = self.windows.write().ok() {
+        if let Some(mut windows_map_guard) = self.window_map.write().ok() {
             windows_map_guard.remove(&window_id);
         }
         self.decrement_active_windows();
@@ -737,7 +737,7 @@ impl Win32ApiInternalState {
                     } // Safety check
                     let nmmouse = unsafe { &*nmmouse_ptr };
 
-                    if let Some(windows_guard_for_click) = self.windows.read().ok() {
+                    if let Some(windows_guard_for_click) = self.window_map.read().ok() {
                         if let Some(window_data_for_click) = windows_guard_for_click.get(&window_id)
                         {
                             if let Some(ref tv_state_for_click) =
@@ -843,7 +843,7 @@ pub(crate) fn set_window_title(
     window_id: WindowId,
     title: &str,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.windows.read().ok() {
+    if let Some(windows_guard) = internal_state.window_map.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             unsafe { SetWindowTextW(window_data.hwnd, &HSTRING::from(title))? };
             Ok(())
@@ -865,7 +865,7 @@ pub(crate) fn show_window(
     window_id: WindowId,
     show: bool,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.windows.read().ok() {
+    if let Some(windows_guard) = internal_state.window_map.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             let cmd = if show { SW_SHOW } else { SW_HIDE };
             unsafe { ShowWindow(window_data.hwnd, cmd) };
@@ -887,7 +887,7 @@ pub(crate) fn send_close_message(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.windows.read().ok() {
+    if let Some(windows_guard) = internal_state.window_map.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             unsafe { PostMessageW(Some(window_data.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0))? };
             Ok(())
@@ -910,7 +910,7 @@ pub(crate) fn destroy_native_window(
 ) -> PlatformResult<()> {
     let hwnd_to_destroy: Option<HWND>;
     {
-        let windows_read_guard = internal_state.windows.read().map_err(|_| {
+        let windows_read_guard = internal_state.window_map.read().map_err(|_| {
             PlatformError::OperationFailed(
                 "Failed to acquire read lock on windows map for destroy_native_window".into(),
             )
