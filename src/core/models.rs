@@ -70,3 +70,20 @@ impl Profile {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FileNode, FileState};
+    use std::path::{Path, PathBuf}; // Import FileNode and FileState into the tests module
+
+    #[test]
+    fn test_filenode_new_defaults() {
+        let p = PathBuf::from("/tmp/foo");
+        let n = FileNode::new(p.clone(), "foo".into(), false);
+        assert_eq!(n.path, p);
+        assert_eq!(n.name, "foo");
+        assert_eq!(n.is_dir, false);
+        assert_eq!(n.state, FileState::Unknown);
+        assert!(n.children.is_empty());
+    }
+}

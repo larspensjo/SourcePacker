@@ -95,6 +95,7 @@ fn is_valid_profile_name_char(c: char) -> bool {
 /// The profile name from `profile.name` is used for the filename, after sanitization.
 pub fn save_profile(profile: &Profile, app_name: &str) -> Result<()> {
     if profile.name.trim().is_empty() || !profile.name.chars().all(is_valid_profile_name_char) {
+        print!("Invalid profile name: {}", profile.name);
         return Err(ProfileError::InvalidProfileName(profile.name.clone()));
     }
 
@@ -104,6 +105,7 @@ pub fn save_profile(profile: &Profile, app_name: &str) -> Result<()> {
 
     let file = File::create(&file_path)?;
     let writer = BufWriter::new(file);
+    println!("save_profile: Saving profile to {:?}...", file_path);
     serde_json::to_writer_pretty(writer, profile)?;
     Ok(())
 }
@@ -137,6 +139,8 @@ pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
         None => return Ok(Vec::new()), // No directory, so no profiles
     };
 
+    println!("list_profiles: Looking for profiles in {:?}", dir);
+
     let mut profile_names = Vec::new();
     for entry_result in fs::read_dir(dir)? {
         let entry = entry_result?;
@@ -157,6 +161,7 @@ pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
         }
     }
     profile_names.sort_unstable(); // For consistent listing
+    println!("list_profiles: Found profiles: {:?}", profile_names);
     Ok(profile_names)
 }
 
@@ -164,6 +169,8 @@ pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+    use std::{env, fs, path::PathBuf};
+    use tempfile::TempDir;
 
     // Helper to ensure a clean profile directory for each test function that needs it.
     // This is tricky because ProjectDirs might point to a real user location.
@@ -419,5 +426,84 @@ mod tests {
         if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
             let _ = fs::remove_dir_all(proj_dirs.config_dir());
         }
+    }
+
+    // Helper to point all profile operations at our temp directory.
+    fn with_temp_config_dir<T>(test: impl FnOnce() -> T) -> T {
+        let temp = TempDir::new().expect("create tempdir");
+        unsafe {
+            env::set_var("XDG_CONFIG_HOME", temp.path());
+            env::set_var("APPDATA", temp.path());
+        }
+        print!("Using temp config dir: {:?}", temp.path());
+        let result = test();
+        // cleanup happens automatically
+        result
+    }
+
+    const APP_NAME: &str = "SourcePackerTest";
+
+    #[test]
+    fn test_save_and_load_profile_roundtrip() {
+        with_temp_config_dir(|| {
+            let initial_names = list_profiles(APP_NAME).expect("listing profiles");
+            assert_eq!(initial_names.len(), 0, "No profiles should exist at start");
+            // Build a Profile
+            let mut profile = Profile::new("mytest".into(), PathBuf::from("/project/root"));
+            profile.selected_paths.insert("foo".into());
+            profile.deselected_paths.insert("bar".into());
+            profile.whitelist_patterns.push("*.rs".into());
+
+            // Save it
+            save_profile(&profile, APP_NAME).expect("saving profile");
+
+            let profile_path = get_profile_dir(APP_NAME)
+                .expect("Profile directory not found")
+                .join("mytest.json");
+            assert!(profile_path.exists(), "profile file was not created");
+
+            // Load it back
+            let loaded = load_profile("mytest", APP_NAME).expect("loading profile");
+
+            // Destructure & assert each field
+            assert_eq!(loaded.name, profile.name);
+            assert_eq!(loaded.root_folder, profile.root_folder);
+            assert_eq!(loaded.selected_paths, profile.selected_paths);
+            assert_eq!(loaded.deselected_paths, profile.deselected_paths);
+            assert_eq!(loaded.whitelist_patterns, profile.whitelist_patterns);
+        });
+    }
+
+    #[test]
+    fn test_list_profiles_returns_all_names() {
+        with_temp_config_dir(|| {
+            let initial_names = list_profiles(APP_NAME).expect("listing profiles");
+            assert_eq!(initial_names.len(), 0, "No profiles should exist at start");
+            // Prepare two dummy profiles
+            let mut p1 = Profile::new("one".into(), PathBuf::from("/project/root"));
+            let mut p2 = Profile::new("two".into(), PathBuf::from("/project/root"));
+            save_profile(&p1, APP_NAME).unwrap();
+            save_profile(&p2, APP_NAME).unwrap();
+
+            // List them
+            let mut names = list_profiles(APP_NAME).expect("listing profiles");
+            names.sort();
+
+            // We expect exactly ["one", "two"]
+            assert_eq!(names, vec!["one".to_string(), "two".to_string()]);
+        });
+    }
+
+    #[test]
+    fn test_load_nonexistent_profile_errors() {
+        with_temp_config_dir(|| {
+            let err = load_profile("does_not_exist", APP_NAME).unwrap_err();
+            // You can match on your specific error enum variant if you have one:
+            assert!(
+                matches!(err, ProfileError::ProfileNotFound(_)),
+                "expected a ProfileNotFound error, got {:?}",
+                err
+            );
+        });
     }
 }

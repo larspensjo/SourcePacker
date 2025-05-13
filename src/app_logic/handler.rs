@@ -384,8 +384,9 @@ impl PlatformEventHandler for MyAppLogic {
 }
 
 #[cfg(test)]
-mod tests {
+mod handler_tests {
     use super::*; // Bring MyAppLogic and other items into scope
+    use std::path::PathBuf;
     use tempfile::NamedTempFile; // For creating temporary files in tests
 
     #[test]
@@ -516,4 +517,128 @@ mod tests {
         assert!(cmds.is_empty());
         assert_eq!(logic.main_window_id, None);
     }
+
+    /// Helper to build a simple tree:
+    /// root (dir)
+    ///  ├─ file1 (file)
+    ///  └─ sub  (dir)
+    ///       └─ file2 (file)
+    fn make_test_tree() -> (MyAppLogic, PathBuf, PathBuf) {
+        let mut logic = MyAppLogic::new();
+
+        let root_p = PathBuf::from("/root");
+        let file1_p = root_p.join("file1.txt");
+        let sub_p = root_p.join("sub");
+        let file2_p = sub_p.join("file2.txt");
+
+        // Build nodes
+        let mut root = FileNode::new(root_p.clone(), "root".into(), true);
+        let file1 = FileNode::new(file1_p.clone(), "file1.txt".into(), false);
+        let mut sub = FileNode::new(sub_p.clone(), "sub".into(), true);
+        let file2 = FileNode::new(file2_p.clone(), "file2.txt".into(), false);
+
+        sub.children.push(file2);
+        root.children.push(file1);
+        root.children.push(sub);
+        logic.file_nodes_cache = vec![root];
+
+        // Prepare empty ID map & counter
+        logic.next_tree_item_id_counter = 1;
+        logic.path_to_tree_item_id.clear();
+
+        (logic, file1_p, file2_p)
+    }
+
+    #[test]
+    fn test_build_tree_item_descriptors_recursive() {
+        let (mut logic, _, _) = make_test_tree();
+
+        // Fire off descriptor build
+        let descriptors = MyAppLogic::build_tree_item_descriptors_recursive(
+            &logic.file_nodes_cache,
+            &mut logic.path_to_tree_item_id,
+            &mut logic.next_tree_item_id_counter,
+        );
+        // Should have two top-level descriptors: "root" only
+        assert_eq!(descriptors.len(), 1);
+
+        // Unpack the single root descriptor
+        let root_desc = &descriptors[0];
+        assert_eq!(root_desc.text, "root");
+        assert!(root_desc.is_folder);
+        assert!(matches!(root_desc.state, CheckState::Unchecked));
+        // It should have two children descriptors
+        assert_eq!(root_desc.children.len(), 2);
+
+        // Verify first child is file1.txt
+        let first = &root_desc.children[0];
+        assert_eq!(first.text, "file1.txt");
+        assert!(!first.is_folder);
+        assert!(matches!(first.state, CheckState::Unchecked));
+
+        // And second child is the "sub" folder
+        let second = &root_desc.children[1];
+        assert_eq!(second.text, "sub");
+        assert!(second.is_folder);
+    }
+    // :contentReference[oaicite:0]{index=0}&#8203;:contentReference[oaicite:1]{index=1}
+
+    #[test]
+    fn test_find_filenode_mut_and_ref() {
+        let (mut logic, file1_p, file2_p) = make_test_tree();
+
+        // Mutable find on file1.txt
+        let file1_node = MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &file1_p);
+        assert!(file1_node.is_some());
+        file1_node.unwrap().state = FileState::Selected;
+
+        // Immutable find sees the change
+        let file1_ref = MyAppLogic::find_filenode_ref(&logic.file_nodes_cache, &file1_p);
+        assert!(file1_ref.is_some());
+        assert_eq!(file1_ref.unwrap().state, FileState::Selected);
+
+        // Non-existent path returns None
+        let none_node =
+            MyAppLogic::find_filenode_ref(&logic.file_nodes_cache, &PathBuf::from("/no/such/path"));
+        assert!(none_node.is_none());
+    }
+    // :contentReference[oaicite:2]{index=2}&#8203;:contentReference[oaicite:3]{index=3}
+
+    #[test]
+    fn test_collect_visual_updates_recursive() {
+        let (mut logic, file1_p, file2_p) = make_test_tree();
+
+        // First, populate the ID map so collect_visual_updates has something to look up
+        let _ = MyAppLogic::build_tree_item_descriptors_recursive(
+            &logic.file_nodes_cache,
+            &mut logic.path_to_tree_item_id,
+            &mut logic.next_tree_item_id_counter,
+        );
+
+        // Toggle file1.txt to Selected in the model
+        {
+            let f1 = MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &file1_p).unwrap();
+            f1.state = FileState::Selected;
+        }
+
+        // Now collect updates starting at root
+        let root_node = &logic.file_nodes_cache[0];
+        let mut updates = Vec::new();
+        logic.collect_visual_updates_recursive(root_node, &mut updates);
+
+        // We expect three entries: root, file1, sub and its child
+        // But only file1.txt shows as Checked; others Unchecked
+        // Find the tuple for file1
+        assert!(updates.iter().any(|(id, state)| {
+            *state == CheckState::Checked
+                && *id == *logic.path_to_tree_item_id.get(&file1_p).unwrap()
+        }));
+        // And a sample unordered check for an Unchecked entry (sub folder)
+        assert!(
+            updates
+                .iter()
+                .any(|(_, state)| { matches!(state, CheckState::Unchecked) })
+        );
+    }
+    // :contentReference[oaicite:4]{index=4}&#8203;:contentReference[oaicite:5]{index=5}
 }
