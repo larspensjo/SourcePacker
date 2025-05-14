@@ -97,6 +97,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   `Win32ApiInternalState::process_commands_from_event_handler` and `PlatformInterface::execute_command` seem to do the same thing. That can't be right?
 *   There are some big functions in app.rs. I think it is possible to break out parts of them, and possibly finding common parts that can be re-used.
 *   MyAppLogic.handle_event() should be possible to split up. Either as member functions, or as separate functions.
+*   Access all over the place of Win32ApiInternalState.window_map could probably go through Win32ApiInternalState.get_hwnd_owner?
 
 # Phase 3: Enhancements & UX Improvements
 

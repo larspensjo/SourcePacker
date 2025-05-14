@@ -28,7 +28,8 @@ use windows::{
 };
 
 use std::collections::HashMap;
-use std::ffi::c_void;
+use std::ffi::{OsString, c_void};
+use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, RwLock, Weak,
@@ -188,12 +189,7 @@ impl Win32ApiInternalState {
         let mut path_result: Option<PathBuf> = None;
 
         if save_result {
-            let len = file_buffer
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(file_buffer.len());
-            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
-            path_result = Some(PathBuf::from(path_str));
+            path_result = Some(pathbuf_from_buf(&file_buffer));
             println!(
                 "Platform: Save dialog returned path: {:?}",
                 path_result.as_ref().unwrap()
@@ -277,12 +273,7 @@ impl Win32ApiInternalState {
         let mut path_result: Option<PathBuf> = None;
 
         if open_result {
-            let len = file_buffer
-                .iter()
-                .position(|&c| c == 0)
-                .unwrap_or(file_buffer.len());
-            let path_str = String::from_utf16_lossy(&file_buffer[..len]);
-            path_result = Some(PathBuf::from(path_str));
+            path_result = Some(pathbuf_from_buf(&file_buffer));
             println!(
                 "Platform: Open dialog returned path: {:?}",
                 path_result.as_ref().unwrap()
@@ -581,5 +572,42 @@ impl PlatformInterface {
         *self.internal_state.event_handler.lock().unwrap() = None;
         println!("Platform: Message loop exited cleanly.");
         Ok(())
+    }
+}
+
+/// Given a slice of UTF-16 code units (with a trailing 0), produce a PathBuf.
+///
+/// It:
+/// 1. Finds the first 0 (or uses the full buffer if none),
+/// 2. Constructs an OsString via `from_wide`,
+/// 3. Converts that to `PathBuf`.
+pub fn pathbuf_from_buf(buf: &[u16]) -> PathBuf {
+    // 1) find length up to first 0
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    // 2) turn the wide slice into an OsString
+    let os = OsString::from_wide(&buf[..len]);
+    // 3) PathBuf from it
+    PathBuf::from(os)
+}
+
+#[cfg(test)]
+mod app_tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_simple() {
+        // "C:\temp\file.txt" in UTF-16 (with trailing 0)
+        let mut wide: Vec<u16> = "C:\\temp\\file.txt".encode_utf16().collect();
+        wide.push(0);
+        let path = pathbuf_from_buf(&wide);
+        assert_eq!(path, PathBuf::from(r"C:\temp\file.txt"));
+    }
+
+    #[test]
+    fn no_null_terminator() {
+        // if there's no 0, we still consume the whole buffer
+        let wide: Vec<u16> = "D:\\data\\incomplete".encode_utf16().collect();
+        let path = pathbuf_from_buf(&wide);
+        assert_eq!(path, PathBuf::from(r"D:\data\incomplete"));
     }
 }
