@@ -13,9 +13,9 @@ use windows::{
         UI::{
             Controls::{
                 Dialogs::{
-                    CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER,
-                    OFN_EXTENSIONDIFFERENT, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
-                    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+                    COMMON_DLG_ERRORS, CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW,
+                    OFN_EXPLORER, OFN_EXTENSIONDIFFERENT, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
+                    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
                 },
                 ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
             },
@@ -156,87 +156,19 @@ impl Win32ApiInternalState {
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
-        let hwnd_owner = self.get_hwnd_owner(window_id)?;
-
-        let mut file_buffer: Vec<u16> = vec![0; 2048];
-        if !default_filename.is_empty() {
-            let default_name_utf16: Vec<u16> = default_filename.encode_utf16().collect();
-            let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
-            file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
-        }
-
-        let title_hstring = HSTRING::from(title);
-        let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
-
-        let initial_dir_hstring = initial_dir.map(|p| HSTRING::from(p.to_string_lossy().as_ref()));
-        let initial_dir_pcwstr = initial_dir_hstring
-            .as_ref()
-            .map_or(PCWSTR::null(), |h| PCWSTR(h.as_ptr()));
-
-        let mut ofn = OPENFILENAMEW {
-            lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
-            hwndOwner: hwnd_owner,
-            lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
-            nMaxFile: file_buffer.len() as u32,
-            lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
-            lpstrTitle: PCWSTR(title_hstring.as_ptr()),
-            lpstrInitialDir: initial_dir_pcwstr, // Use it here
-            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
-            ..Default::default()
-        };
-
-        let save_result = unsafe { GetSaveFileNameW(&mut ofn) }.as_bool();
-        let mut path_result: Option<PathBuf> = None;
-
-        if save_result {
-            path_result = Some(pathbuf_from_buf(&file_buffer));
-            println!(
-                "Platform: Save dialog returned path: {:?}",
-                path_result.as_ref().unwrap()
-            );
-        } else {
-            let error_code = unsafe { CommDlgExtendedError() };
-            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
-                eprintln!(
-                    "Platform: GetSaveFileNameW failed. CommDlgExtendedError: {:?}",
-                    error_code
-                );
-            } else {
-                println!("Platform: Save dialog cancelled by user.");
-            }
-        }
-
-        let event = AppEvent::FileSaveDialogCompleted {
+        self._show_common_file_dialog(
             window_id,
-            result: path_result,
-        };
-
-        // Send the event to AppLogic and process any commands it returns
-        let commands_from_dialog_completion = if let Some(handler_arc) = self
-            .event_handler
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|wh| wh.upgrade())
-        {
-            if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event)
-            } else {
-                eprintln!("Platform: Failed to lock event handler after save dialog.");
-                vec![]
-            }
-        } else {
-            eprintln!(
-                "Platform: Event handler not available after save dialog (it might not have been set yet if called very early, or already dropped)."
-            );
-            vec![]
-        };
-
-        if !commands_from_dialog_completion.is_empty() {
-            // Call process_commands_from_event_handler on Arc<Self>
-            self.process_commands_from_event_handler(commands_from_dialog_completion);
-        }
-        Ok(())
+            title,
+            Some(default_filename),
+            filter_spec,
+            initial_dir,
+            OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, // Specific flags for save
+            |ofn_ptr| unsafe { GetSaveFileNameW(ofn_ptr) },
+            |win_id, res_path| AppEvent::FileSaveDialogCompleted {
+                window_id: win_id,
+                result: res_path,
+            },
+        )
     }
 
     fn _handle_show_open_file_dialog_impl(
@@ -246,16 +178,57 @@ impl Win32ApiInternalState {
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
+        self._show_common_file_dialog(
+            window_id,
+            title,
+            None,
+            filter_spec,
+            initial_dir,
+            OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR, // Specific flags for open
+            |ofn_ptr| unsafe { GetOpenFileNameW(ofn_ptr) },
+            |win_id, res_path| AppEvent::FileOpenDialogCompleted {
+                window_id: win_id,
+                result: res_path,
+            },
+        )
+    }
+
+    fn _show_common_file_dialog<FDialog, FEvent>(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        title: String,
+        default_filename: Option<String>, // Used for pre-filling filename, primarily for save
+        filter_spec: String,
+        initial_dir: Option<PathBuf>,
+        specific_flags: OPEN_FILENAME_FLAGS, // Dialog-specific flags (e.g., OFN_OVERWRITEPROMPT)
+        dialog_fn: FDialog, // The actual Win32 dialog function (GetSaveFileNameW or GetOpenFileNameW)
+        event_constructor: FEvent, // Closure to construct the appropriate AppEvent
+    ) -> PlatformResult<()>
+    where
+        FDialog: FnOnce(&mut OPENFILENAMEW) -> windows::core::BOOL,
+        FEvent: FnOnce(WindowId, Option<PathBuf>) -> AppEvent,
+    {
         let hwnd_owner = self.get_hwnd_owner(window_id)?;
 
-        let mut file_buffer: Vec<u16> = vec![0; 2048]; // Buffer for the selected file path
+        let mut file_buffer: Vec<u16> = vec![0; 2048];
+        if let Some(fname) = default_filename {
+            if !fname.is_empty() {
+                let default_name_utf16: Vec<u16> = fname.encode_utf16().collect();
+                // Ensure null termination fits if string is max length
+                let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
+                file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
+                // The rest of file_buffer is already zeroes.
+            }
+        }
 
         let title_hstring = HSTRING::from(title);
         let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
+
+        // Safely get PCWSTR for initial_dir
         let initial_dir_hstring = initial_dir.map(|p| HSTRING::from(p.to_string_lossy().as_ref()));
         let initial_dir_pcwstr = initial_dir_hstring
             .as_ref()
-            .map_or(PCWSTR::null(), |h| PCWSTR(h.as_ptr()));
+            .map_or(PCWSTR::null(), |h_str| PCWSTR(h_str.as_ptr()));
 
         let mut ofn = OPENFILENAMEW {
             lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -265,36 +238,35 @@ impl Win32ApiInternalState {
             lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
             lpstrTitle: PCWSTR(title_hstring.as_ptr()),
             lpstrInitialDir: initial_dir_pcwstr,
-            Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR,
+            Flags: OFN_EXPLORER | specific_flags, // Combine common OFN_EXPLORER with specific flags
             ..Default::default()
         };
 
-        let open_result = unsafe { GetOpenFileNameW(&mut ofn) }.as_bool();
+        let dialog_succeeded = dialog_fn(&mut ofn).as_bool();
         let mut path_result: Option<PathBuf> = None;
 
-        if open_result {
+        if dialog_succeeded {
             path_result = Some(pathbuf_from_buf(&file_buffer));
             println!(
-                "Platform: Open dialog returned path: {:?}",
+                "Platform: Dialog function succeeded. Path: {:?}",
                 path_result.as_ref().unwrap()
             );
         } else {
             let error_code = unsafe { CommDlgExtendedError() };
-            if error_code != windows::Win32::UI::Controls::Dialogs::COMMON_DLG_ERRORS(0) {
+            // CDERR_DIALOGFAILURE (0xFFFF) and other errors might occur.
+            // 0 means user cancelled or closed dialog without error.
+            if error_code != COMMON_DLG_ERRORS(0) {
                 eprintln!(
-                    "Platform: GetOpenFileNameW failed. CommDlgExtendedError: {:?}",
+                    "Platform: Dialog function failed or was cancelled with error. CommDlgExtendedError: {:?}",
                     error_code
                 );
             } else {
-                println!("Platform: Open dialog cancelled by user.");
+                println!("Platform: Dialog cancelled by user (no error).");
             }
         }
 
-        let event = AppEvent::FileOpenDialogCompleted {
-            // Use the new specific event
-            window_id,
-            result: path_result,
-        };
+        // Construct and send the event
+        let event = event_constructor(window_id, path_result);
 
         // Send the event to AppLogic and process any commands it returns
         let commands_from_dialog_completion = if let Some(handler_arc) = self
@@ -307,14 +279,15 @@ impl Win32ApiInternalState {
             if let Ok(mut handler_guard) = handler_arc.lock() {
                 handler_guard.handle_event(event)
             } else {
-                eprintln!("Platform: Failed to lock event handler after open dialog.");
+                eprintln!("Platform: Failed to lock event handler after dialog completion.");
                 vec![]
             }
         } else {
-            eprintln!("Platform: Event handler not available after open dialog.");
+            eprintln!("Platform: Event handler not available after dialog completion.");
             vec![]
         };
 
+        // Process any commands returned by the app logic
         if !commands_from_dialog_completion.is_empty() {
             self.process_commands_from_event_handler(commands_from_dialog_completion);
         }
@@ -581,13 +554,10 @@ impl PlatformInterface {
 /// 1. Finds the first 0 (or uses the full buffer if none),
 /// 2. Constructs an OsString via `from_wide`,
 /// 3. Converts that to `PathBuf`.
-pub fn pathbuf_from_buf(buf: &[u16]) -> PathBuf {
-    // 1) find length up to first 0
-    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-    // 2) turn the wide slice into an OsString
-    let os = OsString::from_wide(&buf[..len]);
-    // 3) PathBuf from it
-    PathBuf::from(os)
+pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
+    let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    let path_str = String::from_utf16_lossy(&buffer[..len]);
+    PathBuf::from(path_str)
 }
 
 #[cfg(test)]
