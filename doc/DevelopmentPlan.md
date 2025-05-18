@@ -2,34 +2,63 @@
 
 This plan breaks down the development of SourcePacker into small, incremental steps. Optional steps or features intended for later are marked.
 
-# Phase 0: Project Setup & Foundation
+---
 
-## P0.1: Initialize Rust Project
-*   `cargo new source_packer --bin`
-*   Set up Rust edition (e.g., 2021 or latest).
-*   Initialize Git repository.
+# Phase 0': Code Synchronization (Post-Whitelist Removal)
 
-## P0.2: Add Core Dependencies
-*   `windows-rs` (for UI elements and Win32 API).
-*   `serde`, `serde_json` (for profile serialization).
-*   `directories-rs` (for `%APPDATA%` path).
-*   `walkdir` (for efficient directory traversal).
-    *   (`glob` removed as whitelists are removed)
+**Goal:** Modify the existing codebase to remove all whitelist functionality and align it with the updated requirements for features up to the original P2.5. This phase ensures the application is in a clean state before proceeding with P2.6.
 
-## P0.3: Basic `main.rs` and Window
-*   Create a minimal Win32 window using `windows-rs`. `[UiMainWindowSingleV1]`
-*   Implement the basic message loop.
-*   This ensures the fundamental UI setup is working.
+## P0'.1: Update Dependencies
+*   Remove the `glob` crate from `Cargo.toml` dependencies.
+*   Run `cargo clean` and `cargo build` to ensure dependency changes are picked up.
 
-# Phase 1: Core Logic (Testable Modules)
+## P0'.2: Modify Core Data Structures (`core/models.rs`)
+*   In `struct Profile`:
+    *   Remove the `whitelist_patterns: Vec<String>` field. `[ProfileDefWhitelistPatternsV1]` (marks removal)
+*   Adjust `Profile::new()` if it explicitly handled `whitelist_patterns` (it likely just relied on struct definition).
+*   **Note:** Existing profile JSON files will become incompatible. For this sync, assume new profiles will be created or existing ones manually edited.
+
+## P0'.3: Modify Directory Scanning Logic (`core/file_system.rs`)
+*   Change `scan_directory` function signature to:
+    `pub fn scan_directory(root_path: &Path) -> Result<Vec<FileNode>, FileSystemError>` (remove `whitelist_patterns_str` parameter). `[FileFilterWhitelistOnlyMatchesV1]` (marks removal)
+*   Remove all internal logic related to compiling glob patterns and matching files against them.
+*   The function should now list *all* files and directories found by `WalkDir` under `root_path`.
+*   Update unit tests for `scan_directory` to reflect that no filtering occurs and all files/directories are returned.
+
+## P0'.4: Update Application Logic (`app_logic/handler.rs`)
+*   In `struct MyAppLogic`:
+    *   Remove the `current_whitelist_patterns: Vec<String>` field.
+    *   Remove its initialization in `MyAppLogic::new()`.
+*   In `MyAppLogic::on_main_window_created`:
+    *   Modify the call to `core::scan_directory` to no longer pass whitelist patterns.
+*   In `MyAppLogic::create_profile_from_current_state`:
+    *   Remove the assignment of `self.current_whitelist_patterns` to the new `Profile` object.
+*   In `AppEvent::FileOpenDialogCompleted` handler (profile loading):
+    *   When a `Profile` is loaded, it will no longer contain `whitelist_patterns`. Remove any logic that attempts to read this from the loaded profile and store it in `MyAppLogic`.
+    *   Ensure the subsequent call to `core::scan_directory` (if present here or triggered by a refresh) uses the no-whitelist version.
+*   Search for any other uses of `current_whitelist_patterns` or whitelist-related logic in `MyAppLogic` and remove them.
+
+## P0'.5: Test Basic Functionality
+*   Perform a full `cargo build` and `cargo test --all-features`.
+*   Run the application:
+    *   Verify that the TreeView now displays all files and folders from the scanned directory (no filtering). `[UiTreeViewDisplayStructureV2]`
+    *   Verify that profiles can be saved and loaded correctly (they will now lack whitelist data). `[ProfileOpSaveNewOverwriteV3]`
+    *   Verify basic file/folder selection in the TreeView works. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
+    *   Verify basic archive generation still functions with selected files. `[ArchiveGenSingleTxtFileV1]`
+*   This confirms the codebase is stable and reflects the no-whitelist requirement for features analogous to the old P0.1-P2.5.
+
+---
+
+# Phase 1: Core Logic (Testable Modules) - Post Sync
+*(This section now describes the target state AFTER Phase 0' is complete)*
 
 ## P1.1: Data Structures
 *   Define `struct FileNode { path: PathBuf, name: String, is_dir: bool, state: FileState, children: Vec<FileNode> }`. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
 *   Define `enum FileState { Selected, Deselected, Unknown }`.
-*   Modify `struct Profile { name: String, root_folder: PathBuf, selected_paths: HashSet<PathBuf>, deselected_paths: HashSet<PathBuf>, archive_path: Option<PathBuf> }`. (Removed `whitelist_patterns`). `[ProfileDefRootFolderV1]`, `[ProfileDefSelectionStateV1]`, `[ProfileDefAssociatedArchiveV1]`
+*   Define `struct Profile { name: String, root_folder: PathBuf, selected_paths: HashSet<PathBuf>, deselected_paths: HashSet<PathBuf>, archive_path: Option<PathBuf> }`. `[ProfileDefRootFolderV1]`, `[ProfileDefSelectionStateV1]`, `[ProfileDefAssociatedArchiveV1]`
 
 ## P1.2: Directory Scanning (Module: `file_system`)
-*   Implement function: `scan_directory(root_path: &Path) -> Result<Vec<FileNode>, Error>` (Removed `whitelist_patterns` parameter). `[FileSystemMonitorTreeViewV1]`
+*   Implement function: `scan_directory(root_path: &Path) -> Result<Vec<FileNode>, Error>`. `[FileSystemMonitorTreeViewV1]`
     *   Uses `walkdir` to traverse directories.
     *   Builds the `FileNode` tree for all files and directories.
     *   Initial `FileState` for all nodes will be `Unknown`. `[FileStateNewUnknownV2]`
@@ -46,7 +75,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Implement `fn apply_profile_to_tree(tree: &mut Vec<FileNode>, profile: &Profile)`. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
     *   Iterates through `tree`, setting `FileState` based on `profile.selected_paths` and `profile.deselected_paths`.
     *   Files not in either set but present in the scanned tree become `FileState::Unknown`. `[FileStateNewUnknownV2]`
-*   Implement `fn update_folder_selection(node: &mut FileNode, new_state: FileState)`. (Review: parameter was `select: bool`). `[FileSelFolderRecursiveStateV1]`
+*   Implement `fn update_folder_selection(node: &mut FileNode, new_state: FileState)`. `[FileSelFolderRecursiveStateV1]`
     *   Recursively sets state of all children.
 *   **Unit Tests:** Test application of states to various tree structures.
 
@@ -65,7 +94,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   If selected files are newer, or `profile.archive_path` is None, or archive file is missing, return appropriate status.
 *   **Unit Tests:** Test with mock files, timestamps, and profile states.
 
-# Phase 2: Basic UI & Interaction
+# Phase 2: Basic UI & Interaction - Post Sync
+*(This section now describes the target state AFTER Phase 0' is complete)*
 
 ## P2.1: TreeView Population
 *   Add a `TreeView` control to the main window. `[UiTreeViewDisplayStructureV2]`
@@ -90,6 +120,10 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   "Load Profile": Show a dialog to pick a profile (from `list_profiles`), load it (P1.3), rescan directory (P1.2), apply profile (P1.4), update TreeView. `[ProfileOpLoadSwitchV1]`
     *   After loading and scanning, perform initial `check_archive_status` (P1.6) and update UI (e.g., status bar placeholder for now). `[ArchiveSyncUserAcknowledgeV1]`
 *   "Save Profile As": Prompt for profile name, create `Profile` object from current state (root dir, selection, current `archive_path` if any from loaded profile), save it (P1.3). `[ProfileOpSaveNewOverwriteV3]`
+
+---
+*(Development continues from P2.6 as previously defined, now assuming the no-whitelist baseline)*
+---
 
 ## P2.6: Initial Profile Load on Startup
 *   Implement logic to store/retrieve the last used profile name (e.g., in a simple config file or registry). `[ProfileDefaultLoadRecentV1]`
@@ -122,11 +156,11 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   Run `check_archive_status` (P1.6). `[ArchiveSyncNotifyUserV1]`
     *   Update status bar and any other relevant UI.
 
-## P2.10: AppEvent.Execute Refactoring Discussion
+## P2.10: (Old P2.7) AppEvent.Execute Refactoring Discussion
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
-## P2.11: General Cleanup and Refinements
-*   Use AppData\Local instead of AppData\Roaming.
+## P2.11: (Old P2.8) General Cleanup and Refinements
+*   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component)
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]`
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
 *   Profile Name in `create_profile_from_current_state`: Update `MyAppLogic.current_profile_name` only after successful save.
@@ -135,6 +169,10 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
 
 # Phase 3: Enhancements & UX Improvements
+
+## P3.0: Blocking folders
+*   It shall be possible to mark a folder as blocked (Deselected). That would typically be used for temporary folders.
+*   .gitignore shall automatically be used as a blacklist. These shall be hidden from the user.
 
 ## P3.1: Status Bar Finalization
 *   Display current profile name. `[UiStatusBarProfileNameV1]`
@@ -151,7 +189,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Add a read-only text control (e.g., `EDIT` control). `[UiContentViewerPanelReadOnlyV1]`
 *   When a file is selected in the `TreeView`, load its content into the viewer.
 
-## P3.4: (REMOVED - Whitelist Pattern Editing)
+## P3.4: (REMOVED - Whitelist Pattern Editing) `[UiMenuEditWhitelistV1]` (marks removal)
 
 ## P3.5: Handling File State Discrepancies Visually
 *   When loading a profile, or after a "Refresh" (P2.9):
@@ -187,13 +225,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Ensure the "Refresh" button/menu item is clearly accessible. `[UiMenuTriggerScanV1]`
 
 ## P4.4: "Clear Selection" / "Select All Files" / "Invert Selection" options.
-    (Changed "Select All Whitelisted" to "Select All Files")
 
 ## P4.5: Better Binary File Detection
 *   Implement a more robust check (e.g., percentage of non-printable chars). (Supports `[TextFileFocusUTF8V1]`)
 *   Visually indicate binary files or optionally exclude them. `[FutureBinaryFileDetectionSophisticatedV1]`
-
-## P4.6: Background File System Monitoring
-*   Integrate OS-level file system notifications (e.g., using `notify` crate or direct Win32 APIs like `ReadDirectoryChangesW`). `[FileSystemMonitorTreeViewV1]`
-*   Automatically trigger update logic (similar to P2.9, but more targeted) when relevant file changes are detected in the background.
-*   Provide UI feedback that monitoring is active and when changes are processed.
