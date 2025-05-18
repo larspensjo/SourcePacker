@@ -8,10 +8,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 **Goal:** Modify the existing codebase to remove all whitelist functionality and align it with the updated requirements for features up to the original P2.5. This phase ensures the application is in a clean state before proceeding with P2.6.
 
-## P0'.1: Update Dependencies
-*   Remove the `glob` crate from `Cargo.toml` dependencies.
-*   Run `cargo clean` and `cargo build` to ensure dependency changes are picked up.
-
 ## P0'.2: Modify Core Data Structures (`core/models.rs`)
 *   In `struct Profile`:
     *   Remove the `whitelist_patterns: Vec<String>` field. `[ProfileDefWhitelistPatternsV1]` (marks removal)

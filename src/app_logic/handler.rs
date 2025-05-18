@@ -5,63 +5,49 @@ use crate::platform_layer::{
 };
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::{Path, PathBuf}; // For writing the archive file
+use std::path::{Path, PathBuf};
 
-// Define control IDs used by app_logic to identify controls, must match platform layer
-pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002; // Matches platform_layer's ID
-
-// For profile operations, use a consistent app name
+pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002;
 const APP_NAME_FOR_PROFILES: &str = "SourcePackerApp";
 
-/// Maps a `PathBuf` (unique identifier for a FileNode) to the `TreeItemId` currently
-/// representing it in the UI. This map is rebuilt during `PopulateTreeView`.
 type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
-// Enum to track pending dialog actions
 #[derive(Debug)]
 enum PendingAction {
     SavingArchive,
     SavingProfile,
 }
 
-/// Main structure for the application's UI logic.
-/// It is platform-agnostic and interacts with the UI via `AppEvent`s and `PlatformCommand`s.
+/*
+ * Manages the core application state and UI logic in a platform-agnostic manner.
+ * It processes UI events received from the platform layer and generates commands
+ * to update the UI, managing file trees, profiles, and archive generation.
+ */
 pub struct MyAppLogic {
     main_window_id: Option<WindowId>,
-    /// The current tree of file nodes being displayed. This is the source of truth for content.
     file_nodes_cache: Vec<FileNode>,
-    /// Maps the `PathBuf` of a `FileNode` to its current `TreeItemId` in the UI.
     path_to_tree_item_id: PathToTreeItemIdMap,
-    /// Counter to generate unique `TreeItemId`s during descriptor building.
     next_tree_item_id_counter: u64,
-    /// The root path used for the last directory scan.
     root_path_for_scan: PathBuf,
     current_profile_name: Option<String>,
-    current_whitelist_patterns: Vec<String>,
-    /// Temporarily stores content of the generated archive before saving.
     pending_archive_content: Option<String>,
     pending_action: Option<PendingAction>,
 }
 
 impl MyAppLogic {
+    /*
+     * Initializes a new instance of the application logic.
+     * Sets up default values for the application state, including an initial root path
+     * and an empty file cache.
+     */
     pub fn new() -> Self {
-        // Initial default whitelist patterns. TODO: This should go elsewhere
-        let default_whitelist_patterns = vec![
-            "src/**/*.rs".to_string(),
-            "src/**/*.toml".to_string(),
-            "Cargo.toml".to_string(),
-            "doc/*.md".to_string(),
-            "*.txt".to_string(), // Example, adjust as needed
-        ];
-
         MyAppLogic {
             main_window_id: None,
             file_nodes_cache: Vec::new(),
             path_to_tree_item_id: HashMap::new(),
             next_tree_item_id_counter: 1,
-            root_path_for_scan: PathBuf::from("."), // Default, will be overridden by profile or initial scan
+            root_path_for_scan: PathBuf::from("."),
             current_profile_name: None,
-            current_whitelist_patterns: default_whitelist_patterns,
             pending_archive_content: None,
             pending_action: None,
         }
@@ -73,20 +59,18 @@ impl MyAppLogic {
         TreeItemId(id)
     }
 
-    /// Converts the internal `FileNode`s to `TreeItemDescriptor`s for the platform layer.
-    /// Also populates the `path_to_tree_item_id` mapping.
     fn build_tree_item_descriptors_recursive(
         nodes: &[FileNode],
-        path_to_tree_item_id: &mut PathToTreeItemIdMap, // Pass map mutably
-        next_tree_item_id_counter: &mut u64,            // Pass counter mutably
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
     ) -> Vec<TreeItemDescriptor> {
         let mut descriptors = Vec::new();
         for node in nodes {
-            let id_val = *next_tree_item_id_counter; // Deref and use
-            *next_tree_item_id_counter += 1; // Increment
+            let id_val = *next_tree_item_id_counter;
+            *next_tree_item_id_counter += 1;
             let item_id = TreeItemId(id_val);
 
-            path_to_tree_item_id.insert(node.path.clone(), item_id); // Use the mutable map
+            path_to_tree_item_id.insert(node.path.clone(), item_id);
 
             let descriptor = TreeItemDescriptor {
                 id: item_id,
@@ -94,9 +78,8 @@ impl MyAppLogic {
                 is_folder: node.is_dir,
                 state: match node.state {
                     FileState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked, // Default to unchecked for Deselected/Unknown
+                    _ => CheckState::Unchecked,
                 },
-                // Recursive call passes the mutable refs along
                 children: Self::build_tree_item_descriptors_recursive(
                     &node.children,
                     path_to_tree_item_id,
@@ -108,24 +91,25 @@ impl MyAppLogic {
         descriptors
     }
 
-    /// Called once the main window is created by the platform layer.
+    /*
+     * Handles the event indicating the main application window has been created by the platform layer.
+     * It performs an initial directory scan based on the current root path and populates the UI
+     * with the discovered file structure. It returns a list of platform commands to show the window
+     * and display the initial file tree.
+     */
     pub fn on_main_window_created(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         self.main_window_id = Some(window_id);
         let mut commands = Vec::new();
 
-        // Use current_whitelist_patterns (which might be default or from a last-loaded profile later)
-        // root_path_for_scan is also set (e.g. to "." initially)
-        let whitelist_patterns_to_use = self.current_whitelist_patterns.clone();
-
         println!(
-            "AppLogic: Initial scan of directory {:?} with patterns: {:?}",
-            self.root_path_for_scan, whitelist_patterns_to_use
+            "AppLogic: Initial scan of directory {:?}",
+            self.root_path_for_scan
         );
 
-        match core::scan_directory(&self.root_path_for_scan, &whitelist_patterns_to_use) {
+        // Updated call to scan_directory
+        match core::scan_directory(&self.root_path_for_scan) {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
-                // No profile application here initially, tree starts fresh
                 println!(
                     "AppLogic: Scanned {} top-level nodes.",
                     self.file_nodes_cache.len()
@@ -176,10 +160,9 @@ impl MyAppLogic {
                 FileState::Deselected => {
                     deselected.insert(node.path.clone());
                 }
-                FileState::Unknown => { /* Do nothing for Unknown */ }
+                FileState::Unknown => {}
             }
             if node.is_dir && !node.children.is_empty() {
-                // Only recurse if it's a dir AND has children
                 Self::gather_selected_deselected_paths_recursive(
                     &node.children,
                     selected,
@@ -189,6 +172,11 @@ impl MyAppLogic {
         }
     }
 
+    /*
+     * Creates a `Profile` object based on the current application state.
+     * This includes the current root scan path, sets of selected and deselected file paths,
+     * and the provided new profile name. Whitelist patterns are no longer part of the profile.
+     */
     fn create_profile_from_current_state(&self, new_profile_name: String) -> Profile {
         let mut selected_paths = HashSet::new();
         let mut deselected_paths = HashSet::new();
@@ -204,7 +192,12 @@ impl MyAppLogic {
             root_folder: self.root_path_for_scan.clone(),
             selected_paths,
             deselected_paths,
-            whitelist_patterns: self.current_whitelist_patterns.clone(),
+            archive_path: self.current_profile_name.as_ref().and_then(|name| {
+                // Attempt to carry over archive_path
+                core::load_profile(name, APP_NAME_FOR_PROFILES)
+                    .ok()
+                    .and_then(|p| p.archive_path)
+            }),
         }
     }
 
@@ -217,8 +210,6 @@ impl MyAppLogic {
             &mut self.next_tree_item_id_counter,
         );
         if descriptors.is_empty() && self.file_nodes_cache.is_empty() {
-            // Send command to clear tree view if it's truly empty,
-            // or PopulateTreeView with empty items.
             Some(PlatformCommand::PopulateTreeView {
                 window_id,
                 items: vec![],
@@ -233,7 +224,6 @@ impl MyAppLogic {
         }
     }
 
-    /// Finds a mutable reference to a `FileNode` within a slice by its `PathBuf`.
     fn find_filenode_mut<'a>(
         nodes: &'a mut [FileNode],
         path_to_find: &Path,
@@ -253,7 +243,6 @@ impl MyAppLogic {
         None
     }
 
-    /// Finds an immutable reference to a `FileNode` within a slice by its `PathBuf`.
     fn find_filenode_ref<'a>(nodes: &'a [FileNode], path_to_find: &Path) -> Option<&'a FileNode> {
         for node in nodes.iter() {
             if node.path == path_to_find {
@@ -269,8 +258,6 @@ impl MyAppLogic {
         None
     }
 
-    /// Recursively collects `TreeItemId`s and their new `CheckState` for nodes
-    /// that need their UI updated, starting from a given `FileNode`.
     fn collect_visual_updates_recursive(
         &self,
         node: &FileNode,
@@ -298,6 +285,11 @@ impl MyAppLogic {
 }
 
 impl PlatformEventHandler for MyAppLogic {
+    /*
+     * Primary event handling method for the application logic.
+     * This method receives platform-agnostic UI events, updates the internal application
+     * state accordingly, and returns a list of platform commands to effect changes in the native UI.
+     */
     fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
         match event {
@@ -306,7 +298,6 @@ impl PlatformEventHandler for MyAppLogic {
                     println!(
                         "AppLogic: Main window close requested. Commanding platform to close."
                     );
-                    // This command should lead the platform to call DestroyWindow.
                     commands.push(PlatformCommand::CloseWindow { window_id });
                 }
             }
@@ -344,7 +335,6 @@ impl PlatformEventHandler for MyAppLogic {
                         if let Some(node_model) = node_to_update_model_for {
                             let new_model_file_state = match new_state {
                                 CheckState::Checked => FileState::Selected,
-                                // If UI unchecks, model becomes Deselected
                                 CheckState::Unchecked => FileState::Deselected,
                             };
                             core::state_manager::update_folder_selection(
@@ -359,7 +349,6 @@ impl PlatformEventHandler for MyAppLogic {
                         }
                     }
 
-                    // Perform a non-mutable find to get a reference for collecting visual updates
                     if let Some(root_node_for_visual_update) =
                         Self::find_filenode_ref(&self.file_nodes_cache, &path_for_model_update)
                     {
@@ -406,20 +395,18 @@ impl PlatformEventHandler for MyAppLogic {
                     ) {
                         Ok(content) => {
                             self.pending_archive_content = Some(content);
-                            self.pending_action = Some(PendingAction::SavingArchive); // Set pending action
+                            self.pending_action = Some(PendingAction::SavingArchive);
                             commands.push(PlatformCommand::ShowSaveFileDialog {
                                 window_id,
                                 title: "Save Archive As".to_string(),
                                 default_filename: "archive.txt".to_string(),
                                 filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
                                     .to_string(),
-                                initial_dir: None, // Or perhaps current working directory?
+                                initial_dir: None,
                             });
                         }
                         Err(e) => {
                             eprintln!("AppLogic: Failed to create archive content: {}", e);
-                            // Future: Show a message box to the user via a PlatformCommand
-                            // For now, just log. If content generation fails, pending_archive_content remains None.
                         }
                     }
                 }
@@ -432,7 +419,7 @@ impl PlatformEventHandler for MyAppLogic {
                         window_id: main_id,
                         title: "Load Profile".to_string(),
                         filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir,
+                        initial_dir: profile_dir.map(|p| p.to_path_buf()), // Ensure Option<PathBuf>
                     });
                 }
             }
@@ -458,13 +445,8 @@ impl PlatformEventHandler for MyAppLogic {
                                             Some(loaded_profile.name.clone());
                                         self.root_path_for_scan =
                                             loaded_profile.root_folder.clone();
-                                        self.current_whitelist_patterns =
-                                            loaded_profile.whitelist_patterns.clone();
 
-                                        match core::scan_directory(
-                                            &self.root_path_for_scan,
-                                            &self.current_whitelist_patterns,
-                                        ) {
+                                        match core::scan_directory(&self.root_path_for_scan) {
                                             Ok(nodes) => {
                                                 self.file_nodes_cache = nodes;
                                                 core::apply_profile_to_tree(
@@ -476,18 +458,17 @@ impl PlatformEventHandler for MyAppLogic {
                                                 {
                                                     commands.push(cmd);
                                                 }
-                                                // TODO: Update status bar with profile name
                                             }
                                             Err(e) => {
                                                 eprintln!(
                                                     "AppLogic: Error rescanning dir for profile: {}",
                                                     e
                                                 );
-                                                self.file_nodes_cache.clear(); // Clear cache on error
+                                                self.file_nodes_cache.clear();
                                                 if let Some(cmd) =
                                                     self.refresh_tree_view_from_cache(window_id)
                                                 {
-                                                    commands.push(cmd); // Show empty tree
+                                                    commands.push(cmd);
                                                 }
                                             }
                                         }
@@ -521,17 +502,17 @@ impl PlatformEventHandler for MyAppLogic {
                     let profile_dir = core::profiles::get_profile_dir(APP_NAME_FOR_PROFILES);
                     let sanitized_current_name = self.current_profile_name.as_ref().map_or_else(
                         || "new_profile".to_string(),
-                        |name| core::profiles::sanitize_profile_name(name), // sanitize for filename
+                        |name| core::profiles::sanitize_profile_name(name),
                     );
                     let default_filename = format!("{}.json", sanitized_current_name);
 
-                    self.pending_action = Some(PendingAction::SavingProfile); // Set pending action
+                    self.pending_action = Some(PendingAction::SavingProfile);
                     commands.push(PlatformCommand::ShowSaveFileDialog {
                         window_id: main_id,
                         title: "Save Profile As".to_string(),
                         default_filename,
                         filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir,
+                        initial_dir: profile_dir.map(|p| p.to_path_buf()), // Ensure Option<PathBuf>
                     });
                 }
             }
@@ -539,7 +520,6 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::FileSaveDialogCompleted { window_id, result } => {
                 if self.main_window_id == Some(window_id) {
                     match self.pending_action.take() {
-                        // Take and match on pending_action
                         Some(PendingAction::SavingArchive) => {
                             if let Some(path) = result {
                                 if let Some(content) = self.pending_archive_content.take() {
@@ -559,7 +539,7 @@ impl PlatformEventHandler for MyAppLogic {
                                 }
                             } else {
                                 println!("AppLogic: Save archive dialog cancelled.");
-                                self.pending_archive_content = None; // Clear if cancelled
+                                self.pending_archive_content = None;
                             }
                         }
                         Some(PendingAction::SavingProfile) => {
@@ -609,42 +589,42 @@ impl PlatformEventHandler for MyAppLogic {
                             eprintln!(
                                 "AppLogic: FileSaveDialogCompleted received but no pending action was set."
                             );
-                            // Clear pending_archive_content just in case, if it was for an archive
                             self.pending_archive_content = None;
                         }
                     }
                 }
             }
-            AppEvent::WindowResized { .. } => { /* Ignored for now by app logic, platform handles layout */
-            }
+            AppEvent::WindowResized { .. } => {}
         }
         commands
     }
 
     fn on_quit(&mut self) {
         println!("AppLogic: on_quit called by platform. Application is exiting.");
-        // Perform any final cleanup for app_logic here if needed.
     }
 }
 
+// Unit tests for app_logic::handler
+// Note: Some tests might need adjustment if they implicitly relied on whitelist_patterns
+// (e.g., by setting it up in MyAppLogic for a test).
+// For now, the existing tests mostly focus on event->command flow.
 #[cfg(test)]
 mod handler_tests {
-    use super::*; // Bring MyAppLogic and other items into scope
+    use super::*;
     use std::path::PathBuf;
-    use tempfile::NamedTempFile; // For creating temporary files in tests
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_handle_button_click_generates_save_dialog() {
         let mut logic = MyAppLogic::new();
         logic.main_window_id = Some(WindowId(1));
-        logic.file_nodes_cache = vec![]; // empty tree
+        logic.file_nodes_cache = vec![];
         logic.root_path_for_scan = PathBuf::from(".");
-        // Ensure pending_archive_content is None initially
+
         let cmds = logic.handle_event(AppEvent::ButtonClicked {
             window_id: WindowId(1),
             control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
         });
-        // Expect a ShowSaveFileDialog command
         assert!(matches!(
             cmds.as_slice(),
             [PlatformCommand::ShowSaveFileDialog { .. }]

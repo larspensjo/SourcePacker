@@ -2,9 +2,11 @@ use serde::{Deserialize, Serialize}; // For Profile serialization
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-// Represents the selection state of a file or folder.
-// Derives Serialize and Deserialize because if we ever decide to save a more complex state that includes this enum directly
-// (though current Profile doesn't), it's ready. Default is added for convenience.
+/*
+ * Represents the selection state of a file or folder.
+ * Derives Serialize and Deserialize for potential future use if this enum is directly part of a complex state
+ * (though current Profile doesn't serialize it directly). Default is added for convenience.
+ */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FileState {
     Selected,
@@ -18,10 +20,11 @@ impl Default for FileState {
     }
 }
 
-// Represents a node in the file system tree.
-// Only derives Debug and Clone. We are not directly serializing the FileNode tree structure into the profile.
-// Instead, the Profile struct will store sets of paths that are selected or deselected. This avoids complexities
-// with recursive serialization and makes profiles more resilient to file system changes (though we still need to handle missing paths).
+/*
+ * Represents a node in the file system tree.
+ * It's not directly serialized into profiles; instead, profiles store sets of selected/deselected paths.
+ * This approach makes profiles more resilient to file system changes and simplifies serialization.
+ */
 #[derive(Debug, Clone)] // Not serializing FileNode directly; Profile stores paths.
 pub struct FileNode {
     pub path: PathBuf,
@@ -32,7 +35,11 @@ pub struct FileNode {
 }
 
 impl FileNode {
-    /// Creates a new FileNode.
+    /*
+     * Creates a new FileNode with default 'Unknown' state and no children.
+     * This constructor initializes a basic representation of a file or directory entry
+     * before its state is determined by user interaction or profile application.
+     */
     pub fn new(path: PathBuf, name: String, is_dir: bool) -> Self {
         FileNode {
             path,
@@ -44,8 +51,11 @@ impl FileNode {
     }
 }
 
-// Represents a user profile, storing selection states and configurations.
-// Derives Debug, Clone, Serialize, and Deserialize as this is the structure that will be saved to and loaded from JSON.
+/*
+ * Represents a user profile, storing selection states and configurations for a specific root folder.
+ * This structure is serialized to/from JSON for persistence. It now includes an `archive_path`
+ * to associate the profile directly with its output archive, and no longer contains whitelist patterns.
+ */
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -55,26 +65,30 @@ pub struct Profile {
     // especially when the tree structure can change.
     pub selected_paths: HashSet<PathBuf>,
     pub deselected_paths: HashSet<PathBuf>,
-    pub whitelist_patterns: Vec<String>,
+    pub archive_path: Option<PathBuf>, // Added as per updated plan P1.1 (but relevant for P0'.2 context)
 }
 
 impl Profile {
-    /// Creates a new, empty profile for a given name and root folder.
+    /*
+     * Creates a new, empty profile for a given name and root folder.
+     * Initializes with empty selection sets and no specific archive path. The archive path
+     * will typically be set later, either by user interaction or when loading a profile.
+     */
     pub fn new(name: String, root_folder: PathBuf) -> Self {
         Profile {
             name,
             root_folder,
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
-            whitelist_patterns: Vec::new(),
+            archive_path: None, // New profiles start without an archive path
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FileNode, FileState};
-    use std::path::{Path, PathBuf}; // Import FileNode and FileState into the tests module
+    use super::{FileNode, FileState, Profile}; // Added Profile to imports for tests
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn test_filenode_new_defaults() {
@@ -85,5 +99,19 @@ mod tests {
         assert_eq!(n.is_dir, false);
         assert_eq!(n.state, FileState::Unknown);
         assert!(n.children.is_empty());
+    }
+
+    #[test]
+    fn test_profile_new_defaults() {
+        // Added test for Profile::new
+        let profile_name = "TestProfile".to_string();
+        let root_path = PathBuf::from("/test/root");
+        let profile = Profile::new(profile_name.clone(), root_path.clone());
+
+        assert_eq!(profile.name, profile_name);
+        assert_eq!(profile.root_folder, root_path);
+        assert!(profile.selected_paths.is_empty());
+        assert!(profile.deselected_paths.is_empty());
+        assert_eq!(profile.archive_path, None);
     }
 }
