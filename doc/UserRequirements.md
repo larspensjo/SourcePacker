@@ -1,51 +1,62 @@
 # Requirement Specification for SourcePacker
 
-This document outlines the requirements for SourcePacker, a file selection and archive tool designed to package source code for AI prompts.
+This document outlines the requirements for SourcePacker, a file selection and archive tool designed to package source code for AI prompts. The tool actively monitors source code hierarchies, helps manage subsets of files through profiles, and ensures archives reflect the latest selected changes.
 
 # Core Functionality
 
-## File System Traversal
-[FileSystemScanRootDirTreeViewV1] The application must be able to scan a user-specified root directory and display its file and folder structure in a tree view.
+## File System Monitoring and Display
+[FileSystemMonitorTreeViewV1] The application must be able to monitor a user-specified root directory, detect file/folder additions, removals, and modifications, and display its relevant file and folder structure in a tree view.
+[FileStateNewUnknownV2] New files detected within the monitored directory ~~(and matching whitelist criteria)~~ that are not already part of the current profile's known selection state shall initially be presented in an "Unknown" state, requiring user classification.
 
 ## File Selection
-[FileSelStateSelectedV1] *   **Selected:** The item is explicitly included in the archive.
-[FileSelStateDeselectedV1] *   **Deselected:** The item is explicitly excluded from the archive.
-[FileSelStateUnknownV1] *   **Unknown:** The item's inclusion is not yet determined (initial state).
-[FileSelFolderRecursiveStateV1] * Selecting or deselecting a folder shall recursively apply the same state to all its child files and folders.
+[FileSelStateSelectedV1] *   **Selected:** The item is explicitly included in the profile's archive.
+[FileSelStateDeselectedV1] *   **Deselected:** The item is explicitly excluded from the profile's archive.
+[FileSelStateUnknownV1] *   **Unknown:** The item's inclusion in the profile's archive is not yet determined (e.g., new files, or files in a newly loaded profile whose paths were not previously saved as selected/deselected).
+[FileSelFolderRecursiveStateV1] * Selecting or deselecting a folder shall recursively apply the same state to all its child files and folders within the current view.
 
-## File Filtering (Whitelist)
-[FileFilterProfileWhitelistGlobV1] * Profiles shall define a list of whitelist glob patterns (e.g., `*.rs`, `src/**/*.toml`).
-[FileFilterWhitelistOnlyMatchesV1] * Only files matching at least one whitelist pattern shall be considered for display and selection in the tree view. Files not matching any pattern will not be shown or processed.
+~~## File Filtering (Whitelist)~~
+~~[FileFilterProfileWhitelistGlobV1] * Profiles shall define a list of whitelist glob patterns (e.g., `*.rs`, `src/**/*.toml`).~~
+    * This requirement has been removed.
+~~[FileFilterWhitelistOnlyMatchesV1] * Only files matching at least one whitelist pattern shall be considered for display and selection in the tree view. Files not matching any pattern will not be shown or processed.~~
+    * This requirement has been removed
 
 ## Text File Focus
 [TextFileFocusUTF8V1] The application is intended for text-based source code. It should primarily handle files assumed to be UTF-8 encoded.
-[TextFileBinaryFutureWarnV1] * (Future Consideration) A simple mechanism to identify and potentially warn about or exclude binary files might be useful, though initially, all files matching whitelist patterns will be treated as text.
+~~[TextFileBinaryFutureWarnV1] * (Future Consideration) A simple mechanism to identify and potentially warn about or exclude binary files might be useful, though initially, all files matching whitelist patterns will be treated as text.~~
+    * This requirement has been removed
 
 ## Archive Generation
-[ArchiveGenSingleTxtFileV1] * The application shall create a single `.txt` archive file from all "Selected" files.
+[ArchiveGenSingleTxtFileV1] * The application shall create a single `.txt` archive file from all files marked "Selected" *for the currently active profile*.
 [ArchiveGenConcatenateContentV1] * The content of selected files shall be concatenated into the archive.
-[ArchiveGenFileHeaderFooterV1] * Each file's content in the archive shall be preceded by a simple header (e.g., `--- START FILE: path/to/file.rs ---`) and followed by a simple footer (e.g., `--- END FILE: path/to/file.rs ---`).
+[ArchiveGenFileHeaderFooterV1] * Each file's content in the archive shall be preceded by a simple header (e.g., `--- START FILE: "path/to/file.rs" ---`) and followed by a simple footer (e.g., `--- END FILE: "path/to/file.rs" ---`).
+
+## Archive Synchronization and Integrity
+[ArchiveSyncTimestampV1] The application must compare the last modification timestamp of a profile's associated archive file with the last modification timestamps of its "Selected" source files.
+[ArchiveSyncNotifyUserV1] If any "Selected" source files for the current profile are newer than its associated archive, or if the set of "Selected" files has changed since the last archive generation, the user shall be clearly notified that the archive is outdated and requires regeneration.
+[ArchiveSyncUserAcknowledgeV1] Users must be able to acknowledge the need for an archive update, typically by triggering the "Generate Archive" action.
 
 ## Token Count Estimation
-[TokenCountEstimateSelectedV1] * The application shall display an estimated token count for the currently selected files.
+[TokenCountEstimateSelectedV1] * The application shall display an estimated token count for the files currently marked "Selected" in the active profile.
 [TokenCountLiveUpdateV1] * This count shall update live as files are selected or deselected. (Mechanism for tokenization TBD, e.g., word count or a specific tokenizer).
 
 # Profile Management
 
 ## Profile Definition
 A profile encapsulates:
-[ProfileDefRootFolderV1] * A root folder path.
-[ProfileDefSelectionStateV1] * The selection state (Selected/Deselected) of files and folders within that root folder. (Unknown state is not saved; new files in a known folder appear as Unknown).
-[ProfileDefWhitelistPatternsV1] * A list of whitelist file patterns.
+[ProfileDefRootFolderV1] * A root folder path to be monitored.
+[ProfileDefSelectionStateV1] * The selection state (Selected/Deselected) of files and folders within that root folder for that specific profile. "Unknown" state is typically transient for newly discovered files within the profile's context.
+~~[ProfileDefWhitelistPatternsV1] * A list of whitelist file patterns.~~
+*   This requirement has been removed.
+[ProfileDefAssociatedArchiveV1] * Each profile shall be associated with its own specific output archive file. The path/name of this archive may be configurable or derived (e.g., from the profile name).
 
 ## Profile Storage
 [ProfileStoreJsonFilesV1] * Profiles shall be saved as individual JSON files.
 [ProfileStoreAppdataLocationV1] * Profiles shall be stored in `%APPDATA%\SourcePacker\profiles\`.
 
 ## Profile Operations
-[ProfileOpLoadSwitchV1] * **Load:** Users can switch between different profiles.
-[ProfileOpSaveNewOverwriteV1] * **Save:** Users can save the current selection state and whitelist patterns as a new profile or overwrite an existing one.
-[ProfileOpCreateNewV1] * **Create New:** Users can create a new, empty profile, specifying a root folder and initial whitelist patterns.
+[ProfileOpLoadSwitchV1] * **Load:** Users can switch between different profiles. Loading a profile will apply its settings to the view and begin monitoring its root folder.
+[ProfileOpSaveNewOverwriteV3] * **Save:** Users can save the current selection state, ~~whitelist patterns~~, and associated archive configuration as a new profile or overwrite an existing one.
+[ProfileOpCreateNewV2] * **Create New:** Users can create a new, empty profile, specifying a root folder, ~~initial whitelist patterns~~, and its target archive file.
 [ProfileOpDuplicateExistingV1] * **Duplicate:** Users can duplicate an existing profile to create a new one based on it.
 [ProfileOpDeleteExistingV1] * **Delete:** Users can delete existing profiles.
 
@@ -54,7 +65,7 @@ A profile encapsulates:
 [ProfileDefaultNoPreviousBlankV1] * If no previous profile exists, the application may start with a blank state or prompt the user to create/open a profile.
 
 ## Handling Missing Files
-[ProfileMissingFileIndicateOrRemoveV1] * When loading a profile, if a previously selected file or folder no longer exists, it should be indicated in the UI (e.g., greyed out, marked with an icon) or silently removed from the selection. The profile itself should persist the path.
+[ProfileMissingFileIndicateOrRemoveV1] * When loading a profile, if a previously selected/deselected file or folder no longer exists in the monitored directory, it should be indicated in the UI (e.g., greyed out, marked with an icon) or silently removed from the profile's selection set. The profile itself should persist the path until explicitly removed by the user.
 
 # User Interface (Windows Native UI via `windows-rs`)
 
@@ -62,8 +73,9 @@ A profile encapsulates:
 [UiMainWindowSingleV1] A single main application window.
 
 ## Tree View
-[UiTreeViewDisplayStructureV1] * Display the file and folder structure starting from the profile's root folder.
-[UiTreeViewVisualSelectionStateV1] * Visually indicate the selection state (Selected, Deselected, Unknown) for each item. (Suggestion: Tristate checkboxes).
+[UiTreeViewDisplayStructureV2] * Display the file and folder structure starting from the profile's root folder, ~~reflecting whitelist filtering~~.
+[UiTreeViewVisualSelectionStateV1] * Visually indicate the selection state (Selected, Deselected, Unknown) for each item (e.g., tristate checkboxes).
+[UiTreeViewVisualFileStatusV1] * Visually indicate the status of files relative to the profile's selection and archive state (e.g., new, modified since last archive, included, excluded).
 
 ## File Content Viewer
 [UiContentViewerPanelReadOnlyV1] * A panel or separate window to display the content of a selected file from the tree view (read-only).
@@ -75,17 +87,19 @@ A profile encapsulates:
 ## Status Bar
 Display relevant information such as:
 [UiStatusBarProfileNameV1] * Current profile name.
-[UiStatusBarSelectedFileCountV1] * Number of selected files.
+[UiStatusBarSelectedFileCountV1] * Number of selected files for the current profile.
 [UiStatusBarSelectedFileSizeV1] * Total size of selected files (optional).
-[UiStatusBarLiveTokenCountV1] * Live estimated token count.
+[UiStatusBarLiveTokenCountV1] * Live estimated token count for selected files.
+[UiNotificationOutdatedArchiveV1] * A clear visual indicator (e.g., text, icon) when the current profile's archive is outdated.
 
 ## Menu/Toolbar
 Provide access to functions like:
 [UiMenuProfileManagementV1] * Profile management (Open, Save, Save As, New, Duplicate, Delete, Manage Profiles).
-[UiMenuSetRootFolderV1] * Set Root Folder (for new profiles).
-[UiMenuEditWhitelistV1] * Edit Whitelist Patterns.
-[UiMenuGenerateArchiveV1] * Generate Archive.
-[UiMenuRefreshTreeViewV1] * Refresh tree view.
+[UiMenuSetRootFolderV1] * Set/Change Root Folder (for new or existing profiles, may trigger re-scan/re-evaluation).
+~~[UiMenuEditWhitelistV1] * Edit Whitelist Patterns for the current profile.~~
+    * This requirement has been removed.
+[UiMenuGenerateArchiveV1] * Generate/Update Archive for the current profile.
+[UiMenuTriggerScanV1] * Manually trigger a re-scan/re-evaluation of the monitored directory (though automatic detection is primary).
 
 # Technical Requirements
 
@@ -96,14 +110,14 @@ Provide access to functions like:
 [TechUiFrameworkWindowsRsV1] `windows-rs` for direct Win32/WinRT API interaction.
 
 ## Modularity & Testing
-[TechModularityLogicalModulesV1] * The codebase shall be organized into logical modules (e.g., UI, core logic, profile management, file operations).
+[TechModularityLogicalModulesV1] * The codebase shall be organized into logical modules (e.g., UI, core logic, profile management, file operations, monitoring).
 [TechModularityUnitTestsCoreV1] * Core logic components shall have unit tests where feasible.
 
 ## Error Handling
-[TechErrorHandlingGracefulV1] Graceful error handling for file operations, profile loading/saving, etc.
+[TechErrorHandlingGracefulV1] Graceful error handling for file operations, profile loading/saving, monitoring, etc.
 
 ## Performance
-[TechPerfResponsiveUiV1] For typical source code repositories, UI should remain responsive. Asynchronous operations are not an initial requirement but can be considered for future optimization if large directories cause UI lag.
+[TechPerfResponsiveUiV1] For typical source code repositories, UI should remain responsive. File system monitoring and processing should be efficient to avoid UI lag. Asynchronous operations may be needed for monitoring.
 
 ## Dependencies
 [TechDepsMinimizeExternalV1] Minimize external dependencies, using well-maintained and popular crates where necessary.
@@ -115,3 +129,4 @@ Provide access to functions like:
 [FutureArchiveHeaderFormatConfigurableV1] * Configurable archive header/footer format.
 [FutureClipboardCopyArchiveV1] * "Copy to Clipboard" option for the generated archive content.
 [FutureEncodingSupportOtherV1] * Support for other character encodings (if UTF-8 proves insufficient).
+[FutureAutomatedArchivingV1] * Option for automated archive regeneration upon detecting changes (with user consent).
