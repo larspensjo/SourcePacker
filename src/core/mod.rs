@@ -4,11 +4,12 @@ pub mod models;
 pub mod profiles;
 pub mod state_manager;
 
-// Re-export
-pub use file_system::scan_directory;
-pub use models::{FileNode, FileState, Profile};
+// Re-export key structures and enums
+pub use models::{ArchiveStatus, FileNode, FileState, Profile}; // Added ArchiveStatus
 
-// Re-export profile management functions
+// Re-export key functions from submodules
+pub use file_system::scan_directory;
+
 pub use profiles::{
     ProfileError, // Also re-export the error type for this module
     list_profiles,
@@ -16,5 +17,5 @@ pub use profiles::{
     save_profile,
 };
 
-pub use archiver::create_archive_content;
+pub use archiver::{check_archive_status, create_archive_content, get_file_timestamp}; // Added check_archive_status, get_file_timestamp
 pub use state_manager::{apply_profile_to_tree, update_folder_selection};

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize}; // For Profile serialization
 use std::collections::HashSet;
+use std::io;
 use std::path::PathBuf;
 
 /*
@@ -65,7 +66,7 @@ pub struct Profile {
     // especially when the tree structure can change.
     pub selected_paths: HashSet<PathBuf>,
     pub deselected_paths: HashSet<PathBuf>,
-    pub archive_path: Option<PathBuf>, // Added as per updated plan P1.1 (but relevant for P0'.2 context)
+    pub archive_path: Option<PathBuf>,
 }
 
 impl Profile {
@@ -85,10 +86,26 @@ impl Profile {
     }
 }
 
+/*
+ * Represents the synchronization status of a profile's archive file.
+ * This enum indicates whether the archive is up-to-date with selected source files,
+ * needs regeneration, or if there were issues determining its status.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveStatus {
+    UpToDate,
+    OutdatedRequiresUpdate,
+    NotYetGenerated,                      // Profile has no archive_path associated
+    ArchiveFileMissing,                   // archive_path is set, but file doesn't exist
+    NoFilesSelected, // No files are selected, so archive status is moot or "up to date" by default.
+    ErrorChecking(Option<io::ErrorKind>), // An I/O error occurred (optional: kind of error)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FileNode, FileState, Profile}; // Added Profile to imports for tests
-    use std::path::{Path, PathBuf};
+    use super::{FileNode, FileState, Profile};
+    use std::io;
+    use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
 
     #[test]
     fn test_filenode_new_defaults() {
@@ -103,7 +120,6 @@ mod tests {
 
     #[test]
     fn test_profile_new_defaults() {
-        // Added test for Profile::new
         let profile_name = "TestProfile".to_string();
         let root_path = PathBuf::from("/test/root");
         let profile = Profile::new(profile_name.clone(), root_path.clone());
