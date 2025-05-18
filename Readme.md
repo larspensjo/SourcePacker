@@ -1,14 +1,6 @@
 # SourcePacker
 
-SourcePacker is a Windows desktop tool designed to help you select and package source code files into a single text archive. This is particularly useful for preparing context for AI prompts, where token limits are a concern.
-
-The tool allows you to:
-*   Browse a directory structure in a tree view.
-*   Select/deselect individual files and folders.
-*   Define whitelist patterns to include only relevant files (e.g., `*.rs`, `src/**/*.md`).
-*   Save and load selection configurations as "profiles."
-*   Generate a concatenated text file of selected files, with clear headers for each file.
-*   Get an estimated token count for your selection.
+SourcePacker is a Windows desktop tool for managing and packaging evolving source code projects into text archives, primarily for AI prompt context. It actively monitors your file hierarchy, detects changes (additions, removals, modifications), and helps you maintain curated subsets of files for different archives using profiles. Newly detected files are marked as "unknown," requiring user classification. The tool also notifies you when your selected files have changed more recently than their corresponding archive, prompting for an update.
 
 ## Project Setup
 
