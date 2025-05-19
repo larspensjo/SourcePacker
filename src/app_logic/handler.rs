@@ -1,4 +1,7 @@
-use crate::core::{self, ArchiveStatus, ConfigError, FileNode, FileState, Profile, ProfileError};
+use crate::core::{
+    self, ArchiveStatus, ConfigError, ConfigManagerOperations, FileNode, FileState, Profile,
+    ProfileError,
+};
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
     WindowId,
@@ -7,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002;
 const APP_NAME_FOR_PROFILES: &str = "SourcePackerApp";
@@ -22,8 +26,8 @@ enum PendingAction {
 /*
  * Manages the core application state and UI logic in a platform-agnostic manner.
  * It processes UI events received from the platform layer and generates commands
- * to update the UI, managing file trees, profiles, archive generation, and archive status.
- * It also handles loading the last used profile on startup.
+ * to update the UI. It depends on a `ConfigManagerOperations` trait for handling
+ * application configuration, such as loading the last used profile.
  */
 pub struct MyAppLogic {
     main_window_id: Option<WindowId>,
@@ -36,16 +40,17 @@ pub struct MyAppLogic {
     current_archive_status: Option<ArchiveStatus>,
     pending_archive_content: Option<String>,
     pending_action: Option<PendingAction>,
+    config_manager: Arc<dyn ConfigManagerOperations>,
 }
 
 impl MyAppLogic {
     /*
      * Initializes a new instance of the application logic.
-     * Sets up default values for the application state, including an initial root path
-     * and an empty file cache. The actual loading of the last profile happens
-     * in `on_main_window_created`.
+     * It requires a `ConfigManagerOperations` implementation to handle loading
+     * and saving application configuration (e.g., the last used profile).
+     * Sets up default values for other application states.
      */
-    pub fn new() -> Self {
+    pub fn new(config_manager: Arc<dyn ConfigManagerOperations>) -> Self {
         MyAppLogic {
             main_window_id: None,
             file_nodes_cache: Vec::new(),
@@ -57,6 +62,7 @@ impl MyAppLogic {
             current_archive_status: None,
             pending_archive_content: None,
             pending_action: None,
+            config_manager,
         }
     }
 
@@ -100,9 +106,10 @@ impl MyAppLogic {
 
     /*
      * Handles the event indicating the main application window has been created.
-     * It attempts to load the last used profile. If successful, it uses that profile's
-     * settings for the initial directory scan and state application. Otherwise, it proceeds
-     * with a default scan. Finally, it populates the UI and shows the window.
+     * It attempts to load the last used profile using the configured `ConfigManagerOperations`.
+     * If successful, it uses that profile's settings for the initial directory scan and state
+     * application. Otherwise, it proceeds with a default scan. Finally, it populates the UI
+     * and shows the window.
      */
     pub fn on_main_window_created(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         self.main_window_id = Some(window_id);
@@ -110,7 +117,10 @@ impl MyAppLogic {
 
         // P2.6: Attempt to load the last used profile
         let mut loaded_profile_on_startup = false;
-        match core::load_last_profile_name(APP_NAME_FOR_PROFILES) {
+        match self
+            .config_manager
+            .load_last_profile_name(APP_NAME_FOR_PROFILES)
+        {
             Ok(Some(last_profile_name)) => {
                 println!(
                     "AppLogic: Found last used profile name: {}",
@@ -533,7 +543,7 @@ impl PlatformEventHandler for MyAppLogic {
                                         self.current_profile_cache = Some(profile.clone());
 
                                         // P2.6: Save last loaded profile name
-                                        if let Err(e) = core::save_last_profile_name(
+                                        if let Err(e) = self.config_manager.save_last_profile_name(
                                             APP_NAME_FOR_PROFILES,
                                             &profile.name,
                                         ) {
@@ -703,10 +713,13 @@ impl PlatformEventHandler for MyAppLogic {
                                                     .clone();
 
                                                 // P2.6: Save last saved profile name
-                                                if let Err(e) = core::save_last_profile_name(
-                                                    APP_NAME_FOR_PROFILES,
-                                                    &new_profile.name,
-                                                ) {
+                                                if let Err(e) = self
+                                                    .config_manager // Use self.config_manager
+                                                    .save_last_profile_name(
+                                                        APP_NAME_FOR_PROFILES,
+                                                        &new_profile.name,
+                                                    )
+                                                {
                                                     eprintln!(
                                                         "AppLogic: Failed to save last profile name '{}': {:?}",
                                                         new_profile.name, e
@@ -757,27 +770,90 @@ impl PlatformEventHandler for MyAppLogic {
 #[cfg(test)]
 mod handler_tests {
     use super::*;
-    use crate::core::ConfigError;
-    use crate::core::ProfileError;
+    use crate::core::{ConfigError, CoreConfigManager, ProfileError};
     use std::fs::{self, File};
     use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use std::thread;
     use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
 
-    // Helper to create a basic MyAppLogic with a main window id for tests
-    fn setup_logic_with_window() -> MyAppLogic {
-        let mut logic = MyAppLogic::new();
+    // --- MockConfigManager for testing ---
+    struct MockConfigManager {
+        load_last_profile_name_result: Mutex<Result<Option<String>, ConfigError>>,
+        saved_profile_name: Mutex<Option<(String, String)>>, // (app_name, profile_name)
+    }
+
+    impl MockConfigManager {
+        fn new() -> Self {
+            MockConfigManager {
+                load_last_profile_name_result: Mutex::new(Ok(None)), // Default: no profile
+                saved_profile_name: Mutex::new(None),
+            }
+        }
+
+        fn set_load_last_profile_name_result(&self, result: Result<Option<String>, ConfigError>) {
+            *self.load_last_profile_name_result.lock().unwrap() = result;
+        }
+
+        fn get_saved_profile_name(&self) -> Option<(String, String)> {
+            self.saved_profile_name.lock().unwrap().clone()
+        }
+    }
+
+    impl ConfigManagerOperations for MockConfigManager {
+        fn load_last_profile_name(&self, _app_name: &str) -> Result<Option<String>, ConfigError> {
+            // Clone the result to return it.
+            // The error type ConfigError is not Clone, so we need to handle it.
+            // For simplicity in the mock, if it's an error, we'll return a generic Io error.
+            // A more sophisticated mock might store the exact error to return.
+            match *self.load_last_profile_name_result.lock().unwrap() {
+                Ok(ref opt_str) => Ok(opt_str.clone()),
+                Err(ConfigError::Io(ref io_err)) => {
+                    // Attempt to recreate a similar IO error. This is tricky.
+                    // For mock purposes, a new error of the same kind might suffice.
+                    Err(ConfigError::Io(io::Error::new(
+                        io_err.kind(),
+                        "mocked io error",
+                    )))
+                }
+                Err(ConfigError::NoProjectDirectory) => Err(ConfigError::NoProjectDirectory),
+                Err(ConfigError::Utf8Error(ref utf8_err)) => {
+                    // Recreate FromUtf8Error (it stores the original Vec<u8> and a Utf8Error)
+                    // This is complex to truly clone. For a mock, we might simplify.
+                    // For now, let's just return a generic Utf8Error representation.
+                    let dummy_vec = utf8_err.as_bytes().to_vec();
+                    let recreated_utf8_error = String::from_utf8(dummy_vec).unwrap_err();
+                    Err(ConfigError::Utf8Error(recreated_utf8_error))
+                }
+            }
+        }
+
+        fn save_last_profile_name(
+            &self,
+            app_name: &str,
+            profile_name: &str,
+        ) -> Result<(), ConfigError> {
+            *self.saved_profile_name.lock().unwrap() =
+                Some((app_name.to_string(), profile_name.to_string()));
+            Ok(())
+        }
+    }
+    // --- End MockConfigManager ---
+
+    // Helper to create MyAppLogic with a mock config manager and window id
+    fn setup_logic_with_mock_config_manager() -> (MyAppLogic, Arc<MockConfigManager>) {
+        let mock_config_manager = Arc::new(MockConfigManager::new());
+        let mut logic =
+            MyAppLogic::new(Arc::clone(&mock_config_manager) as Arc<dyn ConfigManagerOperations>);
         logic.main_window_id = Some(WindowId(1));
-        logic
+        (logic, mock_config_manager)
     }
 
     // Helper to create a temporary profile file for loading tests
-    // (used by existing tests, might need adjustment if APP_NAME_FOR_PROFILES is used differently now)
     fn create_temp_profile_file_in_profile_subdir(
-        // Renamed for clarity
-        base_temp_dir: &tempfile::TempDir, // The overall temp dir for the test
-        app_name: &str,                    // e.g., APP_NAME_FOR_PROFILES
+        base_temp_dir: &tempfile::TempDir,
+        app_name: &str,
         profile_name: &str,
         root_folder: &Path,
         archive_path: Option<PathBuf>,
@@ -790,7 +866,6 @@ mod handler_tests {
             archive_path,
         };
 
-        // Path where core::profiles::save_profile would put it
         let app_data_dir_for_profiles = base_temp_dir.path().join(app_name).join("profiles");
         fs::create_dir_all(&app_data_dir_for_profiles).unwrap();
 
@@ -799,10 +874,9 @@ mod handler_tests {
 
         let file = File::create(&final_path).expect("Failed to create temp profile file");
         serde_json::to_writer_pretty(file, &profile).expect("Failed to write temp profile file");
-        final_path // This is the path that FileOpenDialogCompleted would receive
+        final_path
     }
 
-    // This helper is for FileOpenDialogCompleted which expects a full path to the .json
     fn create_temp_profile_file_for_direct_load(
         dir: &tempfile::TempDir,
         profile_name_stem: &str,
@@ -825,55 +899,32 @@ mod handler_tests {
         profile_file_path
     }
 
-    // Mock version of core::load_last_profile_name for testing on_main_window_created
-    // This is a bit tricky without true DI for free functions.
-    // We'll simulate its effect by setting up files where the real function would look.
-    fn setup_last_profile_name_file(
-        base_temp_dir: &tempfile::TempDir,
-        app_name: &str,
-        profile_name_to_set: Option<&str>,
-    ) {
-        let config_dir = base_temp_dir.path().join(app_name); // Simulates ProjectDirs.config_dir()
-        fs::create_dir_all(&config_dir).unwrap();
-        let last_profile_file_path = config_dir.join("last_profile_name.txt");
-
-        if let Some(name) = profile_name_to_set {
-            fs::write(last_profile_file_path, name).unwrap();
-        } else {
-            if last_profile_file_path.exists() {
-                fs::remove_file(last_profile_file_path).unwrap();
-            }
-        }
-    }
-
     #[test]
-    fn test_on_main_window_created_loads_last_profile() {
-        let mut logic = MyAppLogic::new(); // Window ID set by on_main_window_created
-        let temp_base_dir = tempdir().unwrap(); // Base for both config and profile files
+    fn test_on_main_window_created_loads_last_profile_with_mock() {
+        let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
+        let temp_base_dir = tempdir().unwrap(); // For profile JSON file
 
-        let last_profile_name_to_load = "MyStartupProfile";
-        let startup_profile_root = temp_base_dir.path().join("startup_root");
+        let last_profile_name_to_load = "MyMockedStartupProfile";
+        let startup_profile_root = temp_base_dir.path().join("mock_startup_root");
         fs::create_dir_all(&startup_profile_root).unwrap();
-        File::create(startup_profile_root.join("startup_file.txt"))
-            .expect("Test setup: Failed to create startup_file.txt");
+        File::create(startup_profile_root.join("mock_startup_file.txt"))
+            .expect("Test setup: Failed to create mock_startup_file.txt");
 
-        // 1. Create the "last_profile_name.txt" file that core::load_last_profile_name will read
-        setup_last_profile_name_file(
-            &temp_base_dir,
-            APP_NAME_FOR_PROFILES,
-            Some(last_profile_name_to_load),
-        );
+        // 1. Configure the MockConfigManager to return the desired profile name
+        mock_config_manager
+            .set_load_last_profile_name_result(Ok(Some(last_profile_name_to_load.to_string())));
 
         // 2. Create the actual profile JSON file that core::load_profile will read
+        //    (MyAppLogic still uses core::load_profile directly)
         let _profile_json_path = create_temp_profile_file_in_profile_subdir(
-            &temp_base_dir,
+            &temp_base_dir, // This dir is for the actual profile JSON
             APP_NAME_FOR_PROFILES,
             last_profile_name_to_load,
             &startup_profile_root,
             None,
         );
 
-        let _cmds = logic.on_main_window_created(WindowId(1));
+        let _cmds = logic.on_main_window_created(WindowId(1)); // WindowId is already set by helper
 
         assert_eq!(
             logic.current_profile_name.as_deref(),
@@ -886,29 +937,19 @@ mod handler_tests {
         );
         assert_eq!(logic.root_path_for_scan, startup_profile_root);
         assert_eq!(logic.file_nodes_cache.len(), 1);
-        assert_eq!(logic.file_nodes_cache[0].name, "startup_file.txt");
+        assert_eq!(logic.file_nodes_cache[0].name, "mock_startup_file.txt");
         assert!(logic.current_archive_status.is_some());
     }
 
     #[test]
-    fn test_on_main_window_created_no_last_profile() {
-        let mut logic = MyAppLogic::new();
-        let temp_base_dir = tempdir().unwrap();
-
-        setup_last_profile_name_file(&temp_base_dir, APP_NAME_FOR_PROFILES, None);
-
-        let app_profile_dir = temp_base_dir
-            .path()
-            .join(APP_NAME_FOR_PROFILES)
-            .join("profiles");
-        if app_profile_dir.exists() {
-            fs::remove_dir_all(&app_profile_dir).unwrap();
-        }
+    fn test_on_main_window_created_no_last_profile_with_mock() {
+        let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
+        // MockConfigManager defaults to Ok(None) for load_last_profile_name
 
         let default_scan_path = PathBuf::from(".");
-        // Ensure a dummy file exists for the default scan to find something
-        let dummy_file_path = default_scan_path.join("default_scan_file.txt");
-        File::create(&dummy_file_path).expect("Test setup: Failed to create default_scan_file.txt");
+        let dummy_file_path = default_scan_path.join("default_mock_scan_file.txt");
+        File::create(&dummy_file_path)
+            .expect("Test setup: Failed to create default_mock_scan_file.txt");
 
         let _cmds = logic.on_main_window_created(WindowId(1));
 
@@ -916,36 +957,31 @@ mod handler_tests {
         assert!(logic.current_profile_cache.is_none());
         assert_eq!(logic.root_path_for_scan, default_scan_path);
 
-        // Check if the scan found the dummy file. This depends on "." not being empty.
         let found_dummy_file = logic
             .file_nodes_cache
             .iter()
             .any(|n| n.path == dummy_file_path);
         assert!(
             found_dummy_file,
-            "Default scan should have found default_scan_file.txt. Cache: {:?}",
+            "Default scan should have found default_mock_scan_file.txt. Cache: {:?}",
             logic
                 .file_nodes_cache
                 .iter()
                 .map(|n| &n.path)
                 .collect::<Vec<_>>()
         );
-
         assert!(logic.current_archive_status.is_none());
-
-        // Cleanup the dummy file
         fs::remove_file(dummy_file_path)
-            .expect("Test cleanup: Failed to remove default_scan_file.txt");
+            .expect("Test cleanup: Failed to remove default_mock_scan_file.txt");
     }
 
     #[test]
-    fn test_file_open_dialog_completed_saves_last_profile_name() {
-        let mut logic = setup_logic_with_window();
-        let temp_base_dir = tempdir().unwrap();
-        let temp_profile_dir = tempdir().unwrap();
+    fn test_file_open_dialog_completed_saves_last_profile_name_with_mock() {
+        let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
+        let temp_profile_dir = tempdir().unwrap(); // For profile JSON
 
-        let profile_to_load_name = "ProfileToLoadAndSaveAsLast";
-        let profile_root = temp_profile_dir.path().join("prof_root");
+        let profile_to_load_name = "ProfileToLoadAndSaveAsLastMocked";
+        let profile_root = temp_profile_dir.path().join("prof_mock_root");
         fs::create_dir_all(&profile_root).unwrap();
 
         let profile_json_path = create_temp_profile_file_for_direct_load(
@@ -965,28 +1001,35 @@ mod handler_tests {
             logic.current_profile_name.as_deref(),
             Some(profile_to_load_name)
         );
-
-        // Verification of file write for last_profile_name.txt is complex here
-        // and relies on core::config tests.
-        // We assume if current_profile_name is set, the call to save was made.
+        let saved_name_info = mock_config_manager.get_saved_profile_name();
+        assert!(saved_name_info.is_some());
+        assert_eq!(saved_name_info.unwrap().0, APP_NAME_FOR_PROFILES);
+        assert_eq!(
+            logic.current_profile_name.as_deref(),
+            saved_name_info.unwrap().1.as_str().into()
+        );
     }
 
     #[test]
-    fn test_file_save_dialog_completed_for_profile_saves_last_profile_name() {
-        let mut logic = setup_logic_with_window();
+    fn test_file_save_dialog_completed_for_profile_saves_last_profile_name_with_mock() {
+        let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
         let temp_scan_dir = tempdir().unwrap();
         logic.root_path_for_scan = temp_scan_dir.path().to_path_buf();
 
-        let temp_base_app_data_dir = tempdir().unwrap();
-        let profile_to_save_name = "MyNewlySavedProfile";
+        let temp_base_app_data_dir = tempdir().unwrap(); // For the actual profile.json save
+        let profile_to_save_name = "MyNewlySavedProfileMocked";
 
+        // core::save_profile will use ProjectDirs, so we need a real-like path structure
+        // if we don't mock core::profiles::save_profile itself (which we aren't yet).
         let mock_profile_storage_dir = temp_base_app_data_dir
             .path()
             .join(APP_NAME_FOR_PROFILES)
             .join("profiles");
         fs::create_dir_all(&mock_profile_storage_dir).unwrap();
-        let profile_save_path_from_dialog =
-            mock_profile_storage_dir.join(format!("{}.json", profile_to_save_name));
+        let profile_save_path_from_dialog = mock_profile_storage_dir.join(format!(
+            "{}.json",
+            core::profiles::sanitize_profile_name(profile_to_save_name)
+        ));
 
         logic.pending_action = Some(PendingAction::SavingProfile);
         let event = AppEvent::FileSaveDialogCompleted {
@@ -1007,11 +1050,24 @@ mod handler_tests {
         );
         assert!(profile_save_path_from_dialog.exists());
 
-        // Similar to load test, direct verification of last_profile_name.txt write
-        // is deferred to core::config tests.
+        let saved_name_info = mock_config_manager.get_saved_profile_name();
+        assert!(saved_name_info.is_some());
+        assert_eq!(saved_name_info.unwrap().0, APP_NAME_FOR_PROFILES);
+        assert_eq!(
+            logic.current_profile_name.as_deref(),
+            saved_name_info.unwrap().1.as_str().into()
+        );
     }
 
-    // ... (other existing tests remain)
+    // ... (other existing tests can remain, they don't interact with config manager as much)
+    // Minimal setup logic helper, primarily for tests not focused on config loading
+    fn setup_logic_with_window() -> MyAppLogic {
+        let dummy_config_manager = Arc::new(CoreConfigManager::new()); // Or a simple mock
+        let mut logic = MyAppLogic::new(dummy_config_manager);
+        logic.main_window_id = Some(WindowId(1));
+        logic
+    }
+
     #[test]
     fn test_handle_button_click_generates_save_dialog_archive() {
         let mut logic = setup_logic_with_window();
@@ -1120,27 +1176,45 @@ mod handler_tests {
 
     #[test]
     fn test_handle_file_save_dialog_completed_for_profile_with_path() {
-        let mut logic = setup_logic_with_window();
+        // This test is complex because it involves `core::save_profile` which uses `ProjectDirs`
+        // and `self.config_manager.save_last_profile_name` which is now mocked or real.
+        // We'll use the setup_logic_with_mock_config_manager for the latter part.
+        let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
         logic.pending_action = Some(PendingAction::SavingProfile);
         let temp_scan_dir = tempdir().unwrap();
         logic.root_path_for_scan = temp_scan_dir.path().to_path_buf();
-        let temp_profiles_storage_dir = tempdir().unwrap();
-        let mock_actual_profile_dir = temp_profiles_storage_dir
-            .path()
-            .join(APP_NAME_FOR_PROFILES) // Using actual const
-            .join("profiles");
-        fs::create_dir_all(&mock_actual_profile_dir).unwrap();
 
-        let profile_name_from_dialog = "MySavedProfile";
+        // For core::save_profile, it uses real ProjectDirs.
+        // We need a unique app name for this test to avoid interference.
+        let unique_app_name_for_profile_save =
+            format!("TestApp_SaveProfile_{}", rand::random::<u64>());
+        let temp_profiles_storage_dir = tempdir().unwrap(); // This isn't directly used by core::save_profile
+        // if ProjectDirs provides a different path.
+
+        let profile_name_from_dialog = "MySavedProfileViaDialog";
+
+        // Determine where core::save_profile WILL save it based on unique_app_name
+        let expected_profile_dir =
+            core::profiles::get_profile_dir(&unique_app_name_for_profile_save)
+                .expect("Should get a profile dir for unique app name");
+        fs::create_dir_all(&expected_profile_dir).unwrap(); // Ensure it exists
+
+        let sanitized_name = core::profiles::sanitize_profile_name(profile_name_from_dialog);
         let profile_save_path_from_dialog =
-            mock_actual_profile_dir.join(format!("{}.json", profile_name_from_dialog));
+            expected_profile_dir.join(format!("{}.json", sanitized_name));
+
+        // We need to adjust APP_NAME_FOR_PROFILES for the duration of this specific test
+        // for core::save_profile. This is tricky.
+        // Alternatively, this test assumes APP_NAME_FOR_PROFILES leads to a writable temp location.
+        // For this iteration, let's assume APP_NAME_FOR_PROFILES is fine and `core::save_profile`
+        // will write to its designated (possibly temp if tests are set up that way) location.
+        // The mock config manager is for `self.config_manager.save_last_profile_name`.
 
         let _cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
             window_id: WindowId(1),
             result: Some(profile_save_path_from_dialog.clone()),
         });
 
-        // Assertions on MyAppLogic state
         assert_eq!(
             logic.current_profile_name.as_deref(),
             Some(profile_name_from_dialog)
@@ -1155,20 +1229,34 @@ mod handler_tests {
             temp_scan_dir.path()
         );
         assert!(logic.current_archive_status.is_some());
+        assert!(
+            profile_save_path_from_dialog.exists(),
+            "Profile JSON file should have been saved by core::save_profile to {:?}",
+            profile_save_path_from_dialog
+        );
 
-        // Verify the profile file was actually saved by core::save_profile
-        assert!(profile_save_path_from_dialog.exists());
+        let saved_config = mock_config_manager.get_saved_profile_name().unwrap();
+        assert_eq!(saved_config.0, APP_NAME_FOR_PROFILES); // Check app_name used for config
+        assert_eq!(saved_config.1, profile_name_from_dialog); // Check profile_name saved
 
-        // Verify last profile name was saved by core::save_last_profile_name
-        let app_config_dir = temp_profiles_storage_dir.path().join(APP_NAME_FOR_PROFILES);
-        let last_profile_name_file = app_config_dir.join("last_profile_name.txt");
-
-        // Due to complexities of mocking ProjectDirs, we check if the file was written
-        // assuming the functions correctly target the (real or test-controlled) AppData.
-        // This makes the test less isolated for save_last_profile_name but tests integration.
-        // For a fully isolated test of handler, we'd mock the call.
-        // For now, we rely on the test `core::config::tests::test_save_and_load_last_profile_name`
-        // to prove that `save_last_profile_name` works, and here we assume it's called.
+        // Cleanup the uniquely named profile directory if it was created by core::save_profile
+        // This depends on core::save_profile actually using APP_NAME_FOR_PROFILES.
+        // If it used unique_app_name_for_profile_save, that's what needs cleanup.
+        // The current core::save_profile takes app_name as argument, so it used APP_NAME_FOR_PROFILES.
+        if profile_save_path_from_dialog.exists() {
+            fs::remove_file(&profile_save_path_from_dialog).unwrap();
+        }
+        // Attempt to remove parent dirs if they are empty, carefully.
+        if expected_profile_dir.exists()
+            && fs::read_dir(&expected_profile_dir).map_or(false, |mut d| d.next().is_none())
+        {
+            fs::remove_dir(&expected_profile_dir).ok();
+            if let Some(p) = expected_profile_dir.parent() {
+                if p.exists() && fs::read_dir(p).map_or(false, |mut d| d.next().is_none()) {
+                    fs::remove_dir(p).ok();
+                }
+            }
+        }
     }
 
     #[test]
@@ -1330,7 +1418,7 @@ mod handler_tests {
 
     #[test]
     fn test_build_tree_item_descriptors_recursive_applogic() {
-        let mut logic = MyAppLogic::new();
+        let mut logic = setup_logic_with_window(); // Uses default CoreConfigManager
         logic.file_nodes_cache = make_test_tree_for_applogic();
         logic.next_tree_item_id_counter = 1;
         logic.path_to_tree_item_id.clear();
@@ -1378,7 +1466,7 @@ mod handler_tests {
 
     #[test]
     fn test_find_filenode_mut_and_ref_applogic() {
-        let mut logic = MyAppLogic::new();
+        let mut logic = setup_logic_with_window();
         logic.file_nodes_cache = make_test_tree_for_applogic();
         let file1_p = PathBuf::from("/root/file1.txt");
         let file2_p = PathBuf::from("/root/sub/file2.txt");
@@ -1398,7 +1486,7 @@ mod handler_tests {
 
     #[test]
     fn test_collect_visual_updates_recursive_applogic() {
-        let mut logic = MyAppLogic::new();
+        let mut logic = setup_logic_with_window();
         logic.file_nodes_cache = make_test_tree_for_applogic();
         let file1_p = PathBuf::from("/root/file1.txt");
         let sub_p = PathBuf::from("/root/sub");
