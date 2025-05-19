@@ -6,6 +6,13 @@ use std::path::PathBuf;
 const LAST_PROFILE_FILENAME: &str = "last_profile_name.txt";
 
 /*
+ * Manages application configuration, such as the last used profile name.
+ * It defines errors related to configuration, provides functions to determine
+ * configuration paths, and will soon include a trait for abstracting configuration
+ * operations, facilitating testability and dependency injection.
+ */
+
+/*
  * Defines custom error types for application configuration management.
  * This enum centralizes error handling for reading or writing configuration files,
  * such as the last used profile name.
@@ -52,6 +59,29 @@ impl std::error::Error for ConfigError {
 }
 
 pub type Result<T> = std::result::Result<T, ConfigError>;
+
+/*
+ * Defines the operations for managing application configuration.
+ * This trait abstracts the specific mechanisms for loading and saving configuration data,
+ * such as the last used profile. It allows for different implementations (e.g., file-based, mock)
+ * to be used, enhancing testability.
+ */
+pub trait ConfigManagerOperations: Send + Sync {
+    /*
+     * Loads the name of the last used profile for a given application.
+     * Implementations should handle storage retrieval (e.g., from a file) and return
+     * the profile name if found, or None if no last profile was saved. Errors during
+     * loading should be returned as `ConfigError`.
+     */
+    fn load_last_profile_name(&self, app_name: &str) -> Result<Option<String>>;
+
+    /*
+     * Saves the name of the last used profile for a given application.
+     * Implementations should handle persisting the profile name (e.g., to a file).
+     * Errors during saving should be returned as `ConfigError`.
+     */
+    fn save_last_profile_name(&self, app_name: &str, profile_name: &str) -> Result<()>;
+}
 
 /*
  * Retrieves the application's primary configuration directory.
