@@ -163,6 +163,10 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Review `Win32ApiInternalState::process_commands_from_event_handler` vs `PlatformInterface::execute_command`.
 *   Break out large functions in `app_logic/handler.rs`. `[TechModularityLogicalModulesV1]`
 *   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
+*   If loading the last profile fails silently (as it does now, by logging to console and falling back), the user might not know why a specific profile didn't load. Consider a non-modal notification or status bar message if the last profile load attempt fails (e.g., "Could not load last profile 'X', starting fresh.").
+*   The status bar (P3.1) should clearly indicate which profile is loaded, which will inherently show if the startup load was successful.
+*   The current last_profile_name.txt is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for app_settings.json might be beneficial. The core::config module can be expanded for this.
+*   The current tests for on_main_window_created in handler_tests.rs rely on the actual file system operations of core::load_last_profile_name and core::load_profile. For more isolated unit tests of MyAppLogic, these core functions could be mocked (e.g., by introducing traits and dependency injection for these specific core functionalities, or by using conditional compilation for test-specific implementations). This is a more advanced testing setup.
 
 # Phase 3: Enhancements & UX Improvements
 
