@@ -76,7 +76,7 @@ fn setup_logic_with_mock_config_manager() -> (MyAppLogic, Arc<MockConfigManager>
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mut logic =
         MyAppLogic::new(Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>);
-    logic.main_window_id = Some(WindowId(1));
+    logic.test_set_main_window_id(Some(WindowId(1)));
     (logic, mock_config_manager_arc)
 }
 
@@ -157,7 +157,7 @@ fn test_on_main_window_created_loads_last_profile_with_mock() {
     let _cmds = logic.on_main_window_created(WindowId(1));
 
     assert_eq!(
-        logic.current_profile_name.as_deref(),
+        logic.test_current_profile_name().as_deref(),
         Some(last_profile_name_to_load)
     );
     assert!(logic.current_profile_cache.is_some());
@@ -165,9 +165,12 @@ fn test_on_main_window_created_loads_last_profile_with_mock() {
         logic.current_profile_cache.as_ref().unwrap().name,
         last_profile_name_to_load
     );
-    assert_eq!(logic.root_path_for_scan, startup_profile_root);
-    assert_eq!(logic.file_nodes_cache.len(), 1);
-    assert_eq!(logic.file_nodes_cache[0].name, "mock_startup_file.txt");
+    assert_eq!(*logic.test_root_path_for_scan(), startup_profile_root);
+    assert_eq!(logic.test_file_nodes_cache().len(), 1);
+    assert_eq!(
+        logic.test_file_nodes_cache()[0].name,
+        "mock_startup_file.txt"
+    );
     assert!(logic.current_archive_status.is_some());
 }
 
@@ -182,19 +185,19 @@ fn test_on_main_window_created_no_last_profile_with_mock() {
 
     let _cmds = logic.on_main_window_created(WindowId(1));
 
-    assert!(logic.current_profile_name.is_none());
-    assert!(logic.current_profile_cache.is_none());
-    assert_eq!(logic.root_path_for_scan, default_scan_path);
+    assert!(logic.test_current_profile_name().is_none());
+    assert!(logic.test_current_profile_cache().is_none());
+    assert_eq!(*logic.test_root_path_for_scan(), default_scan_path);
 
     let found_dummy_file = logic
-        .file_nodes_cache
+        .test_file_nodes_cache()
         .iter()
         .any(|n| n.path == dummy_file_path);
     assert!(
         found_dummy_file,
         "Default scan should have found default_mock_scan_file.txt. Cache: {:?}",
         logic
-            .file_nodes_cache
+            .test_file_nodes_cache()
             .iter()
             .map(|n| &n.path)
             .collect::<Vec<_>>()
@@ -227,7 +230,7 @@ fn test_file_open_dialog_completed_saves_last_profile_name_with_mock() {
     let _cmds = logic.handle_event(event); // PlatformEventHandler trait now in scope
 
     assert_eq!(
-        logic.current_profile_name.as_deref(),
+        logic.test_current_profile_name().as_deref(),
         Some(profile_to_load_name)
     );
     let saved_name_info = mock_config_manager.get_saved_profile_name();
@@ -241,7 +244,7 @@ fn test_file_open_dialog_completed_saves_last_profile_name_with_mock() {
 fn test_file_save_dialog_completed_for_profile_saves_last_profile_name_with_mock() {
     let (mut logic, mock_config_manager) = setup_logic_with_mock_config_manager();
     let temp_scan_dir = tempdir().unwrap();
-    logic.root_path_for_scan = temp_scan_dir.path().to_path_buf();
+    logic.test_root_path_for_scan_set(temp_scan_dir.path());
 
     let temp_base_app_data_dir = tempdir().unwrap();
     let profile_to_save_name = "MyNewlySavedProfileMocked";
@@ -265,7 +268,7 @@ fn test_file_save_dialog_completed_for_profile_saves_last_profile_name_with_mock
     let _cmds = logic.handle_event(event); // PlatformEventHandler trait now in scope
 
     assert_eq!(
-        logic.current_profile_name.as_deref(),
+        logic.test_current_profile_name().as_deref(),
         Some(profile_to_save_name)
     );
     assert!(logic.current_profile_cache.is_some());
@@ -322,7 +325,7 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file.clone()),
     });
-    logic.root_path_for_scan = temp_root.path().to_path_buf();
+    logic.test_root_path_for_scan_set(&temp_root.path());
 
     let cmds = logic.handle_event(AppEvent::ButtonClicked {
         // PlatformEventHandler trait now in scope
@@ -439,35 +442,34 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
 fn test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
     let temp_scan_dir = tempdir().unwrap();
-    logic.root_path_for_scan = temp_scan_dir.path().to_path_buf();
+    logic.test_root_path_for_scan_set(temp_scan_dir.path());
     let archive_file_path = temp_scan_dir.path().join("archive.txt");
     File::create(&archive_file_path)
         .unwrap()
         .write_all(b"old archive content")
         .unwrap();
     thread::sleep(Duration::from_millis(50));
-    let foo_path = logic.root_path_for_scan.join("foo.txt");
+    let foo_path = logic.test_root_path_for_scan().join("foo.txt");
     File::create(&foo_path)
         .unwrap()
         .write_all(b"foo content - will be selected")
         .unwrap();
-    logic.file_nodes_cache = vec![FileNode::new(foo_path.clone(), "foo.txt".into(), false)];
+    logic.test_set_file_nodes_cache(vec![FileNode::new(
+        foo_path.clone(),
+        "foo.txt".into(),
+        false,
+    )]);
     logic.current_profile_cache = Some(Profile {
         name: "test_profile_for_toggle".into(),
-        root_folder: logic.root_path_for_scan.clone(),
+        root_folder: logic.test_root_path_for_scan().clone(),
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_path.clone()),
     });
-    logic.next_tree_item_id_counter = 1;
-    logic.path_to_tree_item_id.clear();
+    logic.test_path_to_tree_item_id_clear();
     // Calls pub(crate) MyAppLogic::build_tree_item_descriptors_recursive
-    let _descriptors = MyAppLogic::build_tree_item_descriptors_recursive(
-        &logic.file_nodes_cache,
-        &mut logic.path_to_tree_item_id,
-        &mut logic.next_tree_item_id_counter,
-    );
-    let tree_item_id_for_foo = *logic.path_to_tree_item_id.get(&foo_path).unwrap();
+    let _descriptors = logic.build_tree_item_descriptors_recursive();
+    let tree_item_id_for_foo = *logic.test_path_to_tree_item_id().get(&foo_path).unwrap();
     let cmds = logic.handle_event(AppEvent::TreeViewItemToggled {
         // PlatformEventHandler trait now in scope
         window_id: WindowId(1),
@@ -485,7 +487,7 @@ fn test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status() 
         _ => panic!("Expected UpdateTreeItemVisualState"),
     }
     assert_eq!(
-        logic.file_nodes_cache[0].state,
+        logic.test_file_nodes_cache()[0].state,
         FileState::Selected,
         "Model state should be Selected"
     );
@@ -520,15 +522,17 @@ fn test_handle_window_close_requested_generates_close_command() {
 #[test]
 fn test_handle_window_destroyed_clears_main_window_id_and_state() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.current_profile_name = Some("Test".to_string());
-    logic.current_profile_cache = Some(Profile::new("Test".into(), PathBuf::from(".")));
-    logic.current_archive_status = Some(ArchiveStatus::UpToDate);
-    logic
-        .file_nodes_cache
-        .push(FileNode::new(PathBuf::from("./file"), "file".into(), false));
-    logic
-        .path_to_tree_item_id
-        .insert(PathBuf::from("./file"), TreeItemId(1));
+    logic.test_current_set(
+        Some("Test".to_string()),
+        Some(Profile::new("Test".into(), PathBuf::from("."))),
+        Some(ArchiveStatus::UpToDate),
+    );
+    logic.test_file_nodes_cache().push(FileNode::new(
+        PathBuf::from("./file"),
+        "file".into(),
+        false,
+    ));
+    logic.test_path_to_tree_item_id_insert(&PathBuf::from("./file"), TreeItemId(1));
 
     let cmds = logic.handle_event(AppEvent::WindowDestroyed {
         // PlatformEventHandler trait now in scope
@@ -536,12 +540,12 @@ fn test_handle_window_destroyed_clears_main_window_id_and_state() {
     });
 
     assert!(cmds.is_empty());
-    assert_eq!(logic.main_window_id, None);
-    assert!(logic.current_profile_name.is_none());
-    assert!(logic.current_profile_cache.is_none());
-    assert!(logic.current_archive_status.is_none());
-    assert!(logic.file_nodes_cache.is_empty());
-    assert!(logic.path_to_tree_item_id.is_empty());
+    assert_eq!(logic.test_main_window_id(), None);
+    assert!(logic.test_current_profile_name().is_none());
+    assert!(logic.test_current_profile_cache().is_none());
+    assert!(logic.test_current_archive_status().is_none());
+    assert!(logic.test_file_nodes_cache().is_empty());
+    assert!(logic.test_path_to_tree_item_id().is_empty());
 }
 
 fn make_test_tree_for_applogic() -> Vec<FileNode> {
@@ -561,15 +565,10 @@ fn make_test_tree_for_applogic() -> Vec<FileNode> {
 #[test]
 fn test_build_tree_item_descriptors_recursive_applogic() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.file_nodes_cache = make_test_tree_for_applogic();
-    logic.next_tree_item_id_counter = 1;
-    logic.path_to_tree_item_id.clear();
+    logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
+    logic.test_path_to_tree_item_id_clear();
     // Calls pub(crate) MyAppLogic::build_tree_item_descriptors_recursive
-    let descriptors = MyAppLogic::build_tree_item_descriptors_recursive(
-        &logic.file_nodes_cache,
-        &mut logic.path_to_tree_item_id,
-        &mut logic.next_tree_item_id_counter,
-    );
+    let descriptors = logic.build_tree_item_descriptors_recursive();
     assert_eq!(
         descriptors.len(),
         2,
@@ -589,20 +588,20 @@ fn test_build_tree_item_descriptors_recursive_applogic() {
     assert_eq!(sub_desc.children[0].text, "file2.txt");
     assert!(!sub_desc.children[0].is_folder);
     assert!(matches!(sub_desc.state, CheckState::Unchecked));
-    assert_eq!(logic.path_to_tree_item_id.len(), 3);
+    assert_eq!(logic.test_path_to_tree_item_id().len(), 3);
     assert!(
         logic
-            .path_to_tree_item_id
+            .test_path_to_tree_item_id()
             .contains_key(&PathBuf::from("/root/file1.txt"))
     );
     assert!(
         logic
-            .path_to_tree_item_id
+            .test_path_to_tree_item_id()
             .contains_key(&PathBuf::from("/root/sub"))
     );
     assert!(
         logic
-            .path_to_tree_item_id
+            .test_path_to_tree_item_id()
             .contains_key(&PathBuf::from("/root/sub/file2.txt"))
     );
 }
@@ -610,79 +609,76 @@ fn test_build_tree_item_descriptors_recursive_applogic() {
 #[test]
 fn test_find_filenode_mut_and_ref_applogic() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.file_nodes_cache = make_test_tree_for_applogic();
+    logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
     let file1_p = PathBuf::from("/root/file1.txt");
     let file2_p = PathBuf::from("/root/sub/file2.txt");
     // Calls pub(crate) MyAppLogic::find_filenode_mut
-    let file1_node_mut = MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &file1_p);
+    let file1_node_mut = logic.test_find_filenode_mut(&file1_p);
     assert!(file1_node_mut.is_some());
     file1_node_mut.unwrap().state = FileState::Selected;
     // Calls pub(crate) MyAppLogic::find_filenode_ref
-    let file1_node_ref = MyAppLogic::find_filenode_ref(&logic.file_nodes_cache, &file1_p);
+    let file1_node_ref = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &file1_p);
     assert!(file1_node_ref.is_some());
     assert_eq!(file1_node_ref.unwrap().state, FileState::Selected);
     // Calls pub(crate) MyAppLogic::find_filenode_ref
-    let file2_node_ref = MyAppLogic::find_filenode_ref(&logic.file_nodes_cache, &file2_p);
+    let file2_node_ref = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &file2_p);
     assert!(file2_node_ref.is_some());
     assert_eq!(file2_node_ref.unwrap().name, "file2.txt");
     // Calls pub(crate) MyAppLogic::find_filenode_ref
-    let none_node =
-        MyAppLogic::find_filenode_ref(&logic.file_nodes_cache, &PathBuf::from("/no/such/path"));
+    let none_node = MyAppLogic::find_filenode_ref(
+        logic.test_file_nodes_cache(),
+        &PathBuf::from("/no/such/path"),
+    );
     assert!(none_node.is_none());
 }
 
 #[test]
 fn test_collect_visual_updates_recursive_applogic() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.file_nodes_cache = make_test_tree_for_applogic();
+    logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
     let file1_p = PathBuf::from("/root/file1.txt");
     let sub_p = PathBuf::from("/root/sub");
     let file2_p = PathBuf::from("/root/sub/file2.txt");
-    logic.next_tree_item_id_counter = 1;
-    logic.path_to_tree_item_id.clear();
+    logic.test_path_to_tree_item_id_clear();
     // Calls pub(crate) MyAppLogic::build_tree_item_descriptors_recursive
-    let _ = MyAppLogic::build_tree_item_descriptors_recursive(
-        &logic.file_nodes_cache,
-        &mut logic.path_to_tree_item_id,
-        &mut logic.next_tree_item_id_counter,
-    );
+    let _ = logic.build_tree_item_descriptors_recursive();
     {
         // Calls pub(crate) MyAppLogic::find_filenode_mut
-        let f1_mut = MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &file1_p).unwrap();
+        let f1_mut = logic.test_find_filenode_mut(&file1_p).unwrap();
         f1_mut.state = FileState::Selected;
     }
     let sub_node_for_update_path = PathBuf::from("/root/sub");
     {
         // Calls pub(crate) MyAppLogic::find_filenode_mut
-        let file2_mut =
-            MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &file2_p).unwrap();
+        let file2_mut = logic.test_find_filenode_mut(&file2_p).unwrap();
         file2_mut.state = FileState::Selected;
         // Calls pub(crate) MyAppLogic::find_filenode_mut
-        let sub_node_mut =
-            MyAppLogic::find_filenode_mut(&mut logic.file_nodes_cache, &sub_node_for_update_path)
-                .unwrap();
+        let sub_node_mut = logic
+            .test_find_filenode_mut(&sub_node_for_update_path)
+            .unwrap();
         sub_node_mut.state = FileState::Unknown;
     }
     let mut updates = Vec::new();
     let sub_node_ref = logic
-        .file_nodes_cache
+        .test_file_nodes_cache()
         .iter()
         .find(|n| n.path == sub_node_for_update_path)
-        .unwrap();
+        .unwrap()
+        .clone();
     // Calls pub(crate) logic.collect_visual_updates_recursive
-    logic.collect_visual_updates_recursive(sub_node_ref, &mut updates);
+    logic.collect_visual_updates_recursive(&sub_node_ref, &mut updates);
     assert_eq!(
         updates.len(),
         2,
         "Expected updates for 'sub' and 'file2.txt'"
     );
-    let sub_item_id = *logic.path_to_tree_item_id.get(&sub_p).unwrap();
+    let sub_item_id = *logic.test_path_to_tree_item_id().get(&sub_p).unwrap();
     assert!(
         updates
             .iter()
             .any(|(id, state)| *id == sub_item_id && *state == CheckState::Unchecked)
     );
-    let file2_item_id = *logic.path_to_tree_item_id.get(&file2_p).unwrap();
+    let file2_item_id = *logic.test_path_to_tree_item_id().get(&file2_p).unwrap();
     assert!(
         updates
             .iter()
@@ -714,7 +710,7 @@ fn test_profile_load_updates_archive_status() {
     };
     let _cmds = logic.handle_event(event); // PlatformEventHandler trait now in scope
     assert_eq!(
-        logic.current_profile_name.as_deref(),
+        logic.test_current_profile_name().as_deref(),
         Some(profile_name),
         "Profile name mismatch after load"
     );

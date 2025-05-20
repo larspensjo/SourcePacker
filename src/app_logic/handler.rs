@@ -32,12 +32,12 @@ pub(crate) enum PendingAction {
  * application configuration, such as loading the last used profile.
  */
 pub struct MyAppLogic {
-    pub(crate) main_window_id: Option<WindowId>,
-    pub(crate) file_nodes_cache: Vec<FileNode>,
-    pub(crate) path_to_tree_item_id: PathToTreeItemIdMap,
-    pub(crate) next_tree_item_id_counter: u64,
-    pub(crate) root_path_for_scan: PathBuf,
-    pub(crate) current_profile_name: Option<String>,
+    main_window_id: Option<WindowId>,
+    file_nodes_cache: Vec<FileNode>,
+    path_to_tree_item_id: PathToTreeItemIdMap,
+    next_tree_item_id_counter: u64,
+    root_path_for_scan: PathBuf,
+    current_profile_name: Option<String>,
     pub(crate) current_profile_cache: Option<Profile>,
     pub(crate) current_archive_status: Option<ArchiveStatus>,
     pub(crate) pending_archive_content: Option<String>,
@@ -75,7 +75,15 @@ impl MyAppLogic {
         TreeItemId(id)
     }
 
-    pub(crate) fn build_tree_item_descriptors_recursive(
+    pub(crate) fn build_tree_item_descriptors_recursive(&mut self) -> Vec<TreeItemDescriptor> {
+        return Self::build_tree_item_descriptors_recursive_internal(
+            &self.file_nodes_cache,
+            &mut self.path_to_tree_item_id,
+            &mut self.next_tree_item_id_counter,
+        );
+    }
+
+    fn build_tree_item_descriptors_recursive_internal(
         nodes: &[FileNode],
         path_to_tree_item_id: &mut PathToTreeItemIdMap,
         next_tree_item_id_counter: &mut u64,
@@ -96,7 +104,7 @@ impl MyAppLogic {
                     FileState::Selected => CheckState::Checked,
                     _ => CheckState::Unchecked,
                 },
-                children: Self::build_tree_item_descriptors_recursive(
+                children: Self::build_tree_item_descriptors_recursive_internal(
                     &node.children,
                     path_to_tree_item_id,
                     next_tree_item_id_counter,
@@ -199,11 +207,7 @@ impl MyAppLogic {
 
         self.next_tree_item_id_counter = 1;
         self.path_to_tree_item_id.clear();
-        let descriptors = Self::build_tree_item_descriptors_recursive(
-            &self.file_nodes_cache,
-            &mut self.path_to_tree_item_id,
-            &mut self.next_tree_item_id_counter,
-        );
+        let descriptors = self.build_tree_item_descriptors_recursive();
 
         if !descriptors.is_empty() {
             commands.push(PlatformCommand::PopulateTreeView {
@@ -271,7 +275,7 @@ impl MyAppLogic {
     fn refresh_tree_view_from_cache(&mut self, window_id: WindowId) -> Option<PlatformCommand> {
         self.next_tree_item_id_counter = 1;
         self.path_to_tree_item_id.clear();
-        let descriptors = Self::build_tree_item_descriptors_recursive(
+        let descriptors = Self::build_tree_item_descriptors_recursive_internal(
             &self.file_nodes_cache,
             &mut self.path_to_tree_item_id,
             &mut self.next_tree_item_id_counter,
@@ -759,5 +763,108 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn on_quit(&mut self) {
         println!("AppLogic: on_quit called by platform. Application is exiting.");
+    }
+}
+
+#[cfg(test)]
+impl MyAppLogic {
+    pub(crate) fn test_main_window_id(&self) -> Option<WindowId> {
+        self.main_window_id
+    }
+    pub(crate) fn test_set_main_window_id(&mut self, v: Option<WindowId>) {
+        self.main_window_id = v;
+    }
+
+    pub(crate) fn test_file_nodes_cache(&mut self) -> &mut Vec<FileNode> {
+        &mut self.file_nodes_cache
+    }
+    pub(crate) fn test_set_file_nodes_cache(&mut self, v: Vec<FileNode>) {
+        self.file_nodes_cache = v;
+    }
+    pub(crate) fn test_find_filenode_mut(&mut self, path_to_find: &Path) -> Option<&mut FileNode> {
+        return Self::find_filenode_mut(&mut self.file_nodes_cache, path_to_find);
+    }
+
+    pub(crate) fn test_path_to_tree_item_id(&self) -> &PathToTreeItemIdMap {
+        &self.path_to_tree_item_id
+    }
+    pub(crate) fn test_set_path_to_tree_item_id(&mut self, v: PathToTreeItemIdMap) {
+        self.path_to_tree_item_id = v;
+    }
+    pub(crate) fn test_path_to_tree_item_id_clear(&mut self) {
+        self.next_tree_item_id_counter = 1;
+        self.path_to_tree_item_id.clear();
+    }
+    pub(crate) fn test_path_to_tree_item_id_insert(&mut self, path: &PathBuf, id: TreeItemId) {
+        self.path_to_tree_item_id.insert(path.to_path_buf(), id);
+    }
+
+    pub(crate) fn test_next_tree_item_id_counter(&self) -> u64 {
+        self.next_tree_item_id_counter
+    }
+    pub(crate) fn test_set_next_tree_item_id_counter(&mut self, v: u64) {
+        self.next_tree_item_id_counter = v;
+    }
+
+    pub(crate) fn test_root_path_for_scan(&self) -> &PathBuf {
+        &self.root_path_for_scan
+    }
+    pub(crate) fn test_set_root_path_for_scan(&mut self, v: PathBuf) {
+        self.root_path_for_scan = v;
+    }
+    pub(crate) fn test_root_path_for_scan_set(&mut self, v: &Path) {
+        self.root_path_for_scan = v.to_path_buf();
+    }
+
+    pub(crate) fn test_current_profile_name(&self) -> &Option<String> {
+        &self.current_profile_name
+    }
+    pub(crate) fn test_set_current_profile_name(&mut self, v: Option<String>) {
+        self.current_profile_name = v;
+    }
+    pub(crate) fn test_current_set(
+        &mut self,
+        name: Option<String>,
+        cache: Option<Profile>,
+        status: Option<ArchiveStatus>,
+    ) {
+        self.current_profile_name = name;
+        self.current_profile_cache = cache;
+        self.current_archive_status = status;
+    }
+
+    pub(crate) fn test_current_profile_cache(&self) -> &Option<Profile> {
+        &self.current_profile_cache
+    }
+    pub(crate) fn test_set_current_profile_cache(&mut self, v: Option<Profile>) {
+        self.current_profile_cache = v;
+    }
+
+    pub(crate) fn test_current_archive_status(&self) -> &Option<ArchiveStatus> {
+        &self.current_archive_status
+    }
+    pub(crate) fn test_set_current_archive_status(&mut self, v: Option<ArchiveStatus>) {
+        self.current_archive_status = v;
+    }
+
+    pub(crate) fn test_pending_archive_content(&self) -> &Option<String> {
+        &self.pending_archive_content
+    }
+    pub(crate) fn test_set_pending_archive_content(&mut self, v: Option<String>) {
+        self.pending_archive_content = v;
+    }
+
+    pub(crate) fn test_pending_action(&self) -> &Option<PendingAction> {
+        &self.pending_action
+    }
+    pub(crate) fn test_set_pending_action(&mut self, v: Option<PendingAction>) {
+        self.pending_action = v;
+    }
+
+    pub(crate) fn test_config_manager(&self) -> &Arc<dyn ConfigManagerOperations> {
+        &self.config_manager
+    }
+    pub(crate) fn test_set_config_manager(&mut self, v: Arc<dyn ConfigManagerOperations>) {
+        self.config_manager = v;
     }
 }
