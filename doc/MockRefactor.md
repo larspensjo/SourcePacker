@@ -16,7 +16,7 @@ Here's the step-by-step refactoring plan:
 
 This plan details the steps to refactor `MyAppLogic` to use traits for its interactions with core functionalities, facilitating the use of mock objects in unit tests.
 
-## Phase 1: Configuration Management (`core::config`)
+## Phase 1: Configuration Management (`core::config`). This phase is largely complete.
 
 **Rationale:** The first dependency to tackle is the loading and saving of the "last used profile name." This is a relatively simple interaction and serves as a good starting point for the DI pattern.
 
