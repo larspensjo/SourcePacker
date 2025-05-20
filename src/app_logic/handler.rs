@@ -13,12 +13,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002;
-const APP_NAME_FOR_PROFILES: &str = "SourcePackerApp";
+// Made pub(crate) for access from handler_tests.rs
+pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePackerApp";
 
 type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
+// Made pub(crate) for access from handler_tests.rs
 #[derive(Debug)]
-enum PendingAction {
+pub(crate) enum PendingAction {
     SavingArchive,
     SavingProfile,
 }
@@ -28,21 +30,19 @@ enum PendingAction {
  * It processes UI events received from the platform layer and generates commands
  * to update the UI. It depends on a `ConfigManagerOperations` trait for handling
  * application configuration, such as loading the last used profile.
- *
- * TODO: All fields with `pub(crate)` should be private and accessed via methods tagged with `#[cfg(test)]`.
  */
 pub struct MyAppLogic {
     pub(crate) main_window_id: Option<WindowId>,
-    pub(crate) file_nodes_cache: Vec<FileNode>, // Represents the full scanned tree for the current root_path
+    pub(crate) file_nodes_cache: Vec<FileNode>,
     pub(crate) path_to_tree_item_id: PathToTreeItemIdMap,
     pub(crate) next_tree_item_id_counter: u64,
     pub(crate) root_path_for_scan: PathBuf,
     pub(crate) current_profile_name: Option<String>,
-    pub(crate) current_profile_cache: Option<Profile>, // Cache of the currently loaded profile
+    pub(crate) current_profile_cache: Option<Profile>,
     pub(crate) current_archive_status: Option<ArchiveStatus>,
     pub(crate) pending_archive_content: Option<String>,
     pub(crate) pending_action: Option<PendingAction>,
-    config_manager: Arc<dyn ConfigManagerOperations>,
+    pub(crate) config_manager: Arc<dyn ConfigManagerOperations>,
 }
 
 impl MyAppLogic {
@@ -58,7 +58,7 @@ impl MyAppLogic {
             file_nodes_cache: Vec::new(),
             path_to_tree_item_id: HashMap::new(),
             next_tree_item_id_counter: 1,
-            root_path_for_scan: PathBuf::from("."), // Default, might be overridden by last profile
+            root_path_for_scan: PathBuf::from("."),
             current_profile_name: None,
             current_profile_cache: None,
             current_archive_status: None,
@@ -68,13 +68,14 @@ impl MyAppLogic {
         }
     }
 
+    // Tests for tree item ID generation would be indirect.
     fn generate_tree_item_id(&mut self) -> TreeItemId {
         let id = self.next_tree_item_id_counter;
         self.next_tree_item_id_counter += 1;
         TreeItemId(id)
     }
 
-    fn build_tree_item_descriptors_recursive(
+    pub(crate) fn build_tree_item_descriptors_recursive(
         nodes: &[FileNode],
         path_to_tree_item_id: &mut PathToTreeItemIdMap,
         next_tree_item_id_counter: &mut u64,
@@ -136,7 +137,7 @@ impl MyAppLogic {
                         );
                         self.current_profile_name = Some(profile.name.clone());
                         self.root_path_for_scan = profile.root_folder.clone();
-                        self.current_profile_cache = Some(profile); // Cache it
+                        self.current_profile_cache = Some(profile);
                         loaded_profile_on_startup = true;
                     }
                     Err(e) => {
@@ -144,10 +145,8 @@ impl MyAppLogic {
                             "AppLogic: Failed to load last profile '{}': {:?}. Proceeding with default.",
                             last_profile_name, e
                         );
-                        // Reset possibly inconsistent state if load_profile failed mid-way
                         self.current_profile_name = None;
                         self.current_profile_cache = None;
-                        // self.root_path_for_scan remains default PathBuf::from(".")
                     }
                 }
             }
@@ -175,7 +174,6 @@ impl MyAppLogic {
                     self.file_nodes_cache.len()
                 );
 
-                // If a profile was loaded on startup, apply its state
                 if loaded_profile_on_startup {
                     if let Some(profile) = &self.current_profile_cache {
                         core::apply_profile_to_tree(&mut self.file_nodes_cache, profile);
@@ -197,7 +195,6 @@ impl MyAppLogic {
             }
         }
 
-        // P2.6: Update archive status after initial load/scan
         self.update_current_archive_status();
 
         self.next_tree_item_id_counter = 1;
@@ -290,14 +287,13 @@ impl MyAppLogic {
             let status = core::check_archive_status(profile, &self.file_nodes_cache);
             self.current_archive_status = Some(status);
             println!("AppLogic: Archive status updated to: {:?}", status);
-            // TODO P2.8: Send command to update status bar UI.
         } else {
             self.current_archive_status = None;
             println!("AppLogic: No profile loaded, archive status cleared.");
         }
     }
 
-    fn find_filenode_mut<'a>(
+    pub(crate) fn find_filenode_mut<'a>(
         nodes: &'a mut [FileNode],
         path_to_find: &Path,
     ) -> Option<&'a mut FileNode> {
@@ -316,7 +312,10 @@ impl MyAppLogic {
         None
     }
 
-    fn find_filenode_ref<'a>(nodes: &'a [FileNode], path_to_find: &Path) -> Option<&'a FileNode> {
+    pub(crate) fn find_filenode_ref<'a>(
+        nodes: &'a [FileNode],
+        path_to_find: &Path,
+    ) -> Option<&'a FileNode> {
         for node in nodes.iter() {
             if node.path == path_to_find {
                 return Some(node);
@@ -331,7 +330,7 @@ impl MyAppLogic {
         None
     }
 
-    fn collect_visual_updates_recursive(
+    pub(crate) fn collect_visual_updates_recursive(
         &self,
         node: &FileNode,
         updates: &mut Vec<(TreeItemId, CheckState)>,
@@ -505,7 +504,6 @@ impl PlatformEventHandler for MyAppLogic {
                         }
                         Err(e) => {
                             eprintln!("AppLogic: Failed to create archive content: {}", e);
-                            // TODO: Show error to user via PlatformCommand
                         }
                     }
                 }
@@ -544,7 +542,6 @@ impl PlatformEventHandler for MyAppLogic {
                                         self.root_path_for_scan = profile.root_folder.clone();
                                         self.current_profile_cache = Some(profile.clone());
 
-                                        // P2.6: Save last loaded profile name
                                         if let Err(e) = self.config_manager.save_last_profile_name(
                                             APP_NAME_FOR_PROFILES,
                                             &profile.name,
@@ -688,11 +685,9 @@ impl PlatformEventHandler for MyAppLogic {
                                     if let Some(profile_name_str) =
                                         profile_name_osstr.to_str().map(|s| s.to_string())
                                     {
-                                        let mut new_profile = self
-                                            .create_profile_from_current_state(
-                                                profile_name_str.clone(),
-                                            );
-                                        new_profile.name = profile_name_str;
+                                        let new_profile = self.create_profile_from_current_state(
+                                            profile_name_str.clone(),
+                                        );
 
                                         match core::save_profile(
                                             &new_profile,
@@ -706,7 +701,7 @@ impl PlatformEventHandler for MyAppLogic {
                                                 self.current_profile_name =
                                                     Some(new_profile.name.clone());
                                                 self.current_profile_cache =
-                                                    Some(new_profile.clone()); // clone new_profile here
+                                                    Some(new_profile.clone());
                                                 self.root_path_for_scan = self
                                                     .current_profile_cache
                                                     .as_ref()
@@ -714,10 +709,8 @@ impl PlatformEventHandler for MyAppLogic {
                                                     .root_folder
                                                     .clone();
 
-                                                // P2.6: Save last saved profile name
-                                                if let Err(e) = self
-                                                    .config_manager // Use self.config_manager
-                                                    .save_last_profile_name(
+                                                if let Err(e) =
+                                                    self.config_manager.save_last_profile_name(
                                                         APP_NAME_FOR_PROFILES,
                                                         &new_profile.name,
                                                     )
