@@ -1,99 +1,124 @@
-# Plan to improve testing of handle.rs and handle_test.rs
+# Improved Plan for Testing MyAppLogic (handler.rs and handler_tests.rs)
 
-## Potential Improvements to Existing Tests:
+This plan outlines strategies to enhance the unit testing of `MyAppLogic` in `handler.rs`. The primary goal is to increase test coverage, reliability, and isolate `MyAppLogic` from external dependencies (especially the file system) by leveraging the Dependency Injection (DI) and mocking approach detailed in `MockRefactor.md`.
 
-1.  **Reduce File System Dependency Further (Beyond Config):**
-    *   **Observation:** While `ConfigManagerOperations` is mocked, tests still interact with `core::load_profile`, `core::save_profile`, and `core::scan_directory` which hit the actual file system for profile JSON files and directory scanning.
-    *   **Improvement Idea (aligns with future MockRefactor phases):** As you implement mocks for `ProfileManagerOperations` and `FileSystemScannerOperations` (Phases 2 and 3 of `MockRefactor.md`), update these tests to use those mocks. This will make them true unit tests for `MyAppLogic` by removing almost all file system interactions.
-    *   **Example:**
-        *   Instead of `create_temp_profile_file_in_profile_subdir` and then `core::load_profile`, a `MockProfileManager` would be configured to return a specific `Profile` object or `ProfileError`.
-        *   Instead of `core::scan_directory` hitting the disk, a `MockFileSystemScanner` would return a predefined `Vec<FileNode>` or `FileSystemError`.
+## Current State & Core Challenge
 
-2.  **Clarity in Test Setup for Config Manager:**
-    *   **Observation:** Some tests use `setup_logic_with_mock_config_manager()` and then immediately configure the returned `mock_config_manager`. Others use `setup_logic_with_window()` (which now also uses a mock) but ignore the mock handle because the test doesn't touch config.
-    *   **Improvement Idea:**
-        *   For tests that *do* care about config manager behavior, ensure they explicitly get the `mock_config_manager` handle and use it (as is done in `test_on_main_window_created_loads_last_profile_with_mock`).
-        *   For tests that *don't* care about config manager behavior, using `let (mut logic, _mock_config_manager) = setup_logic_with_window();` is fine. This is already the case for many.
+While `MockConfigManager` is in place, many existing tests for `MyAppLogic` still interact directly with `core` functions like `core::load_profile`, `core::save_profile`, and `core::scan_directory`. These functions perform real file system I/O, making the tests slower, more brittle, and not true unit tests for `MyAppLogic`'s own logic.
+
+## Overarching Strategy
+
+The key to improving these tests is to systematically replace direct calls to `core` service functions with interactions through traits (`ProfileManagerOperations`, `FileSystemScannerOperations`, etc.), for which mock implementations will be used in tests. This aligns with the phased approach in `MockRefactor.md`.
+
+## Phase 1: Enhancements to Existing Tests (As Mocks Become Available)
+
+1.  **Full Dependency Injection with Mocks:**
+    *   **Observation:** Tests rely on real file system operations for profiles and directory scanning.
+    *   **Improvement:** As `MockProfileManager` and `MockFileSystemScanner` (and potentially `MockArchiver`, `MockStateManager`) are implemented (Phases 2, 3, and 4 of `MockRefactor.md`), refactor existing tests to:
+        *   Inject these mocks into `MyAppLogic` during test setup.
+        *   Configure mocks to return specific `Profile` objects, `Vec<FileNode>` trees, `ArchiveStatus` values, or errors, rather than creating temporary files/directories on disk.
+        *   Verify that `MyAppLogic` calls the correct methods on these mocks with the expected arguments.
+    *   This will make the tests true unit tests for `MyAppLogic`, significantly reducing execution time and flakiness.
+
+2.  **Clarity in Test Setup for `ConfigManagerOperations`:**
+    *   **Observation:** Current setup is generally good with `MockConfigManager`.
+    *   **Improvement:** Continue ensuring that tests requiring specific config behavior explicitly configure the `MockConfigManager`. For tests not interacting with config, ignoring the mock handle is fine.
 
 3.  **Asserting `PlatformCommand`s More Specifically:**
-    *   **Observation:** Some tests check `cmds.len()` and then `match &cmds[0]` to assert the type of command.
-    *   **Improvement Idea:** For more complex scenarios or when multiple commands are expected, consider helper functions or macros to assert the presence and properties of specific commands in the returned `Vec<PlatformCommand>`. This can make tests cleaner if there's a common pattern of command checking. For now, the current approach is okay for the number of commands being checked.
+    *   **Observation:** Current assertions on `PlatformCommand`s are adequate for now.
+    *   **Improvement (Future Consideration):** If tests become more complex with many expected commands, consider helper functions or macros for asserting the presence and properties of specific commands. The current approach is acceptable.
 
 4.  **Testing `MyAppLogic::on_quit()`:**
-    *   **Observation:** There's no test for the `on_quit` method.
-    *   **Improvement Idea:** While `on_quit` currently only prints a message, if it were to do any cleanup or state changes in the future, a test should verify that. For now, a simple test that calls it and ensures no panic occurs might be a placeholder.
+    *   **Observation:** No dedicated test.
+    *   **Improvement:** Add a simple test to call `on_quit()` and ensure no panics. If `on_quit` evolves to perform state changes or cleanup, expand the test to verify these actions.
 
-5.  **Error Handling Paths in `MyAppLogic`:**
-    *   **Observation:** Current tests primarily focus on success paths.
-    *   **Improvement Idea (relies on future mocks):**
+5.  **Testing Error Handling Paths (Enhanced):**
+    *   **Observation:** Current tests lean towards success paths.
+    *   **Improvement (relies on future mocks):**
         *   Test how `MyAppLogic::on_main_window_created` behaves if `self.config_manager.load_last_profile_name` returns an error.
-        *   Test how it behaves if `core::load_profile` returns an error (will require `MockProfileManager`).
-        *   Test how it behaves if `core::scan_directory` returns an error (will require `MockFileSystemScanner`).
-        *   Assert that appropriate logging occurs (if possible to capture/mock) or that `MyAppLogic` enters a sensible default state.
+        *   Test behavior if `self.profile_manager.load_profile` (mocked) returns an error.
+        *   Test behavior if `self.file_system_scanner.scan_directory` (mocked) returns an error.
+        *   **Crucially, assert that `MyAppLogic` not only enters a sensible default state but also generates appropriate `PlatformCommand`s to inform the user of errors (e.g., updating a status bar message), if this is the intended design (aligns with `TechErrorHandlingGracefulV1`).**
 
-## Suggestions for New Tests:
+## Phase 2: Implementing New, Comprehensive Unit Tests
 
-Here are areas where new tests could add significant value:
+This section details new test scenarios focusing on isolated `MyAppLogic` behavior, assuming full DI with mocks.
+
+**Test Data Management Strategy:**
+
+*   **Utilize Test Data Builders/Fixtures:** As tests require mock `Profile` objects, `Vec<FileNode>` structures, etc., create helper functions, builder patterns, or constants for this test data. This will:
+    *   Keep individual test setup sections concise and readable.
+    *   Promote reuse of common test data structures.
+    *   Make it easier to create variations for different test scenarios.
+
+**New Test Scenarios:**
 
 1.  **`on_main_window_created` - Profile Load Failure Scenarios:**
     *   **Scenario:** `config_manager.load_last_profile_name` returns `Ok(Some("profile_that_does_not_exist"))`.
-        *   **Assert:** `MyAppLogic` should attempt `core::load_profile`, it should fail, and `MyAppLogic` should then proceed with a default scan/state. `current_profile_name` and `current_profile_cache` should be `None`.
+        *   **Assert:** `MockProfileManager.load_profile` is called, it returns an error (as configured). `MyAppLogic` proceeds with a default scan (verified via `MockFileSystemScanner.scan_directory` call). `current_profile_name` and `current_profile_cache` are `None`. Assert any `PlatformCommand`s for status updates (e.g., "Failed to load profile 'X', using default").
     *   **Scenario:** `config_manager.load_last_profile_name` returns `Err(ConfigError::Io(...))`.
-        *   **Assert:** `MyAppLogic` should proceed with a default scan/state.
+        *   **Assert:** `MyAppLogic` proceeds with a default scan. No attempt to load a profile via `MockProfileManager`. Assert relevant `PlatformCommand`s.
 
 2.  **`on_main_window_created` - Directory Scan Failure:**
-    *   **Scenario:** A profile is successfully loaded, but the subsequent `core::scan_directory` for `profile.root_folder` fails. (Requires `MockFileSystemScanner` for easy simulation).
-        *   **Assert:** `file_nodes_cache` should perhaps contain an error node (as currently implemented) or be empty. TreeView population command should reflect this. `current_archive_status` might be affected.
+    *   **Scenario:** A profile is successfully loaded (via `MockProfileManager`), but the subsequent `MockFileSystemScanner.scan_directory` for `profile.root_folder` fails.
+        *   **Assert:** `file_nodes_cache` reflects the error state (e.g., empty or specific error node). TreeView population command reflects this. `current_archive_status` is appropriate. Assert `PlatformCommand`s for status updates.
 
-3.  **`AppEvent::FileOpenDialogCompleted` - More Scenarios:**
-    *   **Scenario:** `File::open` fails for the selected profile path.
-        *   **Assert:** `current_profile_name`/`cache` should be cleared or remain unchanged (depending on desired behavior for partial failure). No call to `save_last_profile_name` on the mock.
-    *   **Scenario:** `serde_json::from_reader` fails (corrupt profile JSON).
+3.  **`AppEvent::FileOpenDialogCompleted` (Profile Load) - More Scenarios:**
+    *   **Scenario:** User selects a file, but `MockProfileManager.load_profile_from_path` (assuming this method or similar is added to the trait and used) returns `Err(ProfileError::Io)`.
+        *   **Assert:** `current_profile_name`/`cache` remain unchanged or are cleared. No call to `MockConfigManager.save_last_profile_name`. Assert error notification `PlatformCommand`s.
+    *   **Scenario:** `MockProfileManager.load_profile_from_path` returns `Err(ProfileError::Serde)` (corrupt profile).
         *   **Assert:** Similar to above.
-    *   **Scenario:** Subsequent `core::scan_directory` fails after successful profile deserialization. (Requires `MockFileSystemScanner`).
-        *   **Assert:** `current_profile_name`/`cache` might be set, but `file_nodes_cache` reflects scan error. `save_last_profile_name` on mock should have been called for the successfully deserialized profile.
+    *   **Scenario:** Successful profile deserialization by `MockProfileManager`, but subsequent `MockFileSystemScanner.scan_directory` fails.
+        *   **Assert:** `current_profile_name`/`cache` are set. `file_nodes_cache` reflects scan error. `MockConfigManager.save_last_profile_name` *was* called for the successfully loaded profile. Assert `PlatformCommand`s for partial success/scan failure.
 
 4.  **`AppEvent::FileSaveDialogCompleted` - `PendingAction::SavingArchive` - More Scenarios:**
-    *   **Scenario:** `fs::write` to save the archive content fails.
-        *   **Assert:** `current_profile_cache.archive_path` should *not* be updated. `current_archive_status` should not become `UpToDate`. Check if `core::save_profile` (to persist the archive path) is *not* called.
-    *   **Scenario:** After successful `fs::write`, `core::save_profile` (to update `archive_path` in the profile JSON) fails. (Requires `MockProfileManager`).
-        *   **Assert:** The archive file is written, but the in-memory `current_profile_cache.archive_path` might be set, but the persisted profile isn't updated. This is a tricky state; the test would highlight how `MyAppLogic` handles it.
+    *   **Scenario:** `fs::write` to save the archive content fails (this might be harder to mock directly if `MyAppLogic` does the `fs::write`; if `ArchiverOperations` trait is introduced for `create_archive_content` *and* saving, this becomes easier).
+        *   **If `MyAppLogic` does `fs::write`:** This part remains an integration point.
+        *   **If `ArchiverOperations.save_archive_content` is mocked to fail:** Assert `current_profile_cache.archive_path` is *not* updated. `current_archive_status` does not become `UpToDate`. `MockProfileManager.save_profile` (to persist updated `archive_path`) is *not* called. Assert `PlatformCommand`s for error.
+    *   **Scenario:** After successful archive write, `MockProfileManager.save_profile` (to update `archive_path` in profile JSON) fails.
+        *   **Assert:** In-memory `current_profile_cache.archive_path` might be set, but an error should be signaled. The persisted profile isn't updated. Assert error `PlatformCommand`s.
+    *   **Ensure `pending_action` and `pending_archive_content` are cleared** regardless of success or failure of the save operation itself.
 
 5.  **`AppEvent::FileSaveDialogCompleted` - `PendingAction::SavingProfile` - More Scenarios:**
     *   **Scenario:** `profile_save_path.file_stem()` returns `None` (e.g., path is just `/` or `.` ).
-        *   **Assert:** `MyAppLogic` should handle this gracefully (e.g., log error, no profile saved, no call to `save_last_profile_name` on mock).
-    *   **Scenario:** `core::save_profile` fails. (Requires `MockProfileManager`).
-        *   **Assert:** `current_profile_name`/`cache` should not be updated to the new profile. No call to `save_last_profile_name` on mock.
+        *   **Assert:** Graceful handling (e.g., log, error `PlatformCommand`s). No profile saved via `MockProfileManager`. No call to `MockConfigManager.save_last_profile_name`.
+    *   **Scenario:** `MockProfileManager.save_profile` fails.
+        *   **Assert:** `current_profile_name`/`cache` are not updated to the new profile. No call to `MockConfigManager.save_last_profile_name`. Assert error `PlatformCommand`s.
+    *   **Ensure `pending_action` is cleared.**
 
 6.  **`AppEvent::TreeViewItemToggled` - Complex Interactions:**
-    *   **Scenario:** Toggling a folder that has children with mixed states.
-        *   **Assert:** Verify the recursive state update logic via `core::state_manager::update_folder_selection` and ensure all `UpdateTreeItemVisualState` commands are generated for the parent and all children.
-    *   **Scenario:** Toggling an item when `path_to_tree_item_id` somehow doesn't contain the `item_id` (edge case, defensive programming check).
-        *   **Assert:** Graceful handling (e.g., error log, no panic).
+    *   **Scenario:** Toggling a folder that has children with mixed states (requires `MockStateManager` or careful `FileNode` setup if `core::state_manager` functions are still called directly but with testable inputs).
+        *   **Assert:** Verify the recursive state update logic and ensure all necessary `UpdateTreeItemVisualState` commands are generated for the parent and all children.
+    *   **Scenario:** Toggling an item when `path_to_tree_item_id` somehow doesn't contain the `item_id` (edge case for defensive programming).
+        *   **Assert:** Graceful handling (e.g., error log, no panic, possibly error `PlatformCommand`).
 
 7.  **`update_current_archive_status()` Logic (Indirectly):**
-    *   **Observation:** This is a private method but called by many event handlers.
-    *   **Improvement Idea:** Ensure tests for those event handlers cover scenarios that lead to different `ArchiveStatus` outcomes, and then assert `logic.current_archive_status`. For example:
-        *   After loading a profile with no `archive_path`.
-        *   After loading a profile where `archive_path` exists but the file is missing.
-        *   After selecting/deselecting files to make the archive outdated/up-to-date.
+    *   **Improvement Idea:** Ensure tests for event handlers that call `update_current_archive_status()` cover scenarios leading to different `ArchiveStatus` outcomes.
+        *   After loading a profile with no `archive_path` (mock `Profile` return).
+        *   After loading a profile where `archive_path` exists but `MockArchiver.check_archive_status` (or similar) indicates file is missing or returns specific status.
+        *   After selecting/deselecting files to make the archive outdated/up-to-date based on mock file timestamps/states.
         *   When no files are selected.
+    *   **Assert:** The value of `logic.current_archive_status` and any `PlatformCommand`s related to status bar updates.
 
 8.  **`ID_BUTTON_GENERATE_ARCHIVE_LOGIC` - `core::create_archive_content` Fails:**
-    *   **Scenario:** Simulate `core::create_archive_content` returning an `Err`. (May require an `ArchiverOperations` trait and mock later).
-        *   **Assert:** `pending_archive_content` and `pending_action` should not be set. No `ShowSaveFileDialog` command should be issued. An error should ideally be communicated to the user (future: via a status bar command).
+    *   **Scenario:** (Requires `ArchiverOperations` trait and mock) Simulate `MockArchiver.create_archive_content` returning an `Err`.
+        *   **Assert:** `pending_archive_content` and `pending_action` are not set. No `ShowSaveFileDialog` command. An error is communicated to the user (e.g., via status bar `PlatformCommand`).
 
-**General Approach for Adding New Tests:**
+## General Approach for Adding New Tests
 
-*   **Follow the "Arrange, Act, Assert" (AAA) pattern.**
-*   **Use `setup_logic_with_mock_config_manager()`** (and later, helpers that inject more mocks).
-*   **Configure mocks** to simulate specific conditions or errors.
-*   **Call the `MyAppLogic` method** being tested (usually `handle_event` or `on_main_window_created`).
+*   **Follow "Arrange, Act, Assert" (AAA):** Clearly structure each test.
+*   **Use Descriptive Test Names:** Employ clear names that indicate the scenario and expected behavior (e.g., `test_event_X_when_condition_Y_should_produce_Z`).
+*   **Setup with Mocks:** Use helper functions like `setup_logic_with_mock_config_manager()` and extend them to inject `MockProfileManager`, `MockFileSystemScanner`, etc.
+*   **Configure Mocks:** Set up mock objects to return specific data or simulate error conditions relevant to the test case.
+*   **Leverage Test Data Builders:** Use helper functions/builders to create complex input data (e.g., `FileNode` trees, `Profile` instances) for mocks or direct input.
+*   **Act:** Call the `MyAppLogic` method under test (usually `handle_event` or `on_main_window_created`).
 *   **Assert:**
-    *   The `Vec<PlatformCommand>` returned.
-    *   The state of `pub(crate)` fields in `MyAppLogic` (e.g., `current_profile_name`, `file_nodes_cache`, `current_archive_status`).
-    *   Interactions with mocks (e.g., `mock_config_manager.get_saved_profile_name()`).
+    *   The `Vec<PlatformCommand>` returned (order and content).
+    *   The state of `pub(crate)` fields in `MyAppLogic` (e.g., `current_profile_name`, `file_nodes_cache`, `current_archive_status`, and crucially, `pending_action` to ensure it's correctly set/cleared).
+    *   Interactions with mocks (e.g., `mock_profile_manager.save_profile_called_with(...)`).
+    *   Any `PlatformCommand`s generated for user feedback, especially for error conditions.
+*   **Consider User Interaction Story:** While testing individual handlers, keep in mind the broader sequence of user actions (state transitions) to ensure robust coverage.
 
-Implementing all these would significantly increase test coverage and confidence. The key is to do it incrementally, especially as you introduce more mocks for other `core` services.
+## Conclusion
 
-For now, without mocks for `ProfileManager` or `FileSystemScanner`, some of these suggestions are harder to implement in a pure unit-test style for `MyAppLogic`. However, identifying these scenarios is good preparation for when those mocks are available.
+Implementing this plan, especially in conjunction with the `MockRefactor.md` strategy, will significantly elevate the quality and reliability of `MyAppLogic`. The focus on DI, comprehensive mocking, and testing of failure/edge cases is crucial for a robust application.
