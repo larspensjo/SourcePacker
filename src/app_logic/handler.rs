@@ -1,6 +1,6 @@
 use crate::core::{
     self, ArchiveStatus, ConfigError, ConfigManagerOperations, FileNode, FileState, Profile,
-    ProfileError,
+    ProfileError, ProfileManagerOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
@@ -28,8 +28,8 @@ pub(crate) enum PendingAction {
 /*
  * Manages the core application state and UI logic in a platform-agnostic manner.
  * It processes UI events received from the platform layer and generates commands
- * to update the UI. It depends on a `ConfigManagerOperations` trait for handling
- * application configuration, such as loading the last used profile.
+ * to update the UI. It depends on `ConfigManagerOperations` for app configuration
+ * and `ProfileManagerOperations` for profile data management.
  */
 pub struct MyAppLogic {
     main_window_id: Option<WindowId>,
@@ -43,16 +43,19 @@ pub struct MyAppLogic {
     pending_archive_content: Option<String>,
     pending_action: Option<PendingAction>,
     config_manager: Arc<dyn ConfigManagerOperations>,
+    profile_manager: Arc<dyn ProfileManagerOperations>,
 }
 
 impl MyAppLogic {
     /*
      * Initializes a new instance of the application logic.
-     * It requires a `ConfigManagerOperations` implementation to handle loading
-     * and saving application configuration (e.g., the last used profile).
-     * Sets up default values for other application states.
+     * Requires implementations for `ConfigManagerOperations` (app config) and
+     * `ProfileManagerOperations` (profile data). Sets up default application states.
      */
-    pub fn new(config_manager: Arc<dyn ConfigManagerOperations>) -> Self {
+    pub fn new(
+        config_manager: Arc<dyn ConfigManagerOperations>,
+        profile_manager: Arc<dyn ProfileManagerOperations>,
+    ) -> Self {
         MyAppLogic {
             main_window_id: None,
             file_nodes_cache: Vec::new(),
@@ -65,6 +68,7 @@ impl MyAppLogic {
             pending_archive_content: None,
             pending_action: None,
             config_manager,
+            profile_manager,
         }
     }
 
@@ -117,16 +121,14 @@ impl MyAppLogic {
 
     /*
      * Handles the event indicating the main application window has been created.
-     * It attempts to load the last used profile using the configured `ConfigManagerOperations`.
-     * If successful, it uses that profile's settings for the initial directory scan and state
-     * application. Otherwise, it proceeds with a default scan. Finally, it populates the UI
-     * and shows the window.
+     * It attempts to load the last used profile. If successful, it uses that profile's
+     * settings for the initial directory scan and state application. Otherwise, it
+     * proceeds with a default scan. Finally, it populates the UI and shows the window.
      */
     pub fn on_main_window_created(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         self.main_window_id = Some(window_id);
         let mut commands = Vec::new();
 
-        // P2.6: Attempt to load the last used profile
         let mut loaded_profile_on_startup = false;
         match self
             .config_manager
@@ -137,10 +139,14 @@ impl MyAppLogic {
                     "AppLogic: Found last used profile name: {}",
                     last_profile_name
                 );
-                match core::load_profile(&last_profile_name, APP_NAME_FOR_PROFILES) {
+                // Use the profile_manager to load the profile
+                match self
+                    .profile_manager
+                    .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
+                {
                     Ok(profile) => {
                         println!(
-                            "AppLogic: Successfully loaded last profile '{}' on startup.",
+                            "AppLogic: Successfully loaded last profile '{}' on startup via manager.",
                             profile.name
                         );
                         self.current_profile_name = Some(profile.name.clone());
@@ -150,7 +156,7 @@ impl MyAppLogic {
                     }
                     Err(e) => {
                         eprintln!(
-                            "AppLogic: Failed to load last profile '{}': {:?}. Proceeding with default.",
+                            "AppLogic: Failed to load last profile '{}' via manager: {:?}. Proceeding with default.",
                             last_profile_name, e
                         );
                         self.current_profile_name = None;
@@ -175,6 +181,7 @@ impl MyAppLogic {
         );
 
         match core::scan_directory(&self.root_path_for_scan) {
+            // scan_directory will be next to refactor
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
                 println!(
@@ -364,6 +371,7 @@ impl PlatformEventHandler for MyAppLogic {
     fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
         match event {
+            // ... (WindowCloseRequested, WindowDestroyed, TreeViewItemToggled, ButtonClicked remain similar) ...
             AppEvent::WindowCloseRequested { window_id } => {
                 if self.main_window_id == Some(window_id) {
                     println!(
@@ -512,15 +520,19 @@ impl PlatformEventHandler for MyAppLogic {
                     }
                 }
             }
+
             AppEvent::MenuLoadProfileClicked => {
                 println!("AppLogic: MenuLoadProfileClicked received.");
                 if let Some(main_id) = self.main_window_id {
-                    let profile_dir_res = core::profiles::get_profile_dir(APP_NAME_FOR_PROFILES);
+                    // Use the profile_manager to get the profile directory path
+                    let profile_dir_opt = self
+                        .profile_manager
+                        .get_profile_dir_path(APP_NAME_FOR_PROFILES);
                     commands.push(PlatformCommand::ShowOpenFileDialog {
                         window_id: main_id,
                         title: "Load Profile".to_string(),
                         filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir_res,
+                        initial_dir: profile_dir_opt, // Pass the Option<PathBuf>
                     });
                 }
             }
@@ -532,6 +544,9 @@ impl PlatformEventHandler for MyAppLogic {
                             "AppLogic: Profile selected for load: {:?}",
                             profile_file_path
                         );
+                        // As per MockRefactor.md, for now, this direct File::open and deserialization
+                        // can remain. A future step could be to add `load_profile_from_path` to
+                        // `ProfileManagerOperations`.
                         match File::open(&profile_file_path) {
                             Ok(file) => {
                                 let reader = std::io::BufReader::new(file);
@@ -615,7 +630,10 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::MenuSaveProfileAsClicked => {
                 println!("AppLogic: MenuSaveProfileAsClicked received.");
                 if let Some(main_id) = self.main_window_id {
-                    let profile_dir_res = core::profiles::get_profile_dir(APP_NAME_FOR_PROFILES);
+                    // Use the profile_manager
+                    let profile_dir_opt = self
+                        .profile_manager
+                        .get_profile_dir_path(APP_NAME_FOR_PROFILES);
                     let base_name = self
                         .current_profile_name
                         .as_ref()
@@ -629,7 +647,7 @@ impl PlatformEventHandler for MyAppLogic {
                         title: "Save Profile As".to_string(),
                         default_filename,
                         filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir_res,
+                        initial_dir: profile_dir_opt,
                     });
                 }
             }
@@ -642,6 +660,7 @@ impl PlatformEventHandler for MyAppLogic {
                                 if let Some(content) = self.pending_archive_content.take() {
                                     println!("AppLogic: Saving archive to {:?}", path);
                                     match fs::write(&path, content) {
+                                        // Direct fs::write
                                         Ok(_) => {
                                             println!(
                                                 "AppLogic: Successfully saved archive to {:?}",
@@ -649,15 +668,16 @@ impl PlatformEventHandler for MyAppLogic {
                                             );
                                             if let Some(profile) = &mut self.current_profile_cache {
                                                 profile.archive_path = Some(path.clone());
-                                                match core::save_profile(
-                                                    profile,
-                                                    APP_NAME_FOR_PROFILES,
-                                                ) {
+                                                // Use profile_manager to save the updated profile
+                                                match self
+                                                    .profile_manager
+                                                    .save_profile(profile, APP_NAME_FOR_PROFILES)
+                                                {
                                                     Ok(_) => println!(
-                                                        "AppLogic: Profile updated with new archive path."
+                                                        "AppLogic: Profile updated with new archive path via manager."
                                                     ),
                                                     Err(e) => eprintln!(
-                                                        "AppLogic: Failed to save profile after updating archive path: {}",
+                                                        "AppLogic: Failed to save profile (via manager) after updating archive path: {}",
                                                         e
                                                     ),
                                                 }
@@ -676,7 +696,7 @@ impl PlatformEventHandler for MyAppLogic {
                                 }
                             } else {
                                 println!("AppLogic: Save archive dialog cancelled.");
-                                self.pending_archive_content = None;
+                                self.pending_archive_content = None; // Clear content if cancelled
                             }
                         }
                         Some(PendingAction::SavingProfile) => {
@@ -693,13 +713,14 @@ impl PlatformEventHandler for MyAppLogic {
                                             profile_name_str.clone(),
                                         );
 
-                                        match core::save_profile(
-                                            &new_profile,
-                                            APP_NAME_FOR_PROFILES,
-                                        ) {
+                                        // Use profile_manager to save the new profile
+                                        match self
+                                            .profile_manager
+                                            .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
+                                        {
                                             Ok(()) => {
                                                 println!(
-                                                    "AppLogic: Successfully saved profile as '{}'",
+                                                    "AppLogic: Successfully saved profile as '{}' via manager.",
                                                     new_profile.name
                                                 );
                                                 self.current_profile_name =
@@ -709,7 +730,7 @@ impl PlatformEventHandler for MyAppLogic {
                                                 self.root_path_for_scan = self
                                                     .current_profile_cache
                                                     .as_ref()
-                                                    .unwrap()
+                                                    .unwrap() // Safe: just set it
                                                     .root_folder
                                                     .clone();
 
@@ -728,7 +749,7 @@ impl PlatformEventHandler for MyAppLogic {
                                             }
                                             Err(e) => {
                                                 eprintln!(
-                                                    "AppLogic: Failed to save profile as '{}': {}",
+                                                    "AppLogic: Failed to save profile (via manager) as '{}': {}",
                                                     new_profile.name, e
                                                 );
                                             }
@@ -866,5 +887,13 @@ impl MyAppLogic {
     }
     pub(crate) fn test_set_config_manager(&mut self, v: Arc<dyn ConfigManagerOperations>) {
         self.config_manager = v;
+    }
+
+    // New test helper for profile_manager
+    pub(crate) fn test_profile_manager(&self) -> &Arc<dyn ProfileManagerOperations> {
+        &self.profile_manager
+    }
+    pub(crate) fn test_set_profile_manager(&mut self, v: Arc<dyn ProfileManagerOperations>) {
+        self.profile_manager = v;
     }
 }
