@@ -38,11 +38,11 @@ pub struct MyAppLogic {
     next_tree_item_id_counter: u64,
     root_path_for_scan: PathBuf,
     current_profile_name: Option<String>,
-    pub(crate) current_profile_cache: Option<Profile>,
-    pub(crate) current_archive_status: Option<ArchiveStatus>,
-    pub(crate) pending_archive_content: Option<String>,
-    pub(crate) pending_action: Option<PendingAction>,
-    pub(crate) config_manager: Arc<dyn ConfigManagerOperations>,
+    current_profile_cache: Option<Profile>,
+    current_archive_status: Option<ArchiveStatus>,
+    pending_archive_content: Option<String>,
+    pending_action: Option<PendingAction>,
+    config_manager: Arc<dyn ConfigManagerOperations>,
 }
 
 impl MyAppLogic {
@@ -850,15 +850,15 @@ impl MyAppLogic {
     pub(crate) fn test_pending_archive_content(&self) -> &Option<String> {
         &self.pending_archive_content
     }
-    pub(crate) fn test_set_pending_archive_content(&mut self, v: Option<String>) {
-        self.pending_archive_content = v;
+    pub(crate) fn test_set_pending_archive_content(&mut self, v: String) {
+        self.pending_archive_content = Some(v);
     }
 
     pub(crate) fn test_pending_action(&self) -> &Option<PendingAction> {
         &self.pending_action
     }
-    pub(crate) fn test_set_pending_action(&mut self, v: Option<PendingAction>) {
-        self.pending_action = v;
+    pub(crate) fn test_set_pending_action(&mut self, v: PendingAction) {
+        self.pending_action = Some(v);
     }
 
     pub(crate) fn test_config_manager(&self) -> &Arc<dyn ConfigManagerOperations> {

@@ -160,9 +160,9 @@ fn test_on_main_window_created_loads_last_profile_with_mock() {
         logic.test_current_profile_name().as_deref(),
         Some(last_profile_name_to_load)
     );
-    assert!(logic.current_profile_cache.is_some());
+    assert!(logic.test_current_profile_cache().is_some());
     assert_eq!(
-        logic.current_profile_cache.as_ref().unwrap().name,
+        logic.test_current_profile_cache().as_ref().unwrap().name,
         last_profile_name_to_load
     );
     assert_eq!(*logic.test_root_path_for_scan(), startup_profile_root);
@@ -171,7 +171,7 @@ fn test_on_main_window_created_loads_last_profile_with_mock() {
         logic.test_file_nodes_cache()[0].name,
         "mock_startup_file.txt"
     );
-    assert!(logic.current_archive_status.is_some());
+    assert!(logic.test_current_archive_status().is_some());
 }
 
 #[test]
@@ -202,7 +202,7 @@ fn test_on_main_window_created_no_last_profile_with_mock() {
             .map(|n| &n.path)
             .collect::<Vec<_>>()
     );
-    assert!(logic.current_archive_status.is_none());
+    assert!(logic.test_current_archive_status().is_none());
     fs::remove_file(dummy_file_path)
         .expect("Test cleanup: Failed to remove default_mock_scan_file.txt");
 }
@@ -259,7 +259,7 @@ fn test_file_save_dialog_completed_for_profile_saves_last_profile_name_with_mock
         core::profiles::sanitize_profile_name(profile_to_save_name)
     ));
 
-    logic.pending_action = Some(PendingAction::SavingProfile); // Now accessible
+    logic.test_set_pending_action(PendingAction::SavingProfile); // Now accessible
     let event = AppEvent::FileSaveDialogCompleted {
         window_id: WindowId(1),
         result: Some(profile_save_path_from_dialog.clone()),
@@ -271,9 +271,9 @@ fn test_file_save_dialog_completed_for_profile_saves_last_profile_name_with_mock
         logic.test_current_profile_name().as_deref(),
         Some(profile_to_save_name)
     );
-    assert!(logic.current_profile_cache.is_some());
+    assert!(logic.test_current_profile_cache().is_some());
     assert_eq!(
-        logic.current_profile_cache.as_ref().unwrap().name,
+        logic.test_current_profile_cache().as_ref().unwrap().name,
         profile_to_save_name
     );
     assert!(profile_save_path_from_dialog.exists());
@@ -318,13 +318,13 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
     let profile_name = "MyTestProfile".to_string();
     let archive_file = temp_root.path().join("my_archive.txt");
 
-    logic.current_profile_cache = Some(Profile {
+    logic.test_set_current_profile_cache(Some(Profile {
         name: profile_name.clone(),
         root_folder: temp_root.path().to_path_buf(),
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file.clone()),
-    });
+    }));
     logic.test_root_path_for_scan_set(&temp_root.path());
 
     let cmds = logic.handle_event(AppEvent::ButtonClicked {
@@ -355,16 +355,16 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
 #[test]
 fn test_handle_file_save_dialog_completed_for_archive_with_path() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.pending_action = Some(PendingAction::SavingArchive); // Now accessible
-    logic.pending_archive_content = Some("ARCHIVE CONTENT".to_string());
+    logic.test_set_pending_action(PendingAction::SavingArchive); // Now accessible
+    logic.test_set_pending_archive_content("ARCHIVE CONTENT".to_string());
 
     let tmp_file = NamedTempFile::new().unwrap();
     let archive_save_path = tmp_file.path().to_path_buf();
     let temp_root_for_profile = tempdir().unwrap();
-    logic.current_profile_cache = Some(Profile::new(
+    logic.test_set_current_profile_cache(Some(Profile::new(
         "test_profile_for_archive_save".into(),
         temp_root_for_profile.path().to_path_buf(),
-    ));
+    )));
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
         // PlatformEventHandler trait now in scope
         window_id: WindowId(1),
@@ -376,14 +376,15 @@ fn test_handle_file_save_dialog_completed_for_archive_with_path() {
         "No follow-up UI commands expected directly from save completion"
     );
     assert_eq!(
-        logic.pending_archive_content, None,
+        *logic.test_pending_archive_content(),
+        None,
         "Pending content should be cleared"
     );
     let written_content = fs::read_to_string(&archive_save_path).unwrap();
     assert_eq!(written_content, "ARCHIVE CONTENT");
     assert_eq!(
         logic
-            .current_profile_cache
+            .test_current_profile_cache()
             .as_ref()
             .unwrap()
             .archive_path
@@ -392,7 +393,7 @@ fn test_handle_file_save_dialog_completed_for_archive_with_path() {
         &archive_save_path
     );
     assert_eq!(
-        logic.current_archive_status,
+        *logic.test_current_archive_status(),
         Some(ArchiveStatus::NoFilesSelected),
         "Archive status should be NoFilesSelected when no files are in cache/selected"
     );
@@ -401,8 +402,8 @@ fn test_handle_file_save_dialog_completed_for_archive_with_path() {
 #[test]
 fn test_handle_file_save_dialog_cancelled_for_archive() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.pending_action = Some(PendingAction::SavingArchive); // Now accessible
-    logic.pending_archive_content = Some("WILL BE CLEARED".to_string());
+    logic.test_set_pending_action(PendingAction::SavingArchive); // Now accessible
+    logic.test_set_pending_archive_content("WILL BE CLEARED".to_string());
 
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
         // PlatformEventHandler trait now in scope
@@ -412,11 +413,12 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
 
     assert!(cmds.is_empty());
     assert_eq!(
-        logic.pending_archive_content, None,
+        *logic.test_pending_archive_content(),
+        None,
         "Pending content should be cleared on cancel"
     );
     assert!(
-        logic.pending_action.is_none(),
+        logic.test_pending_action().is_none(),
         "Pending action should be cleared"
     );
 }
@@ -424,7 +426,7 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
 #[test]
 fn test_handle_file_save_dialog_cancelled_for_profile() {
     let (mut logic, _mock_config_manager) = setup_logic_with_window();
-    logic.pending_action = Some(PendingAction::SavingProfile); // Now accessible
+    logic.test_set_pending_action(PendingAction::SavingProfile); // Now accessible
 
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
         // PlatformEventHandler trait now in scope
@@ -433,7 +435,7 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
     });
     assert!(cmds.is_empty());
     assert!(
-        logic.pending_action.is_none(),
+        logic.test_pending_action().is_none(),
         "Pending action should be cleared on cancel"
     );
 }
@@ -459,13 +461,13 @@ fn test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status() 
         "foo.txt".into(),
         false,
     )]);
-    logic.current_profile_cache = Some(Profile {
+    logic.test_set_current_profile_cache(Some(Profile {
         name: "test_profile_for_toggle".into(),
         root_folder: logic.test_root_path_for_scan().clone(),
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_path.clone()),
-    });
+    }));
     logic.test_path_to_tree_item_id_clear();
     // Calls pub(crate) MyAppLogic::build_tree_item_descriptors_recursive
     let _descriptors = logic.build_tree_item_descriptors_recursive();
@@ -500,7 +502,7 @@ fn test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status() 
         archive_ts
     );
     assert_eq!(
-        logic.current_archive_status,
+        *logic.test_current_archive_status(),
         Some(ArchiveStatus::OutdatedRequiresUpdate),
         "Archive status incorrect after toggle. Expected Outdated. Foo_ts: {:?}, Archive_ts: {:?}",
         foo_ts,
@@ -715,17 +717,17 @@ fn test_profile_load_updates_archive_status() {
         "Profile name mismatch after load"
     );
     assert!(
-        logic.current_profile_cache.is_some(),
+        logic.test_current_profile_cache().is_some(),
         "Profile cache should be populated"
     );
     assert_eq!(
-        logic.current_profile_cache.as_ref().unwrap().name,
+        logic.test_current_profile_cache().as_ref().unwrap().name,
         profile_name,
         "Name in cached profile mismatch"
     );
     assert_eq!(
         logic
-            .current_profile_cache
+            .test_current_profile_cache()
             .as_ref()
             .unwrap()
             .archive_path
@@ -735,7 +737,7 @@ fn test_profile_load_updates_archive_status() {
         "Archive path in cached profile mismatch"
     );
     assert_eq!(
-        logic.current_archive_status,
+        *logic.test_current_archive_status(),
         Some(ArchiveStatus::NoFilesSelected),
         "Archive status after load is incorrect"
     );
