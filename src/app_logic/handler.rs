@@ -370,407 +370,449 @@ impl MyAppLogic {
             );
         }
     }
-}
 
-impl PlatformEventHandler for MyAppLogic {
-    fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand> {
+    fn handle_window_close_requested(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
-        match event {
-            AppEvent::WindowCloseRequested { window_id } => {
-                if self.main_window_id == Some(window_id) {
-                    println!(
-                        "AppLogic: Main window close requested. Commanding platform to close."
-                    );
-                    commands.push(PlatformCommand::CloseWindow { window_id });
-                }
+        if self.main_window_id == Some(window_id) {
+            println!("AppLogic: Main window close requested. Commanding platform to close.");
+            commands.push(PlatformCommand::CloseWindow { window_id });
+        }
+        commands
+    }
+
+    fn handle_window_destroyed(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
+        if self.main_window_id == Some(window_id) {
+            println!("AppLogic: Main window destroyed notification received.");
+            self.main_window_id = None;
+            self.current_profile_name = None;
+            self.current_profile_cache = None;
+            self.current_archive_status = None;
+            self.file_nodes_cache.clear();
+            self.path_to_tree_item_id.clear();
+        }
+        // This event typically does not generate new commands for the platform.
+        Vec::new()
+    }
+
+    fn handle_treeview_item_toggled(
+        &mut self,
+        window_id: WindowId,
+        item_id: TreeItemId,
+        new_state: CheckState,
+    ) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        println!(
+            "AppLogic: TreeItem {:?} in window {:?} toggled to UI state {:?}.",
+            item_id, window_id, new_state
+        );
+
+        let mut path_of_toggled_node: Option<PathBuf> = None;
+        for (path_candidate, id_in_map) in &self.path_to_tree_item_id {
+            if *id_in_map == item_id {
+                path_of_toggled_node = Some(path_candidate.clone());
+                break;
             }
-            AppEvent::WindowDestroyed { window_id } => {
-                if self.main_window_id == Some(window_id) {
-                    println!("AppLogic: Main window destroyed notification received.");
-                    self.main_window_id = None;
-                    self.current_profile_name = None;
-                    self.current_profile_cache = None;
-                    self.current_archive_status = None;
-                    self.file_nodes_cache.clear();
-                    self.path_to_tree_item_id.clear();
-                }
-            }
-            AppEvent::TreeViewItemToggled {
-                window_id,
-                item_id,
-                new_state,
-            } => {
-                println!(
-                    "AppLogic: TreeItem {:?} in window {:?} toggled to UI state {:?}.",
-                    item_id, window_id, new_state
-                );
+        }
 
-                let mut path_of_toggled_node: Option<PathBuf> = None;
-                for (path_candidate, id_in_map) in &self.path_to_tree_item_id {
-                    if *id_in_map == item_id {
-                        path_of_toggled_node = Some(path_candidate.clone());
-                        break;
-                    }
-                }
+        if let Some(path_for_model_update) = path_of_toggled_node {
+            {
+                // Scope for mutable borrow of self.file_nodes_cache
+                let node_to_update_model_for =
+                    Self::find_filenode_mut(&mut self.file_nodes_cache, &path_for_model_update);
 
-                if let Some(path_for_model_update) = path_of_toggled_node {
-                    {
-                        let node_to_update_model_for = Self::find_filenode_mut(
-                            &mut self.file_nodes_cache,
-                            &path_for_model_update,
-                        );
-
-                        if let Some(node_model) = node_to_update_model_for {
-                            let new_model_file_state = match new_state {
-                                CheckState::Checked => FileState::Selected,
-                                CheckState::Unchecked => FileState::Deselected,
-                            };
-                            core::state_manager::update_folder_selection(
-                                node_model,
-                                new_model_file_state,
-                            );
-                        } else {
-                            eprintln!(
-                                "AppLogic: Model node not found for path {:?} to update state.",
-                                path_for_model_update
-                            );
-                        }
-                    }
-
-                    if let Some(root_node_for_visual_update) =
-                        Self::find_filenode_ref(&self.file_nodes_cache, &path_for_model_update)
-                    {
-                        let mut visual_updates_list = Vec::new();
-                        self.collect_visual_updates_recursive(
-                            root_node_for_visual_update,
-                            &mut visual_updates_list,
-                        );
-                        println!(
-                            "AppLogic: Requesting {} visual updates for TreeView after toggle.",
-                            visual_updates_list.len()
-                        );
-                        for (id_to_update_ui, state_for_ui) in visual_updates_list {
-                            commands.push(PlatformCommand::UpdateTreeItemVisualState {
-                                window_id,
-                                item_id: id_to_update_ui,
-                                new_state: state_for_ui,
-                            });
-                        }
-                    } else {
-                        eprintln!(
-                            "AppLogic: Model node not found for path {:?} to collect visual updates.",
-                            path_for_model_update
-                        );
-                    }
-                    self.update_current_archive_status();
+                if let Some(node_model) = node_to_update_model_for {
+                    let new_model_file_state = match new_state {
+                        CheckState::Checked => FileState::Selected,
+                        CheckState::Unchecked => FileState::Deselected,
+                    };
+                    core::state_manager::update_folder_selection(node_model, new_model_file_state);
                 } else {
                     eprintln!(
-                        "AppLogic: Could not find path for TreeItemId {:?} from UI event.",
-                        item_id
+                        "AppLogic: Model node not found for path {:?} to update state.",
+                        path_for_model_update
                     );
                 }
-            }
-            AppEvent::ButtonClicked {
-                window_id,
-                control_id,
-            } => {
-                if self.main_window_id == Some(window_id)
-                    && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
-                {
-                    println!("AppLogic: 'Generate Archive' button clicked.");
-                    let display_root_path = self.current_profile_cache.as_ref().map_or_else(
-                        || self.root_path_for_scan.clone(),
-                        |p| p.root_folder.clone(),
-                    );
+            } // End scope for mutable borrow
 
-                    match core::create_archive_content(&self.file_nodes_cache, &display_root_path) {
-                        Ok(content) => {
-                            self.pending_archive_content = Some(content);
-                            self.pending_action = Some(PendingAction::SavingArchive);
-
-                            let default_filename = self
-                                .current_profile_cache
-                                .as_ref()
-                                .map(|p| core::profiles::sanitize_profile_name(&p.name) + ".txt")
-                                .unwrap_or_else(|| "archive.txt".to_string());
-
-                            let initial_dir_for_dialog = self
-                                .current_profile_cache
-                                .as_ref()
-                                .and_then(|p| {
-                                    p.archive_path
-                                        .as_ref()
-                                        .and_then(|ap| ap.parent().map(PathBuf::from))
-                                })
-                                .or_else(|| {
-                                    self.current_profile_cache
-                                        .as_ref()
-                                        .map(|p| p.root_folder.clone())
-                                })
-                                .or_else(|| Some(self.root_path_for_scan.clone()));
-
-                            commands.push(PlatformCommand::ShowSaveFileDialog {
-                                window_id,
-                                title: "Save Archive As".to_string(),
-                                default_filename,
-                                filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
-                                    .to_string(),
-                                initial_dir: initial_dir_for_dialog,
-                            });
-                        }
-                        Err(e) => {
-                            eprintln!("AppLogic: Failed to create archive content: {}", e);
-                        }
-                    }
-                }
-            }
-
-            AppEvent::MenuLoadProfileClicked => {
-                println!("AppLogic: MenuLoadProfileClicked received.");
-                if let Some(main_id) = self.main_window_id {
-                    let profile_dir_opt = self
-                        .profile_manager
-                        .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-                    commands.push(PlatformCommand::ShowOpenFileDialog {
-                        window_id: main_id,
-                        title: "Load Profile".to_string(),
-                        filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir_opt,
+            // Now, get a read reference for visual updates
+            if let Some(root_node_for_visual_update) =
+                Self::find_filenode_ref(&self.file_nodes_cache, &path_for_model_update)
+            {
+                let mut visual_updates_list = Vec::new();
+                self.collect_visual_updates_recursive(
+                    root_node_for_visual_update,
+                    &mut visual_updates_list,
+                );
+                println!(
+                    "AppLogic: Requesting {} visual updates for TreeView after toggle.",
+                    visual_updates_list.len()
+                );
+                for (id_to_update_ui, state_for_ui) in visual_updates_list {
+                    commands.push(PlatformCommand::UpdateTreeItemVisualState {
+                        window_id,
+                        item_id: id_to_update_ui,
+                        new_state: state_for_ui,
                     });
                 }
+            } else {
+                eprintln!(
+                    "AppLogic: Model node not found for path {:?} to collect visual updates.",
+                    path_for_model_update
+                );
             }
+            self.update_current_archive_status();
+        } else {
+            eprintln!(
+                "AppLogic: Could not find path for TreeItemId {:?} from UI event.",
+                item_id
+            );
+        }
+        commands
+    }
 
-            AppEvent::FileOpenDialogCompleted { window_id, result } => {
-                if self.main_window_id == Some(window_id) {
-                    if let Some(profile_file_path) = result {
+    fn handle_button_clicked(
+        &mut self,
+        window_id: WindowId,
+        control_id: i32,
+    ) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        if self.main_window_id == Some(window_id) && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
+        {
+            println!("AppLogic: 'Generate Archive' button clicked.");
+            let display_root_path = self.current_profile_cache.as_ref().map_or_else(
+                || self.root_path_for_scan.clone(),
+                |p| p.root_folder.clone(),
+            );
+
+            match core::create_archive_content(&self.file_nodes_cache, &display_root_path) {
+                Ok(content) => {
+                    self.pending_archive_content = Some(content);
+                    self.pending_action = Some(PendingAction::SavingArchive);
+
+                    let default_filename = self
+                        .current_profile_cache
+                        .as_ref()
+                        .map(|p| core::profiles::sanitize_profile_name(&p.name) + ".txt")
+                        .unwrap_or_else(|| "archive.txt".to_string());
+
+                    let initial_dir_for_dialog = self
+                        .current_profile_cache
+                        .as_ref()
+                        .and_then(|p| {
+                            p.archive_path
+                                .as_ref()
+                                .and_then(|ap| ap.parent().map(PathBuf::from))
+                        })
+                        .or_else(|| {
+                            self.current_profile_cache
+                                .as_ref()
+                                .map(|p| p.root_folder.clone())
+                        })
+                        .or_else(|| Some(self.root_path_for_scan.clone()));
+
+                    commands.push(PlatformCommand::ShowSaveFileDialog {
+                        window_id,
+                        title: "Save Archive As".to_string(),
+                        default_filename,
+                        filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
+                            .to_string(),
+                        initial_dir: initial_dir_for_dialog,
+                    });
+                }
+                Err(e) => {
+                    eprintln!("AppLogic: Failed to create archive content: {}", e);
+                    // Consider adding a PlatformCommand to show an error to the user
+                }
+            }
+        }
+        commands
+    }
+
+    fn handle_menu_load_profile_clicked(&mut self) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        println!("AppLogic: MenuLoadProfileClicked received.");
+        if let Some(main_id) = self.main_window_id {
+            let profile_dir_opt = self
+                .profile_manager
+                .get_profile_dir_path(APP_NAME_FOR_PROFILES);
+            commands.push(PlatformCommand::ShowOpenFileDialog {
+                window_id: main_id,
+                title: "Load Profile".to_string(),
+                filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
+                initial_dir: profile_dir_opt,
+            });
+        }
+        commands
+    }
+
+    fn handle_file_open_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        if self.main_window_id == Some(window_id) {
+            if let Some(profile_file_path) = result {
+                println!(
+                    "AppLogic: Profile selected for load: {:?}",
+                    profile_file_path
+                );
+                match self
+                    .profile_manager
+                    .load_profile_from_path(&profile_file_path)
+                {
+                    Ok(loaded_profile) => {
                         println!(
-                            "AppLogic: Profile selected for load: {:?}",
-                            profile_file_path
+                            "AppLogic: Successfully loaded profile '{}' via manager from path.",
+                            loaded_profile.name
                         );
-                        match self
-                            .profile_manager
-                            .load_profile_from_path(&profile_file_path)
-                        {
-                            Ok(loaded_profile) => {
-                                // 'loaded_profile' is already a Profile struct
-                                println!(
-                                    "AppLogic: Successfully loaded profile '{}' via manager from path.",
-                                    loaded_profile.name
-                                );
-                                self.current_profile_name = Some(loaded_profile.name.clone());
-                                self.root_path_for_scan = loaded_profile.root_folder.clone();
-                                self.current_profile_cache = Some(loaded_profile.clone());
+                        self.current_profile_name = Some(loaded_profile.name.clone());
+                        self.root_path_for_scan = loaded_profile.root_folder.clone();
+                        self.current_profile_cache = Some(loaded_profile.clone());
 
-                                if let Err(e) = self.config_manager.save_last_profile_name(
-                                    APP_NAME_FOR_PROFILES,
-                                    &loaded_profile.name,
-                                ) {
-                                    eprintln!(
-                                        "AppLogic: Failed to save last profile name '{}': {:?}",
-                                        loaded_profile.name, e
-                                    );
+                        if let Err(e) = self
+                            .config_manager
+                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &loaded_profile.name)
+                        {
+                            eprintln!(
+                                "AppLogic: Failed to save last profile name '{}': {:?}",
+                                loaded_profile.name, e
+                            );
+                        }
+
+                        match self
+                            .file_system_scanner
+                            .scan_directory(&self.root_path_for_scan)
+                        {
+                            Ok(nodes) => {
+                                self.file_nodes_cache = nodes;
+                                core::apply_profile_to_tree(
+                                    &mut self.file_nodes_cache,
+                                    &loaded_profile,
+                                );
+                                if let Some(cmd) = self.refresh_tree_view_from_cache(window_id) {
+                                    commands.push(cmd);
                                 }
+                                self.update_current_archive_status();
+                            }
+                            Err(e) => {
+                                eprintln!("AppLogic: Error rescanning dir for profile: {}", e);
+                                self.file_nodes_cache.clear();
+                                if let Some(cmd) = self.refresh_tree_view_from_cache(window_id) {
+                                    commands.push(cmd);
+                                }
+                                self.current_archive_status = None;
+                                // Consider adding a PlatformCommand to show an error to the user
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "AppLogic: Failed to load profile from {:?} via manager: {:?}",
+                            profile_file_path, e
+                        );
+                        self.current_profile_name = None;
+                        self.current_profile_cache = None;
+                        self.current_archive_status = None;
+                        // Consider adding a PlatformCommand to show an error to the user
+                    }
+                }
+            } else {
+                println!("AppLogic: Load profile dialog cancelled.");
+            }
+        }
+        commands
+    }
+
+    fn handle_menu_save_profile_as_clicked(&mut self) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        println!("AppLogic: MenuSaveProfileAsClicked received.");
+        if let Some(main_id) = self.main_window_id {
+            let profile_dir_opt = self
+                .profile_manager
+                .get_profile_dir_path(APP_NAME_FOR_PROFILES);
+            let base_name = self
+                .current_profile_name
+                .as_ref()
+                .map_or_else(|| "new_profile".to_string(), |name| name.clone());
+            let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
+            let default_filename = format!("{}.json", sanitized_current_name);
+
+            self.pending_action = Some(PendingAction::SavingProfile);
+            commands.push(PlatformCommand::ShowSaveFileDialog {
+                window_id: main_id,
+                title: "Save Profile As".to_string(),
+                default_filename,
+                filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
+                initial_dir: profile_dir_opt,
+            });
+        }
+        commands
+    }
+
+    fn handle_file_save_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) -> Vec<PlatformCommand> {
+        let commands = Vec::new(); // Usually, no direct commands from this handler, state is updated.
+        if self.main_window_id == Some(window_id) {
+            match self.pending_action.take() {
+                Some(PendingAction::SavingArchive) => {
+                    if let Some(path) = result {
+                        if let Some(content) = self.pending_archive_content.take() {
+                            println!("AppLogic: Saving archive to {:?}", path);
+                            match fs::write(&path, content) {
+                                Ok(_) => {
+                                    println!("AppLogic: Successfully saved archive to {:?}", path);
+                                    if let Some(profile) = &mut self.current_profile_cache {
+                                        profile.archive_path = Some(path.clone());
+                                        match self
+                                            .profile_manager
+                                            .save_profile(profile, APP_NAME_FOR_PROFILES)
+                                        {
+                                            Ok(_) => println!(
+                                                "AppLogic: Profile updated with new archive path via manager."
+                                            ),
+                                            Err(e) => eprintln!(
+                                                "AppLogic: Failed to save profile (via manager) after updating archive path: {}",
+                                                e
+                                            ),
+                                        }
+                                    }
+                                    self.update_current_archive_status();
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "AppLogic: Failed to write archive to {:?}: {}",
+                                        path, e
+                                    );
+                                    // Consider adding a PlatformCommand to show an error
+                                }
+                            }
+                        } else {
+                            eprintln!("AppLogic: SaveArchiveDialog - No pending content.");
+                        }
+                    } else {
+                        println!("AppLogic: Save archive dialog cancelled.");
+                        self.pending_archive_content = None; // Ensure cleared if dialog cancelled
+                    }
+                }
+                Some(PendingAction::SavingProfile) => {
+                    if let Some(profile_save_path) = result {
+                        println!(
+                            "AppLogic: Profile save path selected: {:?}",
+                            profile_save_path
+                        );
+                        if let Some(profile_name_osstr) = profile_save_path.file_stem() {
+                            if let Some(profile_name_str) =
+                                profile_name_osstr.to_str().map(|s| s.to_string())
+                            {
+                                let new_profile = self
+                                    .create_profile_from_current_state(profile_name_str.clone());
 
                                 match self
-                                    .file_system_scanner
-                                    .scan_directory(&self.root_path_for_scan)
+                                    .profile_manager
+                                    .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
                                 {
-                                    Ok(nodes) => {
-                                        self.file_nodes_cache = nodes;
-                                        core::apply_profile_to_tree(
-                                            &mut self.file_nodes_cache,
-                                            &loaded_profile, // Use the loaded profile here
+                                    Ok(()) => {
+                                        println!(
+                                            "AppLogic: Successfully saved profile as '{}' via manager.",
+                                            new_profile.name
                                         );
-                                        if let Some(cmd) =
-                                            self.refresh_tree_view_from_cache(window_id)
-                                        {
-                                            commands.push(cmd);
+                                        self.current_profile_name = Some(new_profile.name.clone());
+                                        self.current_profile_cache = Some(new_profile.clone());
+                                        self.root_path_for_scan = self
+                                            .current_profile_cache
+                                            .as_ref()
+                                            .unwrap()
+                                            .root_folder
+                                            .clone();
+
+                                        if let Err(e) = self.config_manager.save_last_profile_name(
+                                            APP_NAME_FOR_PROFILES,
+                                            &new_profile.name,
+                                        ) {
+                                            eprintln!(
+                                                "AppLogic: Failed to save last profile name '{}': {:?}",
+                                                new_profile.name, e
+                                            );
                                         }
                                         self.update_current_archive_status();
                                     }
                                     Err(e) => {
                                         eprintln!(
-                                            "AppLogic: Error rescanning dir for profile: {}",
-                                            e
+                                            "AppLogic: Failed to save profile (via manager) as '{}': {}",
+                                            new_profile.name, e
                                         );
-                                        self.file_nodes_cache.clear();
-                                        if let Some(cmd) =
-                                            self.refresh_tree_view_from_cache(window_id)
-                                        {
-                                            commands.push(cmd);
-                                        }
-                                        self.current_archive_status = None;
+                                        // Consider adding a PlatformCommand to show an error
                                     }
                                 }
+                            } else {
+                                eprintln!("AppLogic: Profile save filename stem not valid UTF-8");
+                                // Consider adding a PlatformCommand to show an error
                             }
-                            Err(e) => {
-                                // This error (e.g., ProfileError::Io or ProfileError::Serde)
-                                // comes from the profile_manager.
-                                eprintln!(
-                                    "AppLogic: Failed to load profile from {:?} via manager: {:?}",
-                                    profile_file_path, e
-                                );
-                                self.current_profile_name = None;
-                                self.current_profile_cache = None;
-                                self.current_archive_status = None;
-                                // Potentially add a PlatformCommand to show an error to the user
-                            }
+                        } else {
+                            eprintln!("AppLogic: Could not extract profile name from save path");
+                            // Consider adding a PlatformCommand to show an error
                         }
                     } else {
-                        println!("AppLogic: Load profile dialog cancelled.");
+                        println!("AppLogic: Save profile dialog cancelled.");
                     }
                 }
-            }
-
-            AppEvent::MenuSaveProfileAsClicked => {
-                println!("AppLogic: MenuSaveProfileAsClicked received.");
-                if let Some(main_id) = self.main_window_id {
-                    let profile_dir_opt = self
-                        .profile_manager
-                        .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-                    let base_name = self
-                        .current_profile_name
-                        .as_ref()
-                        .map_or_else(|| "new_profile".to_string(), |name| name.clone());
-                    let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
-                    let default_filename = format!("{}.json", sanitized_current_name);
-
-                    self.pending_action = Some(PendingAction::SavingProfile);
-                    commands.push(PlatformCommand::ShowSaveFileDialog {
-                        window_id: main_id,
-                        title: "Save Profile As".to_string(),
-                        default_filename,
-                        filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir_opt,
-                    });
+                None => {
+                    eprintln!(
+                        "AppLogic: FileSaveDialogCompleted received but no pending action was set."
+                    );
+                    self.pending_archive_content = None; // Defensive clear
                 }
             }
-
-            AppEvent::FileSaveDialogCompleted { window_id, result } => {
-                if self.main_window_id == Some(window_id) {
-                    match self.pending_action.take() {
-                        Some(PendingAction::SavingArchive) => {
-                            if let Some(path) = result {
-                                if let Some(content) = self.pending_archive_content.take() {
-                                    println!("AppLogic: Saving archive to {:?}", path);
-                                    match fs::write(&path, content) {
-                                        Ok(_) => {
-                                            println!(
-                                                "AppLogic: Successfully saved archive to {:?}",
-                                                path
-                                            );
-                                            if let Some(profile) = &mut self.current_profile_cache {
-                                                profile.archive_path = Some(path.clone());
-                                                match self
-                                                    .profile_manager
-                                                    .save_profile(profile, APP_NAME_FOR_PROFILES)
-                                                {
-                                                    Ok(_) => println!(
-                                                        "AppLogic: Profile updated with new archive path via manager."
-                                                    ),
-                                                    Err(e) => eprintln!(
-                                                        "AppLogic: Failed to save profile (via manager) after updating archive path: {}",
-                                                        e
-                                                    ),
-                                                }
-                                            }
-                                            self.update_current_archive_status();
-                                        }
-                                        Err(e) => {
-                                            eprintln!(
-                                                "AppLogic: Failed to write archive to {:?}: {}",
-                                                path, e
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    eprintln!("AppLogic: SaveArchiveDialog - No pending content.");
-                                }
-                            } else {
-                                println!("AppLogic: Save archive dialog cancelled.");
-                                self.pending_archive_content = None;
-                            }
-                        }
-                        Some(PendingAction::SavingProfile) => {
-                            if let Some(profile_save_path) = result {
-                                println!(
-                                    "AppLogic: Profile save path selected: {:?}",
-                                    profile_save_path
-                                );
-                                if let Some(profile_name_osstr) = profile_save_path.file_stem() {
-                                    if let Some(profile_name_str) =
-                                        profile_name_osstr.to_str().map(|s| s.to_string())
-                                    {
-                                        let new_profile = self.create_profile_from_current_state(
-                                            profile_name_str.clone(),
-                                        );
-
-                                        match self
-                                            .profile_manager
-                                            .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
-                                        {
-                                            Ok(()) => {
-                                                println!(
-                                                    "AppLogic: Successfully saved profile as '{}' via manager.",
-                                                    new_profile.name
-                                                );
-                                                self.current_profile_name =
-                                                    Some(new_profile.name.clone());
-                                                self.current_profile_cache =
-                                                    Some(new_profile.clone());
-                                                self.root_path_for_scan = self
-                                                    .current_profile_cache
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .root_folder
-                                                    .clone();
-
-                                                if let Err(e) =
-                                                    self.config_manager.save_last_profile_name(
-                                                        APP_NAME_FOR_PROFILES,
-                                                        &new_profile.name,
-                                                    )
-                                                {
-                                                    eprintln!(
-                                                        "AppLogic: Failed to save last profile name '{}': {:?}",
-                                                        new_profile.name, e
-                                                    );
-                                                }
-                                                self.update_current_archive_status();
-                                            }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "AppLogic: Failed to save profile (via manager) as '{}': {}",
-                                                    new_profile.name, e
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        eprintln!(
-                                            "AppLogic: Profile save filename stem not valid UTF-8"
-                                        );
-                                    }
-                                } else {
-                                    eprintln!(
-                                        "AppLogic: Could not extract profile name from save path"
-                                    );
-                                }
-                            } else {
-                                println!("AppLogic: Save profile dialog cancelled.");
-                            }
-                        }
-                        None => {
-                            eprintln!(
-                                "AppLogic: FileSaveDialogCompleted received but no pending action was set."
-                            );
-                            self.pending_archive_content = None;
-                        }
-                    }
-                }
-            }
-            AppEvent::WindowResized { .. } => {}
         }
         commands
+    }
+
+    fn handle_window_resized(
+        &mut self,
+        _window_id: WindowId, // Parameters received but not used yet
+        _width: i32,
+        _height: i32,
+    ) -> Vec<PlatformCommand> {
+        // Logic for WindowResized, if any, would go here.
+        // For now, it does nothing and returns no commands.
+        Vec::new()
+    }
+}
+
+impl PlatformEventHandler for MyAppLogic {
+    fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand> {
+        match event {
+            AppEvent::WindowCloseRequested { window_id } => {
+                self.handle_window_close_requested(window_id)
+            }
+            AppEvent::WindowDestroyed { window_id } => self.handle_window_destroyed(window_id),
+            AppEvent::TreeViewItemToggled {
+                window_id,
+                item_id,
+                new_state,
+            } => self.handle_treeview_item_toggled(window_id, item_id, new_state),
+            AppEvent::ButtonClicked {
+                window_id,
+                control_id,
+            } => self.handle_button_clicked(window_id, control_id),
+            AppEvent::MenuLoadProfileClicked => self.handle_menu_load_profile_clicked(),
+            AppEvent::FileOpenDialogCompleted { window_id, result } => {
+                self.handle_file_open_dialog_completed(window_id, result)
+            }
+            AppEvent::MenuSaveProfileAsClicked => self.handle_menu_save_profile_as_clicked(),
+            AppEvent::FileSaveDialogCompleted { window_id, result } => {
+                self.handle_file_save_dialog_completed(window_id, result)
+            }
+            AppEvent::WindowResized {
+                window_id,
+                width,
+                height,
+            } => self.handle_window_resized(window_id, width, height),
+        }
     }
 
     fn on_quit(&mut self) {
