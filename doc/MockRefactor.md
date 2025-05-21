@@ -182,6 +182,29 @@ match File::open(&profile_file_path) {
 ```
 This direct file operation will remain until `ProfileManagerOperations` is fully integrated. When `ProfileManagerOperations` is introduced, you could add a method like `load_profile_from_path(&self, path: &Path) -> Result<Profile, ProfileError>` to the trait. `MyAppLogic` would then call this method, and `CoreProfileManager` would implement the file opening and deserialization. `MockProfileManager` could then directly return a `Profile` object or an error for a given path.
 
----
+## Phase 5: Future Tasks & Considerations:
 
-This phased approach allows for incremental refactoring, reducing the risk and making each step more manageable. After completing these phases, `MyAppLogic` will be significantly more unit-testable and its dependencies on core services will be explicit and well-defined.
+1.  **Refactor `FileOpenDialogCompleted` for Profile Loading:**
+    *   The `AppEvent::FileOpenDialogCompleted` handler in `MyAppLogic` still directly opens and deserializes profile files (`File::open`, `serde_json::from_reader`).
+    *   To fully align with the DI pattern for profile loading, consider adding a method like `load_profile_from_path(&self, path: &Path) -> Result<Profile, ProfileError>` to the `ProfileManagerOperations` trait.
+    *   `MyAppLogic` would then call this trait method. `CoreProfileManager` would implement the actual file I/O and deserialization for this new method.
+    *   `MockProfileManager` would be updated to mock this new method, allowing tests to directly return a `Profile` or an error for a given path without needing `create_temp_profile_file_for_direct_load`.
+
+2.  **Refactor `core::archiver` and `core::state_manager`:**
+    *   Review if `core::archiver` functions (like `create_archive_content`, `check_archive_status`) and `core::state_manager` functions (like `apply_profile_to_tree`, `update_folder_selection`) should also be refactored to use traits and dependency injection if `MyAppLogic`'s direct calls to them make testing complex or involve significant side effects (though currently they seem mostly pure or use already-mockable inputs like `FileNode` trees). This is Phase 4 of `MockRefactor.md`.
+
+3.  **Comprehensive Error Handling Tests:**
+    *   With mocks for all major `core` dependencies, expand tests in `handler_tests.rs` to cover various error scenarios:
+        *   `MockFileSystemScanner` returns `Err(FileSystemError::Io(...))` or `Err(FileSystemError::InvalidPath(...))`.
+        *   Test how `MyAppLogic` behaves and what `PlatformCommand`s (e.g., status updates, error dialogs) are generated in these error cases. (As outlined in `ImproveTestingHandle.md`).
+
+4.  **Implement "Refresh" Action (P2.9):**
+    *   The "Refresh" action would involve calling `self.file_system_scanner.scan_directory(...)`. Ensure this new functionality correctly uses the injected scanner.
+
+5.  **Cleanup Deprecated Free Functions:**
+    *   Once all direct calls to deprecated free functions (like `core::scan_directory`, `core::profiles::load_profile`, etc.) are removed from `MyAppLogic` and any other internal `core` usage (if applicable), remove their re-exports from `core/mod.rs` and potentially the functions themselves from their respective modules if they are no longer needed. The `#[deprecated]` attribute is a good first step.
+
+6.  **Isolate `MyAppLogic` Tests Further:**
+    *   Some tests, like `test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status` and `test_profile_load_updates_archive_status_direct_load`, still perform some real file system operations (e.g., creating temporary files for `core::get_file_timestamp` or the archive file itself).
+    *   If these become problematic or if purer unit tests are desired, the `core::archiver::get_file_timestamp` and `core::archiver::check_archive_status` functions might need to be abstracted via an `ArchiverOperations` trait as per Phase 4 of `MockRefactor.md`. This would allow mocking timestamp reads and archive status checks.
+    *   Similarly, the direct `fs::write` in the `FileSaveDialogCompleted` handler for saving archive content could be moved into an `ArchiverOperations` method.

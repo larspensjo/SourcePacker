@@ -5,6 +5,13 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 /*
+ * This module provides functionalities for interacting with the file system,
+ * primarily focusing on scanning directory structures. It defines errors specific
+ * to these operations, a trait `FileSystemScannerOperations` for abstracting
+ * scanning logic, and a concrete implementation `CoreFileSystemScanner`.
+ */
+
+/*
  * Defines custom error types for file system operations.
  * This enum centralizes error handling for directory scanning, I/O issues,
  * and path validity, providing more specific error information than generic I/O errors.
@@ -51,99 +58,119 @@ impl std::error::Error for FileSystemError {
 pub type Result<T> = std::result::Result<T, FileSystemError>;
 
 /*
- * Scans a directory recursively and builds a tree of FileNode objects representing all files and subdirectories.
- * This function traverses the specified root_path and constructs a hierarchical representation.
- * All discovered files and directories are included in the resulting tree.
- * The tree is sorted such that directories appear before files at each level, and then alphabetically.
+ * Defines the operations for scanning file systems.
+ * This trait abstracts the specific mechanisms for traversing directories and
+ * building a representation of the file structure, typically as a tree of `FileNode` objects.
+ * It allows for different implementations (e.g., file-system-based, mock) to be used.
  */
-pub fn scan_directory(root_path: &Path) -> Result<Vec<FileNode>> {
-    if !root_path.is_dir() {
-        return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
+pub trait FileSystemScannerOperations: Send + Sync {
+    /*
+     * Scans a directory recursively and builds a tree of FileNode objects.
+     * Implementations should traverse the specified `root_path` and construct a
+     * hierarchical representation. All discovered files and directories should be
+     * included. The tree is typically sorted for consistent presentation.
+     */
+    fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>>;
+}
+
+/*
+ * The core implementation of `FileSystemScannerOperations`.
+ * This struct handles the actual file system traversal and `FileNode` tree construction
+ * using the `walkdir` crate.
+ */
+pub struct CoreFileSystemScanner {}
+
+impl CoreFileSystemScanner {
+    /*
+     * Creates a new instance of `CoreFileSystemScanner`.
+     * This constructor doesn't require any parameters.
+     */
+    pub fn new() -> Self {
+        CoreFileSystemScanner {}
     }
+}
 
-    let mut nodes_map: HashMap<PathBuf, FileNode> = HashMap::new();
-    // Store paths in WalkDir's discovery order (parent before children, depth-first).
-    // Adding .sort_by_file_name() to WalkDir ensures consistent ordering for items at the same level,
-    // which can be helpful for reproducibility, though the tree construction logic itself
-    // doesn't strictly depend on this same-level sort.
-    let mut entry_paths_in_discovery_order: Vec<PathBuf> = Vec::new();
-
-    // Phase 1: Discover all entries. Create FileNode for each (with empty children).
-    // Store them in `nodes_map` and their paths in `entry_paths_in_discovery_order`.
-    // `min_depth(1)` ensures we process items *inside* root_path, not root_path itself.
-    for entry_result in WalkDir::new(root_path).min_depth(1).sort_by_file_name() {
-        let entry = entry_result?; // Propagate WalkDir errors
-        let path = entry.path().to_path_buf();
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let is_dir = entry.file_type().is_dir();
-
-        let node = FileNode::new(path.clone(), name, is_dir);
-        nodes_map.insert(path.clone(), node);
-        entry_paths_in_discovery_order.push(path);
+impl Default for CoreFileSystemScanner {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    // Phase 2: Build the tree structure.
-    // Iterate through discovered paths in *reverse* order.
-    // This ensures that deeper children are processed first and moved into their direct parents'
-    // `children` Vec. The parent nodes are mutated in `nodes_map`.
-    for child_path_ref in entry_paths_in_discovery_order.iter().rev() {
-        if let Some(parent_path) = child_path_ref.parent() {
-            // We only link children to parents that are *not* the initial `root_path`
-            // (as `root_path` itself isn't in `nodes_map`) and are part of the scan.
-            if parent_path != root_path {
-                // If the child_path is still in the map (i.e., it hasn't been moved to a parent yet)
-                if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
-                    // The parent_path should also be in nodes_map at this point because it appeared
-                    // earlier in WalkDir's sequence and would be processed later in this reverse iteration.
-                    if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
-                        parent_node_mut.children.push(child_node_owned);
-                    } else {
-                        // This case should ideally not be reached if logic is sound.
-                        // It would mean parent_path was not found in nodes_map, which is unexpected
-                        // if parent_path is not root_path and was yielded by WalkDir.
-                        // To prevent losing the child node, put it back.
-                        nodes_map.insert(child_path_ref.clone(), child_node_owned);
-                        // eprintln!(
-                        //     "Warning: Parent {} for child {} not found in map during tree build. Child re-added.",
-                        //     parent_path.display(), child_path_ref.display()
-                        // );
+impl FileSystemScannerOperations for CoreFileSystemScanner {
+    /*
+     * Scans a directory recursively and builds a tree of FileNode objects representing all files and subdirectories.
+     * This function traverses the specified root_path and constructs a hierarchical representation.
+     * All discovered files and directories are included in the resulting tree.
+     * The tree is sorted such that directories appear before files at each level, and then alphabetically.
+     */
+    fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>> {
+        if !root_path.is_dir() {
+            return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
+        }
+
+        let mut nodes_map: HashMap<PathBuf, FileNode> = HashMap::new();
+        let mut entry_paths_in_discovery_order: Vec<PathBuf> = Vec::new();
+
+        for entry_result in WalkDir::new(root_path).min_depth(1).sort_by_file_name() {
+            let entry = entry_result?;
+            let path = entry.path().to_path_buf();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_dir = entry.file_type().is_dir();
+
+            let node = FileNode::new(path.clone(), name, is_dir);
+            nodes_map.insert(path.clone(), node);
+            entry_paths_in_discovery_order.push(path);
+        }
+
+        for child_path_ref in entry_paths_in_discovery_order.iter().rev() {
+            if let Some(parent_path) = child_path_ref.parent() {
+                if parent_path != root_path {
+                    if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
+                        if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
+                            parent_node_mut.children.push(child_node_owned);
+                        } else {
+                            nodes_map.insert(child_path_ref.clone(), child_node_owned);
+                        }
                     }
                 }
-                // If `nodes_map.remove(child_path_ref)` returned None, it means `child_path_ref` was
-                // already removed and added to its parent (e.g., a grandchild moved into a child). This is fine.
             }
         }
+
+        let mut top_level_nodes: Vec<FileNode> = nodes_map.into_values().collect();
+        sort_file_nodes_recursively(&mut top_level_nodes);
+        Ok(top_level_nodes)
     }
-
-    // Phase 3: Collect top-level nodes.
-    // After Phase 2, `nodes_map` only contains nodes whose parent is `root_path` (i.e., top-level nodes).
-    // All other nodes have been moved into their respective parent's `children` Vec.
-    let mut top_level_nodes: Vec<FileNode> = nodes_map.into_values().collect();
-
-    // Phase 4: Sort all node lists recursively.
-    // This sorts the top_level_nodes list and, for each directory, its children list, and so on.
-    sort_file_nodes_recursively(&mut top_level_nodes);
-
-    Ok(top_level_nodes)
 }
 
 fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
     nodes.sort_by(|a, b| {
         if a.is_dir && !b.is_dir {
-            std::cmp::Ordering::Less // Directories first
+            std::cmp::Ordering::Less
         } else if !a.is_dir && b.is_dir {
-            std::cmp::Ordering::Greater // Files after directories
+            std::cmp::Ordering::Greater
         } else {
-            a.name.cmp(&b.name) // Then sort alphabetically by name
+            a.name.cmp(&b.name)
         }
     });
 
-    // Recursively sort children of directories
     for node in nodes.iter_mut() {
         if node.is_dir && !node.children.is_empty() {
             sort_file_nodes_recursively(&mut node.children);
         }
     }
+}
+
+/*
+ * (DEPRECATED - Use CoreFileSystemScanner::scan_directory)
+ * Scans a directory recursively and builds a tree of FileNode objects representing all files and subdirectories.
+ */
+#[deprecated(
+    since = "0.1.0",
+    note = "Please use `FileSystemScannerOperations::scan_directory` via an injected manager instance."
+)]
+pub fn scan_directory(root_path: &Path) -> Result<Vec<FileNode>> {
+    let scanner = CoreFileSystemScanner::new();
+    scanner.scan_directory(root_path)
 }
 
 #[cfg(test)]
@@ -167,13 +194,21 @@ mod tests {
         Ok(())
     }
 
+    // Test helper for FileSystemScannerOperations using CoreFileSystemScanner
+    fn test_scan_with_scanner(
+        scanner: &dyn FileSystemScannerOperations,
+        path: &Path,
+    ) -> Result<Vec<FileNode>> {
+        scanner.scan_directory(path)
+    }
+
     #[test]
     fn test_scan_all_files_and_dirs_when_no_filtering() -> Result<()> {
         let dir = tempdir()?;
         setup_test_dir(dir.path())?;
+        let scanner = CoreFileSystemScanner::new();
 
-        let nodes = scan_directory(dir.path())?;
-        // Expected sorted order: doc (d), empty_dir (d), src (d), LICENSE.txt (f), root_file.toml (f)
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
         assert_eq!(
             nodes.len(),
             5,
@@ -203,10 +238,9 @@ mod tests {
     fn test_scan_includes_all_items_in_structure() -> Result<()> {
         let dir = tempdir()?;
         setup_test_dir(dir.path())?;
+        let scanner = CoreFileSystemScanner::new();
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
 
-        let nodes = scan_directory(dir.path())?;
-
-        // Check top-level items
         assert_eq!(nodes.len(), 5);
 
         let src_node = nodes
@@ -218,7 +252,6 @@ mod tests {
                     nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
                 )
             });
-        // Expected in src (sorted): sub_src (d), lib.rs (f), main.rs (f)
         assert_eq!(
             src_node.children.len(),
             3,
@@ -250,7 +283,6 @@ mod tests {
             .iter()
             .find(|n| n.name == "sub_src" && n.is_dir)
             .unwrap();
-        // Expected in sub_src (sorted): deep.rs (f)
         assert_eq!(
             sub_src_node.children.len(),
             1,
@@ -264,7 +296,6 @@ mod tests {
         assert_eq!(sub_src_node.children[0].name, "deep.rs");
 
         let doc_node = nodes.iter().find(|n| n.name == "doc" && n.is_dir).unwrap();
-        // Expected in doc (sorted): README.md (f)
         assert_eq!(doc_node.children.len(), 1);
         assert_eq!(doc_node.children[0].name, "README.md");
 
@@ -281,8 +312,8 @@ mod tests {
     fn test_scan_complex_structure_returns_all() -> Result<()> {
         let dir = tempdir()?;
         setup_test_dir(dir.path())?;
-
-        let nodes = scan_directory(dir.path())?;
+        let scanner = CoreFileSystemScanner::new();
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
 
         assert_eq!(
             nodes.len(),
@@ -293,7 +324,6 @@ mod tests {
 
         let src_node = nodes.iter().find(|n| n.name == "src").unwrap();
         assert!(src_node.is_dir);
-        // Expected in src (sorted): sub_src (d), lib.rs (f), main.rs (f)
         assert_eq!(
             src_node.children.len(),
             3,
@@ -313,7 +343,6 @@ mod tests {
             .find(|c| c.name == "sub_src")
             .unwrap();
         assert!(sub_src_node.is_dir);
-        // Expected in sub_src (sorted): deep.rs (f)
         assert_eq!(
             sub_src_node.children.len(),
             1,
@@ -323,7 +352,6 @@ mod tests {
 
         let doc_node = nodes.iter().find(|n| n.name == "doc").unwrap();
         assert!(doc_node.is_dir);
-        // Expected in doc (sorted): README.md (f)
         assert_eq!(doc_node.children.len(), 1, "doc should have README.md");
         assert_eq!(doc_node.children[0].name, "README.md");
 
@@ -349,9 +377,9 @@ mod tests {
         fs::create_dir_all(dir.path().join("parent/empty_child"))?;
         File::create(dir.path().join("parent/file.txt"))?.sync_all()?;
         fs::create_dir_all(dir.path().join("another_empty_top_level_dir"))?;
+        let scanner = CoreFileSystemScanner::new();
 
-        let nodes = scan_directory(dir.path())?;
-        // Expected sorted: another_empty_top_level_dir (d), parent (d)
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
         assert_eq!(
             nodes.len(),
             2,
@@ -370,7 +398,6 @@ mod tests {
             .find(|n| n.name == "parent")
             .expect("Should find 'parent' dir");
         assert!(parent_node.is_dir);
-        // Expected sorted: empty_child (d), file.txt (f)
         assert_eq!(
             parent_node.children.len(),
             2,
@@ -410,7 +437,8 @@ mod tests {
     #[test]
     fn test_invalid_root_path() {
         let non_existent_path = Path::new("this_path_does_not_exist_hopefully");
-        let result = scan_directory(non_existent_path);
+        let scanner = CoreFileSystemScanner::new();
+        let result = test_scan_with_scanner(&scanner, non_existent_path);
         assert!(matches!(result, Err(FileSystemError::InvalidPath(_))));
     }
 }

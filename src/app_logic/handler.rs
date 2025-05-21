@@ -1,6 +1,6 @@
 use crate::core::{
-    self, ArchiveStatus, ConfigError, ConfigManagerOperations, FileNode, FileState, Profile,
-    ProfileError, ProfileManagerOperations,
+    self, ArchiveStatus, ConfigError, ConfigManagerOperations, FileNode, FileState,
+    FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
@@ -28,8 +28,9 @@ pub(crate) enum PendingAction {
 /*
  * Manages the core application state and UI logic in a platform-agnostic manner.
  * It processes UI events received from the platform layer and generates commands
- * to update the UI. It depends on `ConfigManagerOperations` for app configuration
- * and `ProfileManagerOperations` for profile data management.
+ * to update the UI. It depends on `ConfigManagerOperations` for app configuration,
+ * `ProfileManagerOperations` for profile data, and `FileSystemScannerOperations`
+ * for directory scanning.
  */
 pub struct MyAppLogic {
     main_window_id: Option<WindowId>,
@@ -44,17 +45,20 @@ pub struct MyAppLogic {
     pending_action: Option<PendingAction>,
     config_manager: Arc<dyn ConfigManagerOperations>,
     profile_manager: Arc<dyn ProfileManagerOperations>,
+    file_system_scanner: Arc<dyn FileSystemScannerOperations>, // New field
 }
 
 impl MyAppLogic {
     /*
      * Initializes a new instance of the application logic.
-     * Requires implementations for `ConfigManagerOperations` (app config) and
-     * `ProfileManagerOperations` (profile data). Sets up default application states.
+     * Requires implementations for `ConfigManagerOperations` (app config),
+     * `ProfileManagerOperations` (profile data), and `FileSystemScannerOperations` (directory scanning).
+     * Sets up default application states.
      */
     pub fn new(
         config_manager: Arc<dyn ConfigManagerOperations>,
         profile_manager: Arc<dyn ProfileManagerOperations>,
+        file_system_scanner: Arc<dyn FileSystemScannerOperations>,
     ) -> Self {
         MyAppLogic {
             main_window_id: None,
@@ -69,10 +73,10 @@ impl MyAppLogic {
             pending_action: None,
             config_manager,
             profile_manager,
+            file_system_scanner,
         }
     }
 
-    // Tests for tree item ID generation would be indirect.
     fn generate_tree_item_id(&mut self) -> TreeItemId {
         let id = self.next_tree_item_id_counter;
         self.next_tree_item_id_counter += 1;
@@ -139,7 +143,6 @@ impl MyAppLogic {
                     "AppLogic: Found last used profile name: {}",
                     last_profile_name
                 );
-                // Use the profile_manager to load the profile
                 match self
                     .profile_manager
                     .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
@@ -180,8 +183,10 @@ impl MyAppLogic {
             self.root_path_for_scan
         );
 
-        match core::scan_directory(&self.root_path_for_scan) {
-            // scan_directory will be next to refactor
+        match self
+            .file_system_scanner // Use the injected scanner
+            .scan_directory(&self.root_path_for_scan)
+        {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
                 println!(
@@ -371,7 +376,6 @@ impl PlatformEventHandler for MyAppLogic {
     fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
         match event {
-            // ... (WindowCloseRequested, WindowDestroyed, TreeViewItemToggled, ButtonClicked remain similar) ...
             AppEvent::WindowCloseRequested { window_id } => {
                 if self.main_window_id == Some(window_id) {
                     println!(
@@ -524,7 +528,6 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::MenuLoadProfileClicked => {
                 println!("AppLogic: MenuLoadProfileClicked received.");
                 if let Some(main_id) = self.main_window_id {
-                    // Use the profile_manager to get the profile directory path
                     let profile_dir_opt = self
                         .profile_manager
                         .get_profile_dir_path(APP_NAME_FOR_PROFILES);
@@ -532,7 +535,7 @@ impl PlatformEventHandler for MyAppLogic {
                         window_id: main_id,
                         title: "Load Profile".to_string(),
                         filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                        initial_dir: profile_dir_opt, // Pass the Option<PathBuf>
+                        initial_dir: profile_dir_opt,
                     });
                 }
             }
@@ -544,9 +547,6 @@ impl PlatformEventHandler for MyAppLogic {
                             "AppLogic: Profile selected for load: {:?}",
                             profile_file_path
                         );
-                        // As per MockRefactor.md, for now, this direct File::open and deserialization
-                        // can remain. A future step could be to add `load_profile_from_path` to
-                        // `ProfileManagerOperations`.
                         match File::open(&profile_file_path) {
                             Ok(file) => {
                                 let reader = std::io::BufReader::new(file);
@@ -571,7 +571,10 @@ impl PlatformEventHandler for MyAppLogic {
                                             );
                                         }
 
-                                        match core::scan_directory(&self.root_path_for_scan) {
+                                        match self
+                                            .file_system_scanner // Use the injected scanner
+                                            .scan_directory(&self.root_path_for_scan)
+                                        {
                                             Ok(nodes) => {
                                                 self.file_nodes_cache = nodes;
                                                 core::apply_profile_to_tree(
@@ -630,7 +633,6 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::MenuSaveProfileAsClicked => {
                 println!("AppLogic: MenuSaveProfileAsClicked received.");
                 if let Some(main_id) = self.main_window_id {
-                    // Use the profile_manager
                     let profile_dir_opt = self
                         .profile_manager
                         .get_profile_dir_path(APP_NAME_FOR_PROFILES);
@@ -660,7 +662,6 @@ impl PlatformEventHandler for MyAppLogic {
                                 if let Some(content) = self.pending_archive_content.take() {
                                     println!("AppLogic: Saving archive to {:?}", path);
                                     match fs::write(&path, content) {
-                                        // Direct fs::write
                                         Ok(_) => {
                                             println!(
                                                 "AppLogic: Successfully saved archive to {:?}",
@@ -668,7 +669,6 @@ impl PlatformEventHandler for MyAppLogic {
                                             );
                                             if let Some(profile) = &mut self.current_profile_cache {
                                                 profile.archive_path = Some(path.clone());
-                                                // Use profile_manager to save the updated profile
                                                 match self
                                                     .profile_manager
                                                     .save_profile(profile, APP_NAME_FOR_PROFILES)
@@ -696,7 +696,7 @@ impl PlatformEventHandler for MyAppLogic {
                                 }
                             } else {
                                 println!("AppLogic: Save archive dialog cancelled.");
-                                self.pending_archive_content = None; // Clear content if cancelled
+                                self.pending_archive_content = None;
                             }
                         }
                         Some(PendingAction::SavingProfile) => {
@@ -713,7 +713,6 @@ impl PlatformEventHandler for MyAppLogic {
                                             profile_name_str.clone(),
                                         );
 
-                                        // Use profile_manager to save the new profile
                                         match self
                                             .profile_manager
                                             .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
@@ -730,7 +729,7 @@ impl PlatformEventHandler for MyAppLogic {
                                                 self.root_path_for_scan = self
                                                     .current_profile_cache
                                                     .as_ref()
-                                                    .unwrap() // Safe: just set it
+                                                    .unwrap()
                                                     .root_folder
                                                     .clone();
 
@@ -889,11 +888,18 @@ impl MyAppLogic {
         self.config_manager = v;
     }
 
-    // New test helper for profile_manager
     pub(crate) fn test_profile_manager(&self) -> &Arc<dyn ProfileManagerOperations> {
         &self.profile_manager
     }
     pub(crate) fn test_set_profile_manager(&mut self, v: Arc<dyn ProfileManagerOperations>) {
         self.profile_manager = v;
+    }
+
+    // New test helper for file_system_scanner
+    pub(crate) fn test_file_system_scanner(&self) -> &Arc<dyn FileSystemScannerOperations> {
+        &self.file_system_scanner
+    }
+    pub(crate) fn test_set_file_system_scanner(&mut self, v: Arc<dyn FileSystemScannerOperations>) {
+        self.file_system_scanner = v;
     }
 }
