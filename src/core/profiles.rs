@@ -101,6 +101,14 @@ pub trait ProfileManagerOperations: Send + Sync {
     fn load_profile(&self, profile_name: &str, app_name: &str) -> Result<Profile>;
 
     /*
+     * Loads a profile directly from a specified file system path.
+     * Implementations handle opening the file at the given path, reading its content,
+     * and deserializing it into a `Profile` object. This is typically used when the
+     * user selects a profile file via an open dialog.
+     */
+    fn load_profile_from_path(&self, path: &Path) -> Result<Profile>;
+
+    /*
      * Saves a given profile for a specific application.
      * Implementations handle serializing the profile and persisting it to storage.
      * The profile's name is typically used to derive the filename.
@@ -188,6 +196,19 @@ impl ProfileManagerOperations for CoreProfileManager {
         let file = File::open(&file_path)?;
         let reader = BufReader::new(file);
         let profile: Profile = serde_json::from_reader(reader)?;
+        Ok(profile)
+    }
+
+    /*
+     * Loads a profile from a specific file path.
+     * This method directly attempts to open and deserialize a profile from the given `path`.
+     * It's used when a user selects a specific profile file, bypassing the standard
+     * profile directory and naming conventions.
+     */
+    fn load_profile_from_path(&self, path: &Path) -> Result<Profile> {
+        let file = File::open(path)?; // Propagates io::Error as ProfileError::Io
+        let reader = BufReader::new(file);
+        let profile: Profile = serde_json::from_reader(reader)?; // Propagates serde_json::Error as ProfileError::Serde
         Ok(profile)
     }
 
@@ -345,6 +366,21 @@ mod profile_tests {
             serde_json::from_reader(reader).map_err(ProfileError::from)
         }
 
+        fn load_profile_from_path(&self, path: &Path) -> Result<Profile> {
+            // For mock, we assume path is valid and directly try to load.
+            // More sophisticated mock might check if path is within its mock_profile_dir,
+            // or have specific paths pre-configured to return specific profiles or errors.
+            // For this test setup, simple pass-through to actual file ops is okay IF
+            // the test using this mock ensures the file exists.
+            // However, a true mock should not do real file I/O.
+            // Let's simulate by checking a predefined map or returning a default/error.
+            // For now, to keep it simple for the refactor, and assuming tests will
+            // setup any files needed by this mock's passthrough:
+            let file = File::open(path)?;
+            let reader = BufReader::new(file);
+            serde_json::from_reader(reader).map_err(ProfileError::from)
+        }
+
         fn save_profile(&self, profile: &Profile, _app_name: &str) -> Result<()> {
             if profile.name.trim().is_empty()
                 || !profile.name.chars().all(is_valid_profile_name_char)
@@ -474,6 +510,44 @@ mod profile_tests {
             original_profile.selected_paths
         );
         assert_eq!(loaded_profile.archive_path, original_profile.archive_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_profile_from_path_with_test_manager() -> Result<()> {
+        let temp_dir_obj = TempDir::new().expect("Failed to create temp dir for test");
+        let manager = TestProfileManager::new(&temp_dir_obj);
+        let app_name_for_test = "TestAppLoadFromPath";
+
+        let profile_name = "DirectLoadProfile".to_string();
+        let root = PathBuf::from("/direct/load/project");
+        let profile_to_save = Profile {
+            name: profile_name.clone(),
+            root_folder: root.clone(),
+            selected_paths: HashSet::new(),
+            deselected_paths: HashSet::new(),
+            archive_path: None,
+        };
+
+        // Save it first using the manager to ensure it's in the mock_profile_dir
+        manager.save_profile(&profile_to_save, app_name_for_test)?;
+
+        // Construct the path it would have been saved to
+        let sanitized_filename = sanitize_profile_name(&profile_name);
+        let direct_path = manager
+            .mock_profile_dir
+            .join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+
+        assert!(
+            direct_path.exists(),
+            "Profile file should exist at: {:?}",
+            direct_path
+        );
+
+        let loaded_profile = manager.load_profile_from_path(&direct_path)?;
+
+        assert_eq!(loaded_profile.name, profile_name);
+        assert_eq!(loaded_profile.root_folder, root);
         Ok(())
     }
 

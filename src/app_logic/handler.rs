@@ -547,81 +547,73 @@ impl PlatformEventHandler for MyAppLogic {
                             "AppLogic: Profile selected for load: {:?}",
                             profile_file_path
                         );
-                        match File::open(&profile_file_path) {
-                            Ok(file) => {
-                                let reader = std::io::BufReader::new(file);
-                                match serde_json::from_reader(reader) {
-                                    Ok(loaded_profile) => {
-                                        let profile: Profile = loaded_profile;
-                                        println!(
-                                            "AppLogic: Successfully loaded profile '{}' directly from path.",
-                                            profile.name
+                        match self
+                            .profile_manager
+                            .load_profile_from_path(&profile_file_path)
+                        {
+                            Ok(loaded_profile) => {
+                                // 'loaded_profile' is already a Profile struct
+                                println!(
+                                    "AppLogic: Successfully loaded profile '{}' via manager from path.",
+                                    loaded_profile.name
+                                );
+                                self.current_profile_name = Some(loaded_profile.name.clone());
+                                self.root_path_for_scan = loaded_profile.root_folder.clone();
+                                self.current_profile_cache = Some(loaded_profile.clone());
+
+                                if let Err(e) = self.config_manager.save_last_profile_name(
+                                    APP_NAME_FOR_PROFILES,
+                                    &loaded_profile.name,
+                                ) {
+                                    eprintln!(
+                                        "AppLogic: Failed to save last profile name '{}': {:?}",
+                                        loaded_profile.name, e
+                                    );
+                                }
+
+                                match self
+                                    .file_system_scanner
+                                    .scan_directory(&self.root_path_for_scan)
+                                {
+                                    Ok(nodes) => {
+                                        self.file_nodes_cache = nodes;
+                                        core::apply_profile_to_tree(
+                                            &mut self.file_nodes_cache,
+                                            &loaded_profile, // Use the loaded profile here
                                         );
-                                        self.current_profile_name = Some(profile.name.clone());
-                                        self.root_path_for_scan = profile.root_folder.clone();
-                                        self.current_profile_cache = Some(profile.clone());
-
-                                        if let Err(e) = self.config_manager.save_last_profile_name(
-                                            APP_NAME_FOR_PROFILES,
-                                            &profile.name,
-                                        ) {
-                                            eprintln!(
-                                                "AppLogic: Failed to save last profile name '{}': {:?}",
-                                                profile.name, e
-                                            );
-                                        }
-
-                                        match self
-                                            .file_system_scanner // Use the injected scanner
-                                            .scan_directory(&self.root_path_for_scan)
+                                        if let Some(cmd) =
+                                            self.refresh_tree_view_from_cache(window_id)
                                         {
-                                            Ok(nodes) => {
-                                                self.file_nodes_cache = nodes;
-                                                core::apply_profile_to_tree(
-                                                    &mut self.file_nodes_cache,
-                                                    &profile,
-                                                );
-                                                if let Some(cmd) =
-                                                    self.refresh_tree_view_from_cache(window_id)
-                                                {
-                                                    commands.push(cmd);
-                                                }
-                                                self.update_current_archive_status();
-                                            }
-                                            Err(e) => {
-                                                eprintln!(
-                                                    "AppLogic: Error rescanning dir for profile: {}",
-                                                    e
-                                                );
-                                                self.file_nodes_cache.clear();
-                                                if let Some(cmd) =
-                                                    self.refresh_tree_view_from_cache(window_id)
-                                                {
-                                                    commands.push(cmd);
-                                                }
-                                                self.current_archive_status = None;
-                                            }
+                                            commands.push(cmd);
                                         }
+                                        self.update_current_archive_status();
                                     }
                                     Err(e) => {
                                         eprintln!(
-                                            "AppLogic: Failed to deserialize profile from {:?}: {}",
-                                            profile_file_path, e
+                                            "AppLogic: Error rescanning dir for profile: {}",
+                                            e
                                         );
-                                        self.current_profile_name = None;
-                                        self.current_profile_cache = None;
+                                        self.file_nodes_cache.clear();
+                                        if let Some(cmd) =
+                                            self.refresh_tree_view_from_cache(window_id)
+                                        {
+                                            commands.push(cmd);
+                                        }
                                         self.current_archive_status = None;
                                     }
                                 }
                             }
                             Err(e) => {
+                                // This error (e.g., ProfileError::Io or ProfileError::Serde)
+                                // comes from the profile_manager.
                                 eprintln!(
-                                    "AppLogic: Failed to open profile file {:?}: {}",
+                                    "AppLogic: Failed to load profile from {:?} via manager: {:?}",
                                     profile_file_path, e
                                 );
                                 self.current_profile_name = None;
                                 self.current_profile_cache = None;
                                 self.current_archive_status = None;
+                                // Potentially add a PlatformCommand to show an error to the user
                             }
                         }
                     } else {

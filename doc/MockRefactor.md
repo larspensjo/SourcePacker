@@ -208,3 +208,13 @@ This direct file operation will remain until `ProfileManagerOperations` is fully
     *   Some tests, like `test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status` and `test_profile_load_updates_archive_status_direct_load`, still perform some real file system operations (e.g., creating temporary files for `core::get_file_timestamp` or the archive file itself).
     *   If these become problematic or if purer unit tests are desired, the `core::archiver::get_file_timestamp` and `core::archiver::check_archive_status` functions might need to be abstracted via an `ArchiverOperations` trait as per Phase 4 of `MockRefactor.md`. This would allow mocking timestamp reads and archive status checks.
     *   Similarly, the direct `fs::write` in the `FileSaveDialogCompleted` handler for saving archive content could be moved into an `ArchiverOperations` method.
+
+7.  **True Mock for `TestProfileManager::load_profile_from_path`:**
+    *   The `TestProfileManager` in `core/profiles/profile_tests.rs` (which is different from `MockProfileManager` in `handler_tests.rs`) currently has a `load_profile_from_path` that still performs actual file I/O. For more isolated unit tests of `CoreProfileManager` itself (if desired through `TestProfileManager`), this mock could be enhanced to not rely on the file system, perhaps by pre-configuring expected path-to-profile mappings. However, the primary `MockProfileManager` used for `MyAppLogic` tests *is* now correctly mocking this behavior.
+
+8.  **Abstract `core::archiver`:**
+    *   Functions like `core::create_archive_content` and `core::check_archive_status` are still called directly by `MyAppLogic`.
+    *   Introduce an `ArchiverOperations` trait (and `CoreArchiver`, `MockArchiver`) to decouple these. This would allow:
+        *   Mocking archive content generation (e.g., to simulate errors or specific content).
+        *   Mocking `check_archive_status` to return specific `ArchiveStatus` values without needing real files or timestamps, further isolating `MyAppLogic` tests (like `test_profile_load_updates_archive_status_via_manager` which currently relies on the real `check_archive_status` behavior for a missing archive file).
+        *   Moving the `fs::write` call for saving archive content (currently in `MyAppLogic::handle_event` for `FileSaveDialogCompleted` with `PendingAction::SavingArchive`) into this new `ArchiverOperations` trait (e.g., `save_archive_content(&self, path: &Path, content: &str)`).
