@@ -1,13 +1,12 @@
 use crate::core::{
-    self, ArchiveStatus, ConfigError, ConfigManagerOperations, FileNode, FileState,
-    FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
+    self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
+    FileState, FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
     WindowId,
 };
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -45,7 +44,8 @@ pub struct MyAppLogic {
     pending_action: Option<PendingAction>,
     config_manager: Arc<dyn ConfigManagerOperations>,
     profile_manager: Arc<dyn ProfileManagerOperations>,
-    file_system_scanner: Arc<dyn FileSystemScannerOperations>, // New field
+    file_system_scanner: Arc<dyn FileSystemScannerOperations>,
+    archiver: Arc<dyn ArchiverOperations>,
 }
 
 impl MyAppLogic {
@@ -59,6 +59,7 @@ impl MyAppLogic {
         config_manager: Arc<dyn ConfigManagerOperations>,
         profile_manager: Arc<dyn ProfileManagerOperations>,
         file_system_scanner: Arc<dyn FileSystemScannerOperations>,
+        archiver: Arc<dyn ArchiverOperations>,
     ) -> Self {
         MyAppLogic {
             main_window_id: None,
@@ -74,6 +75,7 @@ impl MyAppLogic {
             config_manager,
             profile_manager,
             file_system_scanner,
+            archiver,
         }
     }
 
@@ -300,7 +302,10 @@ impl MyAppLogic {
 
     fn update_current_archive_status(&mut self) {
         if let Some(profile) = &self.current_profile_cache {
-            let status = core::check_archive_status(profile, &self.file_nodes_cache);
+            // Use the injected archiver
+            let status = self
+                .archiver
+                .check_archive_status(profile, &self.file_nodes_cache);
             self.current_archive_status = Some(status);
             println!("AppLogic: Archive status updated to: {:?}", status);
         } else {
@@ -484,11 +489,16 @@ impl MyAppLogic {
                 |p| p.root_folder.clone(),
             );
 
-            match core::create_archive_content(&self.file_nodes_cache, &display_root_path) {
+            // Use the injected archiver
+            match self
+                .archiver
+                .create_archive_content(&self.file_nodes_cache, &display_root_path)
+            {
                 Ok(content) => {
                     self.pending_archive_content = Some(content);
                     self.pending_action = Some(PendingAction::SavingArchive);
 
+                    // ... (dialog setup logic remains the same)
                     let default_filename = self
                         .current_profile_cache
                         .as_ref()
@@ -521,7 +531,6 @@ impl MyAppLogic {
                 }
                 Err(e) => {
                     eprintln!("AppLogic: Failed to create archive content: {}", e);
-                    // Consider adding a PlatformCommand to show an error to the user
                 }
             }
         }
@@ -655,14 +664,15 @@ impl MyAppLogic {
         window_id: WindowId,
         result: Option<PathBuf>,
     ) -> Vec<PlatformCommand> {
-        let commands = Vec::new(); // Usually, no direct commands from this handler, state is updated.
+        let commands = Vec::new();
         if self.main_window_id == Some(window_id) {
             match self.pending_action.take() {
                 Some(PendingAction::SavingArchive) => {
                     if let Some(path) = result {
                         if let Some(content) = self.pending_archive_content.take() {
                             println!("AppLogic: Saving archive to {:?}", path);
-                            match fs::write(&path, content) {
+                            // Use the injected archiver to save content
+                            match self.archiver.save_archive_content(&path, &content) {
                                 Ok(_) => {
                                     println!("AppLogic: Successfully saved archive to {:?}", path);
                                     if let Some(profile) = &mut self.current_profile_cache {
@@ -935,5 +945,13 @@ impl MyAppLogic {
     }
     pub(crate) fn test_set_file_system_scanner(&mut self, v: Arc<dyn FileSystemScannerOperations>) {
         self.file_system_scanner = v;
+    }
+
+    // New test helper for archiver
+    pub(crate) fn test_archiver(&self) -> &Arc<dyn ArchiverOperations> {
+        &self.archiver
+    }
+    pub(crate) fn test_set_archiver(&mut self, v: Arc<dyn ArchiverOperations>) {
+        self.archiver = v;
     }
 }

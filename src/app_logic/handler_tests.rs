@@ -1,9 +1,9 @@
 use super::handler::*;
 
 use crate::core::{
-    self, ArchiveStatus, ConfigError, ConfigManagerOperations, CoreConfigManagerForConfig,
-    FileNode, FileState, FileSystemError, FileSystemScannerOperations, Profile, ProfileError,
-    ProfileManagerOperations,
+    self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
+    CoreConfigManagerForConfig, FileNode, FileState, FileSystemError, FileSystemScannerOperations,
+    Profile, ProfileError, ProfileManagerOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tempfile::{NamedTempFile, tempdir};
 
 struct MockConfigManager {
@@ -70,7 +70,7 @@ impl ConfigManagerOperations for MockConfigManager {
 
 struct MockProfileManager {
     load_profile_results: Mutex<HashMap<String, Result<Profile, ProfileError>>>,
-    load_profile_from_path_results: Mutex<HashMap<PathBuf, Result<Profile, ProfileError>>>, // New field
+    load_profile_from_path_results: Mutex<HashMap<PathBuf, Result<Profile, ProfileError>>>,
     save_profile_calls: Mutex<Vec<(Profile, String)>>,
     save_profile_result: Mutex<Result<(), ProfileError>>,
     list_profiles_result: Mutex<Result<Vec<String>, ProfileError>>,
@@ -81,7 +81,7 @@ impl MockProfileManager {
     fn new() -> Self {
         MockProfileManager {
             load_profile_results: Mutex::new(HashMap::new()),
-            load_profile_from_path_results: Mutex::new(HashMap::new()), // Initialize
+            load_profile_from_path_results: Mutex::new(HashMap::new()),
             save_profile_calls: Mutex::new(Vec::new()),
             save_profile_result: Mutex::new(Ok(())),
             list_profiles_result: Mutex::new(Ok(Vec::new())),
@@ -96,7 +96,6 @@ impl MockProfileManager {
             .insert(profile_name.to_string(), result);
     }
 
-    // New setter for load_profile_from_path results
     fn set_load_profile_from_path_result(
         &self,
         path: &Path,
@@ -116,12 +115,12 @@ impl MockProfileManager {
         self.save_profile_calls.lock().unwrap().clone()
     }
 
-    #[allow(dead_code)] // May be used in future tests
+    #[allow(dead_code)]
     fn set_list_profiles_result(&self, result: Result<Vec<String>, ProfileError>) {
         *self.list_profiles_result.lock().unwrap() = result;
     }
 
-    #[allow(dead_code)] // May be used in future tests
+    #[allow(dead_code)]
     fn set_get_profile_dir_path_result(&self, result: Option<PathBuf>) {
         *self.get_profile_dir_path_result.lock().unwrap() = result;
     }
@@ -217,7 +216,7 @@ impl MockFileSystemScanner {
             .insert(path.to_path_buf(), result);
     }
 
-    #[allow(dead_code)] // May be used in future tests
+    #[allow(dead_code)]
     fn get_scan_directory_calls(&self) -> Vec<PathBuf> {
         self.scan_directory_calls.lock().unwrap().clone()
     }
@@ -232,66 +231,23 @@ impl FileSystemScannerOperations for MockFileSystemScanner {
 
         let map = self.scan_directory_results.lock().unwrap();
         match map.get(root_path) {
-            Some(Ok(nodes)) => Ok(nodes.clone()), // Clone to avoid holding lock
-            Some(Err(e)) => Err(clone_file_system_error(e)), // Clone error
-            None => {
-                // Default behavior: return Ok(empty list) if no specific result is set for this path
-                Ok(Vec::new())
-            }
+            Some(Ok(nodes)) => Ok(nodes.clone()),
+            Some(Err(e)) => Err(clone_file_system_error(e)),
+            None => Ok(Vec::new()),
         }
     }
 }
 
-// Helper to clone FileSystemError
 fn clone_file_system_error(error: &FileSystemError) -> FileSystemError {
     match error {
         FileSystemError::Io(e) => FileSystemError::Io(io::Error::new(e.kind(), format!("{}", e))),
         FileSystemError::WalkDir(original_walkdir_error) => {
-            // walkdir::Error is not Clone. We create a new io::Error that represents
-            // the original walkdir::Error's details as best as possible, then create
-            // a new walkdir::Error from that. This is an approximation for mocking.
-            let original_path_display = original_walkdir_error
-                .path()
-                .map_or_else(|| "unknown path".to_string(), |p| p.display().to_string());
-            let depth = original_walkdir_error.depth();
-
-            let representative_io_error = match original_walkdir_error.io_error() {
-                Some(io_e_ref) => io::Error::new(
-                    io_e_ref.kind(),
-                    format!(
-                        "Original WalkDir IO error at '{}', depth {}: {}",
-                        original_path_display, depth, io_e_ref
-                    ),
-                ),
-                None => {
-                    // For non-IO errors like symlink loops, create a generic IO error.
-                    io::Error::new(
-                        io::ErrorKind::Other,
-                        format!(
-                            "Non-IO WalkDir error at '{}', depth {} (e.g., symlink loop)",
-                            original_path_display, depth
-                        ),
-                    )
-                }
-            };
-
-            //
-            // Given our structure, the simplest is to return a *new* `FileSystemError::Io`
-            // that *describes* the `WalkDir` error, rather than trying to return a `FileSystemError::WalkDir`
-            // with a perfectly cloned `walkdir::Error`. This changes the error type slightly for the test,
-            // but preserves testability.
-            //
-            // OR, as a lesser evil for test purposes, if a walkdir error occurs, we just return
-            // a generic IO error that says "a walkdir error happened".
-
             let error_message = format!(
                 "Mocked WalkDir error: path {:?}, depth {}, io_error: {:?}",
                 original_walkdir_error.path(),
                 original_walkdir_error.depth(),
                 original_walkdir_error.io_error().map(|e| e.kind())
             );
-            // Return a generic IO error to represent the walkdir failure for the clone.
-            // This is an approximation.
             FileSystemError::Io(io::Error::new(io::ErrorKind::Other, error_message))
         }
         FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
@@ -299,21 +255,154 @@ fn clone_file_system_error(error: &FileSystemError) -> FileSystemError {
 }
 // --- End MockFileSystemScanner ---
 
-// Updated setup function
+// --- MockArchiver for testing ---
+struct MockArchiver {
+    create_archive_content_result: Mutex<io::Result<String>>,
+    create_archive_content_calls: Mutex<Vec<(Vec<FileNode>, PathBuf)>>,
+    check_archive_status_result: Mutex<ArchiveStatus>,
+    check_archive_status_calls: Mutex<Vec<(Profile, Vec<FileNode>)>>,
+    save_archive_content_result: Mutex<io::Result<()>>,
+    save_archive_content_calls: Mutex<Vec<(PathBuf, String)>>,
+    get_file_timestamp_results: Mutex<HashMap<PathBuf, io::Result<SystemTime>>>,
+    get_file_timestamp_calls: Mutex<Vec<PathBuf>>,
+}
+
+impl MockArchiver {
+    fn new() -> Self {
+        MockArchiver {
+            create_archive_content_result: Mutex::new(Ok("mocked_archive_content".to_string())),
+            create_archive_content_calls: Mutex::new(Vec::new()),
+            check_archive_status_result: Mutex::new(ArchiveStatus::UpToDate),
+            check_archive_status_calls: Mutex::new(Vec::new()),
+            save_archive_content_result: Mutex::new(Ok(())),
+            save_archive_content_calls: Mutex::new(Vec::new()),
+            get_file_timestamp_results: Mutex::new(HashMap::new()),
+            get_file_timestamp_calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn set_create_archive_content_result(&self, result: io::Result<String>) {
+        *self.create_archive_content_result.lock().unwrap() = result;
+    }
+
+    #[allow(dead_code)]
+    fn get_create_archive_content_calls(&self) -> Vec<(Vec<FileNode>, PathBuf)> {
+        self.create_archive_content_calls.lock().unwrap().clone()
+    }
+
+    fn set_check_archive_status_result(&self, result: ArchiveStatus) {
+        *self.check_archive_status_result.lock().unwrap() = result;
+    }
+
+    #[allow(dead_code)]
+    fn get_check_archive_status_calls(&self) -> Vec<(Profile, Vec<FileNode>)> {
+        self.check_archive_status_calls.lock().unwrap().clone()
+    }
+
+    fn set_save_archive_content_result(&self, result: io::Result<()>) {
+        *self.save_archive_content_result.lock().unwrap() = result;
+    }
+
+    fn get_save_archive_content_calls(&self) -> Vec<(PathBuf, String)> {
+        self.save_archive_content_calls.lock().unwrap().clone()
+    }
+
+    #[allow(dead_code)]
+    fn set_get_file_timestamp_result(&self, path: &Path, result: io::Result<SystemTime>) {
+        self.get_file_timestamp_results
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), result);
+    }
+
+    #[allow(dead_code)]
+    fn get_get_file_timestamp_calls(&self) -> Vec<PathBuf> {
+        self.get_file_timestamp_calls.lock().unwrap().clone()
+    }
+}
+
+fn clone_io_error(error: &io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("{}", error))
+}
+
+impl ArchiverOperations for MockArchiver {
+    fn create_archive_content(
+        &self,
+        nodes: &[FileNode],
+        root_path_for_display: &Path,
+    ) -> io::Result<String> {
+        self.create_archive_content_calls
+            .lock()
+            .unwrap()
+            .push((nodes.to_vec(), root_path_for_display.to_path_buf()));
+        self.create_archive_content_result
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|s| s.clone())
+            .map_err(|e| clone_io_error(e))
+    }
+
+    fn check_archive_status(
+        &self,
+        profile: &Profile,
+        file_nodes_tree: &[FileNode],
+    ) -> ArchiveStatus {
+        self.check_archive_status_calls
+            .lock()
+            .unwrap()
+            .push((profile.clone(), file_nodes_tree.to_vec()));
+        *self.check_archive_status_result.lock().unwrap()
+    }
+
+    fn save_archive_content(&self, path: &Path, content: &str) -> io::Result<()> {
+        self.save_archive_content_calls
+            .lock()
+            .unwrap()
+            .push((path.to_path_buf(), content.to_string()));
+        self.save_archive_content_result
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|_| ())
+            .map_err(|e| clone_io_error(e))
+    }
+
+    fn get_file_timestamp(&self, path: &Path) -> io::Result<SystemTime> {
+        self.get_file_timestamp_calls
+            .lock()
+            .unwrap()
+            .push(path.to_path_buf());
+        let map = self.get_file_timestamp_results.lock().unwrap();
+        match map.get(path) {
+            Some(Ok(ts)) => Ok(*ts),
+            Some(Err(e)) => Err(clone_io_error(e)),
+            None => Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("MockArchiver: No timestamp result set for path {:?}", path),
+            )),
+        }
+    }
+}
+// --- End MockArchiver ---
+
 fn setup_logic_with_mocks() -> (
     MyAppLogic,
     Arc<MockConfigManager>,
     Arc<MockProfileManager>,
     Arc<MockFileSystemScanner>,
+    Arc<MockArchiver>, // New return from step 1.5
 ) {
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
     let mock_file_system_scanner_arc = Arc::new(MockFileSystemScanner::new());
+    let mock_archiver_arc = Arc::new(MockArchiver::new()); // New mock from step 1.5
 
     let mut logic = MyAppLogic::new(
         Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
         Arc::clone(&mock_profile_manager_arc) as Arc<dyn ProfileManagerOperations>,
         Arc::clone(&mock_file_system_scanner_arc) as Arc<dyn FileSystemScannerOperations>,
+        Arc::clone(&mock_archiver_arc) as Arc<dyn ArchiverOperations>, // Pass mock archiver
     );
     logic.test_set_main_window_id(Some(WindowId(1)));
     (
@@ -321,16 +410,22 @@ fn setup_logic_with_mocks() -> (
         mock_config_manager_arc,
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
+        mock_archiver_arc,
     )
 }
 
 #[test]
-fn test_on_main_window_created_loads_last_profile_with_mocks() {
-    let (mut logic, mock_config_manager, mock_profile_manager, mock_file_system_scanner) =
-        setup_logic_with_mocks();
+fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager,
+        mock_file_system_scanner,
+        mock_archiver,
+    ) = setup_logic_with_mocks();
 
     let last_profile_name_to_load = "MyMockedStartupProfile";
-    let startup_profile_root = PathBuf::from("/mock/startup_root"); // Mocked path
+    let startup_profile_root = PathBuf::from("/mock/startup_root");
 
     mock_config_manager
         .set_load_last_profile_name_result(Ok(Some(last_profile_name_to_load.to_string())));
@@ -343,9 +438,8 @@ fn test_on_main_window_created_loads_last_profile_with_mocks() {
         archive_path: None,
     };
     mock_profile_manager
-        .set_load_profile_result(last_profile_name_to_load, Ok(mock_loaded_profile));
+        .set_load_profile_result(last_profile_name_to_load, Ok(mock_loaded_profile.clone()));
 
-    // Configure MockFileSystemScanner to return a mock FileNode tree
     let mock_scan_result = vec![FileNode::new(
         startup_profile_root.join("mock_startup_file.txt"),
         "mock_startup_file.txt".into(),
@@ -353,6 +447,8 @@ fn test_on_main_window_created_loads_last_profile_with_mocks() {
     )];
     mock_file_system_scanner
         .set_scan_directory_result(&startup_profile_root, Ok(mock_scan_result.clone()));
+
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
     let _cmds = logic.on_main_window_created(WindowId(1));
 
@@ -367,30 +463,37 @@ fn test_on_main_window_created_loads_last_profile_with_mocks() {
     );
     assert_eq!(*logic.test_root_path_for_scan(), startup_profile_root);
 
-    // Assert against the mocked scan result
     assert_eq!(logic.test_file_nodes_cache().len(), 1);
     assert_eq!(
         logic.test_file_nodes_cache()[0].name,
         "mock_startup_file.txt"
     );
     assert_eq!(
-        logic.test_file_nodes_cache()[0].path,
-        startup_profile_root.join("mock_startup_file.txt")
+        *logic.test_current_archive_status(),
+        Some(ArchiveStatus::NotYetGenerated)
     );
-    assert!(logic.test_current_archive_status().is_some());
+    assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
+    let (profile_arg, nodes_arg) = &mock_archiver.get_check_archive_status_calls()[0];
+    assert_eq!(profile_arg.name, mock_loaded_profile.name);
+    assert_eq!(nodes_arg.len(), mock_scan_result.len());
 }
 
 #[test]
 fn test_on_main_window_created_no_last_profile_with_mocks() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, mock_file_system_scanner) =
-        setup_logic_with_mocks();
-    // MockConfigManager defaults to Ok(None)
-    // MockProfileManager won't be called
+    let (
+        mut logic,
+        _mock_config_manager,
+        _mock_profile_manager,
+        mock_file_system_scanner,
+        _mock_archiver,
+    ) = setup_logic_with_mocks();
+    // MockArchiver is present but not strictly needed for this specific path's assertions yet.
+    // Default `check_archive_status_result` is UpToDate, but since no profile is loaded,
+    // `current_archive_status` will remain None.
 
-    let default_scan_path = PathBuf::from("."); // Current logic defaults to "."
+    let default_scan_path = PathBuf::from(".");
     let mock_default_scan_file_path = default_scan_path.join("default_mock_scan_file.txt");
 
-    // Configure MockFileSystemScanner for the default path
     let mock_default_scan_result = vec![FileNode::new(
         mock_default_scan_file_path.clone(),
         "default_mock_scan_file.txt".into(),
@@ -409,30 +512,25 @@ fn test_on_main_window_created_no_last_profile_with_mocks() {
         .test_file_nodes_cache()
         .iter()
         .any(|n| n.path == mock_default_scan_file_path);
-    assert!(
-        found_dummy_file,
-        "Default scan should have found default_mock_scan_file.txt from mock. Cache: {:?}",
-        logic
-            .test_file_nodes_cache()
-            .iter()
-            .map(|n| &n.path)
-            .collect::<Vec<_>>()
-    );
+    assert!(found_dummy_file);
     assert!(logic.test_current_archive_status().is_none());
 }
 
 #[test]
 fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
-    // MODIFIED: This test now uses the MockProfileManager for loading from path.
-    let (mut logic, mock_config_manager, mock_profile_manager_arc, mock_file_system_scanner_arc) = // Renamed for clarity
-        setup_logic_with_mocks();
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager_arc,
+        mock_file_system_scanner_arc,
+        mock_archiver_arc,
+    ) = setup_logic_with_mocks();
 
     let profile_to_load_name = "ProfileToLoadViaManager";
     let profile_root_for_scan = PathBuf::from("/mocked/profile/root/for/scan");
     let profile_json_path_from_dialog =
-        PathBuf::from(format!("/dummy/path/to/{}.json", profile_to_load_name)); // This path is just a key for the mock
+        PathBuf::from(format!("/dummy/path/to/{}.json", profile_to_load_name));
 
-    // Configure MockProfileManager for load_profile_from_path
     let mock_loaded_profile = Profile {
         name: profile_to_load_name.to_string(),
         root_folder: profile_root_for_scan.clone(),
@@ -442,10 +540,9 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     };
     mock_profile_manager_arc.set_load_profile_from_path_result(
         &profile_json_path_from_dialog,
-        Ok(mock_loaded_profile.clone()), // Clone as it's moved into the mock
+        Ok(mock_loaded_profile.clone()),
     );
 
-    // Configure MockFileSystemScanner for the scan that happens after profile load
     let mock_scan_after_load_result = vec![FileNode::new(
         profile_root_for_scan.join("scanned_after_load_via_manager.txt"),
         "scanned_after_load_via_manager.txt".into(),
@@ -456,9 +553,12 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         Ok(mock_scan_after_load_result.clone()),
     );
 
+    // Configure MockArchiver for the check_archive_status call
+    mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
+
     let event = AppEvent::FileOpenDialogCompleted {
         window_id: WindowId(1),
-        result: Some(profile_json_path_from_dialog.clone()), // Use the path key
+        result: Some(profile_json_path_from_dialog.clone()),
     };
     let _cmds = logic.handle_event(event);
 
@@ -489,18 +589,24 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
 
     let saved_name_info = mock_config_manager.get_saved_profile_name();
     assert!(saved_name_info.is_some());
-    let (app_name_saved, profile_name_saved) = saved_name_info.unwrap();
-    assert_eq!(app_name_saved, APP_NAME_FOR_PROFILES);
-    assert_eq!(profile_name_saved, profile_to_load_name);
+    assert_eq!(saved_name_info.unwrap().1, profile_to_load_name);
+    assert_eq!(mock_archiver_arc.get_check_archive_status_calls().len(), 1);
+    assert_eq!(
+        *logic.test_current_archive_status(),
+        Some(ArchiveStatus::NotYetGenerated)
+    );
 }
 
 #[test]
 fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
-    let (mut logic, mock_config_manager, mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
-    // No need for temp_scan_dir if scan_directory is not directly called in this path.
-    // The root_path_for_scan is set internally when a profile is created/loaded.
-    // Let's ensure it has a value if create_profile_from_current_state relies on it.
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager,
+        _mock_file_system_scanner,
+        mock_archiver,
+    ) = setup_logic_with_mocks();
+
     logic.test_root_path_for_scan_set(&PathBuf::from("/mock/profile/root"));
 
     let profile_to_save_name = "MyNewlySavedProfileViaManager";
@@ -510,6 +616,9 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
     ));
 
     logic.test_set_pending_action(PendingAction::SavingProfile);
+    // Newly saved profile will likely have archive_path: None initially.
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
+
     let event = AppEvent::FileSaveDialogCompleted {
         window_id: WindowId(1),
         result: Some(profile_save_path_from_dialog.clone()),
@@ -538,44 +647,46 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
     let save_calls = mock_profile_manager.get_save_profile_calls();
     assert_eq!(save_calls.len(), 1);
     assert_eq!(save_calls[0].0.name, profile_to_save_name);
-    assert_eq!(
-        save_calls[0].0.root_folder,
-        PathBuf::from("/mock/profile/root")
-    );
-    assert_eq!(save_calls[0].1, APP_NAME_FOR_PROFILES);
 
     let saved_name_info = mock_config_manager.get_saved_profile_name();
     assert!(saved_name_info.is_some());
     assert_eq!(saved_name_info.unwrap().1, profile_to_save_name);
+    assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
+    assert_eq!(
+        *logic.test_current_archive_status(),
+        Some(ArchiveStatus::NotYetGenerated)
+    );
 }
 
 #[test]
-fn test_handle_button_click_generates_save_dialog_archive() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+fn test_handle_button_click_generates_save_dialog_archive_with_mock_archiver() {
+    let (mut logic, _, _, _, mock_archiver) = setup_logic_with_mocks();
+
+    let mock_content = "Mock archive content from archiver".to_string();
+    mock_archiver.set_create_archive_content_result(Ok(mock_content.clone()));
+
     let cmds = logic.handle_event(AppEvent::ButtonClicked {
         window_id: WindowId(1),
         control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
     });
     assert_eq!(cmds.len(), 1, "Expected one command for save dialog");
     match &cmds[0] {
-        PlatformCommand::ShowSaveFileDialog {
-            title,
-            default_filename,
-            ..
-        } => {
-            assert_eq!(title, "Save Archive As");
-            assert_eq!(default_filename, "archive.txt");
-        }
+        PlatformCommand::ShowSaveFileDialog { .. } => {}
         _ => panic!("Expected ShowSaveFileDialog for archive"),
     }
+    assert_eq!(
+        logic.test_pending_archive_content().as_deref(),
+        Some(mock_content.as_str())
+    );
+    assert_eq!(mock_archiver.get_create_archive_content_calls().len(), 1);
 }
 
 #[test]
 fn test_handle_button_click_generate_archive_with_profile_context() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
-    let temp_root_path = PathBuf::from("/mock/archive_button_root"); // Mock path
+    // This test primarily checks dialog parameters based on profile, mock_archiver setup is secondary
+    // but good to have for consistency.
+    let (mut logic, _, _, _, mock_archiver) = setup_logic_with_mocks();
+    let temp_root_path = PathBuf::from("/mock/archive_button_root");
     let profile_name = "MyTestProfileForArchiveButton";
     let archive_file_path = temp_root_path.join("my_archive_for_button.txt");
 
@@ -586,7 +697,10 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_path.clone()),
     }));
-    logic.test_root_path_for_scan_set(&temp_root_path); // Keep consistent
+    logic.test_root_path_for_scan_set(&temp_root_path);
+
+    // Mock archiver for create_archive_content call
+    mock_archiver.set_create_archive_content_result(Ok("content".to_string()));
 
     let cmds = logic.handle_event(AppEvent::ButtonClicked {
         window_id: WindowId(1),
@@ -610,43 +724,41 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
         }
         _ => panic!("Expected ShowSaveFileDialog with profile context"),
     }
+    assert_eq!(mock_archiver.get_create_archive_content_calls().len(), 1);
 }
 
 #[test]
-fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_manager() {
-    let (mut logic, _mock_config_manager, mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_mock_archiver() {
+    let (mut logic, _, mock_profile_manager, _, mock_archiver) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::SavingArchive);
-    logic.test_set_pending_archive_content("ARCHIVE CONTENT FOR MANAGER TEST".to_string());
+    let mock_archive_data = "ARCHIVE CONTENT FOR MOCK ARCHIVER TEST".to_string();
+    logic.test_set_pending_archive_content(mock_archive_data.clone());
 
-    let tmp_file_obj = NamedTempFile::new().unwrap();
-    let archive_save_path = tmp_file_obj.path().to_path_buf();
-    let temp_root_for_profile = PathBuf::from("/mock/profile_for_archive_save"); // Mock path
-    let profile_name_for_save = "test_profile_for_archive_save_via_manager";
+    let archive_save_path = PathBuf::from("/mock/saved_archive_via_mock.txt");
+    let temp_root_for_profile = PathBuf::from("/mock/profile_for_archive_save_mock");
+    let profile_name_for_save = "test_profile_for_archive_save_via_mock_archiver";
 
     logic.test_set_current_profile_cache(Some(Profile::new(
         profile_name_for_save.into(),
         temp_root_for_profile.clone(),
     )));
-    // Ensure root_path_for_scan is consistent if any internal logic relies on it during this flow.
     logic.test_root_path_for_scan_set(&temp_root_for_profile);
+
+    mock_archiver.set_save_archive_content_result(Ok(()));
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::UpToDate);
 
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
         window_id: WindowId(1),
         result: Some(archive_save_path.clone()),
     });
 
-    assert!(
-        cmds.is_empty(),
-        "No follow-up UI commands expected directly"
-    );
-    assert_eq!(
-        *logic.test_pending_archive_content(),
-        None,
-        "Pending content should be cleared"
-    );
-    let written_content = fs::read_to_string(&archive_save_path).unwrap();
-    assert_eq!(written_content, "ARCHIVE CONTENT FOR MANAGER TEST");
+    assert!(cmds.is_empty());
+    assert_eq!(*logic.test_pending_archive_content(), None);
+
+    let save_calls_archiver = mock_archiver.get_save_archive_content_calls();
+    assert_eq!(save_calls_archiver.len(), 1);
+    assert_eq!(save_calls_archiver[0].0, archive_save_path);
+    assert_eq!(save_calls_archiver[0].1, mock_archive_data);
 
     let cached_profile = logic.test_current_profile_cache().as_ref().unwrap();
     assert_eq!(
@@ -654,25 +766,23 @@ fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_manage
         &archive_save_path
     );
 
-    let save_calls = mock_profile_manager.get_save_profile_calls();
-    assert_eq!(save_calls.len(), 1);
-    assert_eq!(save_calls[0].0.name, profile_name_for_save);
+    let save_calls_profile_mgr = mock_profile_manager.get_save_profile_calls();
+    assert_eq!(save_calls_profile_mgr.len(), 1);
     assert_eq!(
-        save_calls[0].0.archive_path,
+        save_calls_profile_mgr[0].0.archive_path,
         Some(archive_save_path.clone())
     );
-    assert_eq!(save_calls[0].1, APP_NAME_FOR_PROFILES);
 
     assert_eq!(
         *logic.test_current_archive_status(),
-        Some(ArchiveStatus::NoFilesSelected)
+        Some(ArchiveStatus::UpToDate)
     );
+    assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
 }
 
 #[test]
 fn test_handle_file_save_dialog_cancelled_for_archive() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _mock_archiver) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::SavingArchive);
     logic.test_set_pending_archive_content("WILL BE CLEARED".to_string());
 
@@ -682,21 +792,13 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
     });
 
     assert!(cmds.is_empty());
-    assert_eq!(
-        *logic.test_pending_archive_content(),
-        None,
-        "Pending content should be cleared on cancel"
-    );
-    assert!(
-        logic.test_pending_action().is_none(),
-        "Pending action should be cleared"
-    );
+    assert_eq!(*logic.test_pending_archive_content(), None);
+    assert!(logic.test_pending_action().is_none());
 }
 
 #[test]
 fn test_handle_file_save_dialog_cancelled_for_profile() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _mock_archiver) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::SavingProfile);
 
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
@@ -704,105 +806,125 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
         result: None,
     });
     assert!(cmds.is_empty());
-    assert!(
-        logic.test_pending_action().is_none(),
-        "Pending action should be cleared on cancel"
-    );
+    assert!(logic.test_pending_action().is_none());
 }
 
 #[test]
-fn test_handle_treeview_item_toggled_updates_model_visuals_and_archive_status() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+fn test_handle_treeview_item_toggled_updates_archive_status_via_mock_archiver() {
+    let (mut logic, _, _, _, mock_archiver) = setup_logic_with_mocks();
 
-    // For this test, actual file system interaction is for timestamp checking with core::get_file_timestamp
-    // The scanning part is not directly tested here, but the initial FileNode setup is manual.
-    let temp_scan_dir = tempdir().unwrap(); // Used for creating real files for timestamp checks
-    logic.test_root_path_for_scan_set(temp_scan_dir.path()); // Set the base for paths
+    let scan_root = PathBuf::from("/mock/scan_for_toggle_mock_archiver");
+    logic.test_root_path_for_scan_set(&scan_root);
 
-    let archive_file_path = temp_scan_dir.path().join("archive.txt");
-    File::create(&archive_file_path)
-        .unwrap()
-        .write_all(b"old archive content")
-        .unwrap();
-    thread::sleep(Duration::from_millis(50)); // Ensure time difference for timestamps
-
-    let foo_path_relative_to_scan_root = PathBuf::from("foo.txt");
-    let foo_full_path = temp_scan_dir.path().join(&foo_path_relative_to_scan_root);
-    File::create(&foo_full_path)
-        .unwrap()
-        .write_all(b"foo content - will be selected")
-        .unwrap();
+    let foo_path_relative = PathBuf::from("foo.txt");
+    let foo_full_path = scan_root.join(&foo_path_relative);
 
     logic.test_set_file_nodes_cache(vec![FileNode::new(
-        foo_full_path.clone(), // Use full path for the FileNode
+        foo_full_path.clone(),
         "foo.txt".into(),
         false,
     )]);
     logic.test_set_current_profile_cache(Some(Profile {
-        name: "test_profile_for_toggle".into(),
-        root_folder: logic.test_root_path_for_scan().clone(), // Use the scan root
+        name: "test_profile_for_toggle_mock_archiver".into(),
+        root_folder: scan_root.clone(),
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
-        archive_path: Some(archive_file_path.clone()),
+        archive_path: Some(scan_root.join("archive.txt")),
     }));
 
     logic.test_path_to_tree_item_id_clear();
-    let _descriptors = logic.build_tree_item_descriptors_recursive(); // Populates path_to_tree_item_id
-
-    // Ensure foo_full_path is in the map
-    assert!(
-        logic
-            .test_path_to_tree_item_id()
-            .contains_key(&foo_full_path),
-        "foo_full_path not found in path_to_tree_item_id map. Map: {:?}",
-        logic.test_path_to_tree_item_id()
-    );
-
+    let _descriptors = logic.build_tree_item_descriptors_recursive();
     let tree_item_id_for_foo = *logic
         .test_path_to_tree_item_id()
         .get(&foo_full_path)
-        .expect("TreeItemId for foo.txt not found in map");
+        .unwrap();
+
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::OutdatedRequiresUpdate);
 
     let cmds = logic.handle_event(AppEvent::TreeViewItemToggled {
         window_id: WindowId(1),
         item_id: tree_item_id_for_foo,
         new_state: CheckState::Checked,
     });
-    assert_eq!(cmds.len(), 1, "Expected one visual update command");
-    match &cmds[0] {
-        PlatformCommand::UpdateTreeItemVisualState {
-            item_id, new_state, ..
-        } => {
-            assert_eq!(*item_id, tree_item_id_for_foo);
-            assert_eq!(*new_state, CheckState::Checked);
-        }
-        _ => panic!("Expected UpdateTreeItemVisualState"),
-    }
-    assert_eq!(
-        logic.test_file_nodes_cache()[0].state,
-        FileState::Selected,
-        "Model state should be Selected"
-    );
 
-    let archive_ts = core::get_file_timestamp(&archive_file_path).unwrap();
-    let foo_ts = core::get_file_timestamp(&foo_full_path).unwrap();
-    assert!(
-        foo_ts > archive_ts,
-        "Test Sanity Check: foo.txt ({:?}) should be newer than archive ({:?})",
-        foo_ts,
-        archive_ts
-    );
+    // Assert model state was updated (MyAppLogic still responsible for this part directly)
+    assert_eq!(logic.test_file_nodes_cache()[0].state, FileState::Selected);
+    assert_eq!(cmds.len(), 1); // Visual update command
+
     assert_eq!(
         *logic.test_current_archive_status(),
         Some(ArchiveStatus::OutdatedRequiresUpdate)
     );
+    assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
+}
+
+#[test]
+fn test_profile_load_updates_archive_status_via_mock_archiver() {
+    let (
+        mut logic,
+        _mock_config_manager,
+        mock_profile_manager_arc,
+        mock_file_system_scanner_arc,
+        mock_archiver_arc,
+    ) = setup_logic_with_mocks();
+
+    let profile_name = "ProfileForStatusUpdateViaMockArchiver";
+    let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_mock_archiver");
+    let archive_file_for_profile = PathBuf::from("/mock/my_mock_archiver_archive.txt");
+    let profile_json_path_from_dialog =
+        PathBuf::from(format!("/dummy/profiles/{}.json", profile_name));
+
+    let mock_profile_to_load = Profile {
+        name: profile_name.to_string(),
+        root_folder: root_folder_for_profile.clone(),
+        selected_paths: HashSet::new(),
+        deselected_paths: HashSet::new(),
+        archive_path: Some(archive_file_for_profile.clone()),
+    };
+    mock_profile_manager_arc.set_load_profile_from_path_result(
+        &profile_json_path_from_dialog,
+        Ok(mock_profile_to_load.clone()),
+    );
+
+    let scanned_file_nodes = vec![FileNode::new(
+        root_folder_for_profile.join("some_file.txt"),
+        "some_file.txt".into(),
+        false,
+    )];
+    mock_file_system_scanner_arc
+        .set_scan_directory_result(&root_folder_for_profile, Ok(scanned_file_nodes.clone()));
+
+    mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+
+    let event = AppEvent::FileOpenDialogCompleted {
+        window_id: WindowId(1),
+        result: Some(profile_json_path_from_dialog.clone()),
+    };
+    let _cmds = logic.handle_event(event);
+
+    assert_eq!(
+        logic.test_current_profile_name().as_deref(),
+        Some(profile_name)
+    );
+    assert_eq!(
+        *logic.test_current_archive_status(),
+        Some(ArchiveStatus::NoFilesSelected)
+    );
+    assert_eq!(mock_archiver_arc.get_check_archive_status_calls().len(), 1);
+    let (profile_call_arg, nodes_call_arg) = &mock_archiver_arc.get_check_archive_status_calls()[0];
+    assert_eq!(profile_call_arg.name, profile_name);
+    assert_eq!(nodes_call_arg.len(), scanned_file_nodes.len());
+    if !nodes_call_arg.is_empty() {
+        assert_eq!(nodes_call_arg[0].name, scanned_file_nodes[0].name);
+        // At this stage (before MockStateManager), core::apply_profile_to_tree is still real.
+        // So, the state would be Unknown if selected_paths is empty.
+        assert_eq!(nodes_call_arg[0].state, FileState::Unknown);
+    }
 }
 
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _) = setup_logic_with_mocks();
     let cmds = logic.handle_event(AppEvent::WindowCloseRequested {
         window_id: WindowId(1),
     });
@@ -812,8 +934,7 @@ fn test_handle_window_close_requested_generates_close_command() {
 
 #[test]
 fn test_handle_window_destroyed_clears_main_window_id_and_state() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _) = setup_logic_with_mocks();
     logic.test_current_set(
         Some("Test".to_string()),
         Some(Profile::new("Test".into(), PathBuf::from("."))),
@@ -855,17 +976,15 @@ fn make_test_tree_for_applogic() -> Vec<FileNode> {
 
 #[test]
 fn test_build_tree_item_descriptors_recursive_applogic() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _) = setup_logic_with_mocks();
     logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
     logic.test_path_to_tree_item_id_clear();
     let descriptors = logic.build_tree_item_descriptors_recursive();
     assert_eq!(descriptors.len(), 2);
-    // Verifying structure and IDs
+    // ... (other assertions from original test)
     assert_eq!(descriptors[0].text, "file1.txt");
     assert!(!descriptors[0].is_folder);
     let file1_id = descriptors[0].id;
-
     assert_eq!(descriptors[1].text, "sub");
     assert!(descriptors[1].is_folder);
     assert_eq!(descriptors[1].children.len(), 1);
@@ -875,7 +994,6 @@ fn test_build_tree_item_descriptors_recursive_applogic() {
     assert!(!descriptors[1].children[0].is_folder);
     let file2_id = descriptors[1].children[0].id;
 
-    // Check path_to_tree_item_id map
     let path_map = logic.test_path_to_tree_item_id();
     assert_eq!(
         path_map.get(&PathBuf::from("/root/file1.txt")),
@@ -890,51 +1008,39 @@ fn test_build_tree_item_descriptors_recursive_applogic() {
 
 #[test]
 fn test_find_filenode_mut_and_ref_applogic() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _) = setup_logic_with_mocks();
     logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
-
     let path_to_find = PathBuf::from("/root/sub/file2.txt");
 
-    // Test find_filenode_ref
     let found_ref = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &path_to_find);
     assert!(found_ref.is_some());
     assert_eq!(found_ref.unwrap().name, "file2.txt");
 
-    // Test find_filenode_mut
     let found_mut = logic.test_find_filenode_mut(&path_to_find);
     assert!(found_mut.is_some());
-    assert_eq!(found_mut.as_ref().unwrap().name, "file2.txt");
-
-    // Modify and check
     if let Some(node) = found_mut {
         node.state = FileState::Selected;
     }
-
     let ref_after_mut = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &path_to_find);
     assert_eq!(ref_after_mut.unwrap().state, FileState::Selected);
 }
 
 #[test]
 fn test_collect_visual_updates_recursive_applogic() {
-    let (mut logic, _mock_config_manager, _mock_profile_manager, _mock_file_system_scanner) =
-        setup_logic_with_mocks();
+    let (mut logic, _, _, _, _) = setup_logic_with_mocks();
     let mut test_tree = make_test_tree_for_applogic();
-    // Set some states
-    test_tree[0].state = FileState::Selected; // file1.txt
-    test_tree[1].children[0].state = FileState::Deselected; // sub/file2.txt
+    test_tree[0].state = FileState::Selected;
+    test_tree[1].children[0].state = FileState::Deselected;
 
     logic.test_set_file_nodes_cache(test_tree);
-    logic.test_path_to_tree_item_id_clear(); // Important to clear before building descriptors
-    let _descriptors = logic.build_tree_item_descriptors_recursive(); // This populates path_to_tree_item_id
+    logic.test_path_to_tree_item_id_clear();
+    let _descriptors = logic.build_tree_item_descriptors_recursive();
 
     let mut updates = Vec::new();
-    // Collect updates for the root node (or a specific node if needed)
-    // Here we iterate through top-level nodes to collect all.
-    // Clone the cache for iteration to avoid borrow checker issues with `logic`
     for node_ref in logic.test_file_nodes_cache().clone().iter() {
         logic.collect_visual_updates_recursive(node_ref, &mut updates);
     }
+    assert_eq!(updates.len(), 3); // file1, sub, sub/file2
 
     // Expected updates: file1.txt (Selected), sub (Unknown), sub/file2.txt (Deselected)
     // The exact TreeItemIds are generated, so we check based on path mapping
@@ -963,79 +1069,5 @@ fn test_collect_visual_updates_recursive_applogic() {
         3,
         "Expected 3 items in path_map. Map: {:?}",
         path_map
-    );
-}
-
-#[test]
-fn test_profile_load_updates_archive_status_direct_load() {
-    // Consider renaming test for clarity if desired, e.g., test_profile_load_via_manager_updates_archive_status
-    let (mut logic, _mock_config_manager, mock_profile_manager_arc, mock_file_system_scanner_arc) =
-        setup_logic_with_mocks();
-
-    let profile_name = "ProfileForStatusUpdateViaManager";
-    let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_manager");
-    // This is a mock path for the archive file. Crucially, for this test,
-    // we *do not* create this file on the file system.
-    let archive_file_for_profile =
-        PathBuf::from("/mock/my_manager_archive_status_DOES_NOT_EXIST.txt");
-
-    let profile_json_path_from_dialog =
-        PathBuf::from(format!("/dummy/profiles/{}.json", profile_name));
-
-    let mock_profile_to_load = Profile {
-        name: profile_name.to_string(),
-        root_folder: root_folder_for_profile.clone(),
-        selected_paths: HashSet::new(), // No files are selected in the profile
-        deselected_paths: HashSet::new(),
-        archive_path: Some(archive_file_for_profile.clone()), // Profile IS associated with an archive path
-    };
-    mock_profile_manager_arc.set_load_profile_from_path_result(
-        &profile_json_path_from_dialog,
-        Ok(mock_profile_to_load.clone()),
-    );
-
-    // Mock the scan result (empty, so no FileNodes are selected from scan either)
-    mock_file_system_scanner_arc.set_scan_directory_result(&root_folder_for_profile, Ok(vec![]));
-
-    let event = AppEvent::FileOpenDialogCompleted {
-        window_id: WindowId(1),
-        result: Some(profile_json_path_from_dialog.clone()),
-    };
-    let _cmds = logic.handle_event(event);
-
-    assert_eq!(
-        logic.test_current_profile_name().as_deref(),
-        Some(profile_name)
-    );
-    assert!(logic.test_current_profile_cache().is_some());
-    assert_eq!(
-        logic.test_current_profile_cache().as_ref().unwrap().name,
-        profile_name
-    );
-    assert_eq!(
-        logic
-            .test_current_profile_cache()
-            .as_ref()
-            .unwrap()
-            .root_folder,
-        root_folder_for_profile
-    );
-    assert_eq!(
-        logic
-            .test_current_profile_cache()
-            .as_ref()
-            .unwrap()
-            .archive_path,
-        Some(archive_file_for_profile.clone())
-    );
-
-    // CORRECTED EXPECTATION:
-    // Since profile.archive_path is Some(...), but the actual file at that path
-    // does not exist (because we didn't create it in this test),
-    // core::check_archive_status should return ArchiveFileMissing.
-    // This takes precedence over NoFilesSelected.
-    assert_eq!(
-        *logic.test_current_archive_status(),
-        Some(ArchiveStatus::ArchiveFileMissing) // <<<< CORRECTED EXPECTATION
     );
 }

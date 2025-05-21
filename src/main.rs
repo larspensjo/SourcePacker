@@ -5,7 +5,7 @@ mod core;
 mod platform_layer;
 
 use app_logic::handler::MyAppLogic;
-use core::{CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager}; // Added CoreFileSystemScanner
+use core::{CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager};
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
 use std::sync::{Arc, Mutex};
 
@@ -23,17 +23,19 @@ fn main() -> PlatformResult<()> {
 
     let core_config_manager = Arc::new(CoreConfigManagerForConfig::new());
     let core_profile_manager = Arc::new(CoreProfileManager::new());
-    let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new()); // New scanner instance
+    let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new());
+    let core_archiver = Arc::new(CoreArchiver::new());
 
     let mut my_app_logic = MyAppLogic::new(
         core_config_manager,
         core_profile_manager,
-        core_file_system_scanner, // Pass the scanner
+        core_file_system_scanner,
+        core_archiver,
     );
     println!("Application logic initialized.");
 
     let main_window_config = WindowConfig {
-        title: "SourcePacker - FileSystemScanner Refactor", // Updated title
+        title: "SourcePacker - Archiver Refactor",
         width: 800,
         height: 600,
     };

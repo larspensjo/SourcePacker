@@ -7,33 +7,24 @@ pub mod state_manager;
 
 /*
  * This module consolidates the core, platform-agnostic logic of the application.
- * It re-exports key data structures, core functionalities for file system operations
- * (including abstractions like `FileSystemScannerOperations`), profile management
- * (including `ProfileManagerOperations`), and configuration management
- * (including `ConfigManagerOperations`).
+ * It re-exports key data structures and core functionalities (including abstractions
+ * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
+ * and `ArchiverOperations`) for file system operations, profile management,
+ * configuration, and archiving.
  */
 
 // Re-export key structures and enums
 pub use models::{ArchiveStatus, FileNode, FileState, Profile};
 
 // Re-export file system related items
-pub use file_system::{
-    CoreFileSystemScanner, // New concrete struct
-    FileSystemError,
-    FileSystemScannerOperations, // New trait
-};
-// Keep deprecated free function for now for compatibility during refactor
 #[deprecated(
     since = "0.1.0",
     note = "Please use `FileSystemScannerOperations::scan_directory` via an injected manager instance."
 )]
 pub use file_system::scan_directory;
+pub use file_system::{CoreFileSystemScanner, FileSystemError, FileSystemScannerOperations};
 
 // Re-export profile related items
-pub use profiles::{
-    CoreProfileManager, ProfileError, ProfileManagerOperations, sanitize_profile_name,
-};
-// Keep deprecated free functions for now for compatibility during refactor
 #[deprecated(
     since = "0.1.0",
     note = "Please use `ProfileManagerOperations::get_profile_dir_path` via an injected manager instance."
@@ -54,8 +45,27 @@ pub use profiles::load_profile;
     note = "Please use `ProfileManagerOperations::save_profile` via an injected manager instance."
 )]
 pub use profiles::save_profile;
+pub use profiles::{
+    CoreProfileManager, ProfileError, ProfileManagerOperations, sanitize_profile_name,
+};
 
-pub use archiver::{check_archive_status, create_archive_content, get_file_timestamp};
+// Re-export archiver related items
+#[deprecated(
+    since = "0.1.1",
+    note = "Please use `ArchiverOperations::check_archive_status` via an injected manager instance."
+)]
+pub use archiver::check_archive_status;
+#[deprecated(
+    since = "0.1.1",
+    note = "Please use `ArchiverOperations::create_archive_content` via an injected manager instance."
+)]
+pub use archiver::create_archive_content;
+#[deprecated(
+    since = "0.1.1",
+    note = "Please use `ArchiverOperations::get_file_timestamp` via an injected manager instance."
+)]
+pub use archiver::get_file_timestamp;
+pub use archiver::{ArchiverOperations, CoreArchiver}; // New exports
 
 // Re-export config related items
 #[deprecated(
