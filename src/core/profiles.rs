@@ -272,60 +272,6 @@ impl ProfileManagerOperations for CoreProfileManager {
     }
 }
 
-// --- Deprecated Free Functions ---
-// These will be removed after MyAppLogic is updated to use ProfileManagerOperations.
-
-/*
- * (DEPRECATED - Use CoreProfileManager::get_profile_dir_path)
- * Retrieves or creates the application-specific directory for storing profiles.
- */
-#[deprecated(
-    since = "0.1.0",
-    note = "Please use `ProfileManagerOperations::get_profile_dir_path` via an injected manager instance."
-)]
-pub fn get_profile_dir(app_name: &str) -> Option<PathBuf> {
-    CoreProfileManager::_get_profile_storage_dir(app_name)
-}
-
-/*
- * (DEPRECATED - Use CoreProfileManager::save_profile)
- * Saves a profile to a JSON file.
- */
-#[deprecated(
-    since = "0.1.0",
-    note = "Please use `ProfileManagerOperations::save_profile` via an injected manager instance."
-)]
-pub fn save_profile(profile: &Profile, app_name: &str) -> Result<()> {
-    let manager = CoreProfileManager::new();
-    manager.save_profile(profile, app_name)
-}
-
-/*
- * (DEPRECATED - Use CoreProfileManager::load_profile)
- * Loads a profile from a JSON file.
- */
-#[deprecated(
-    since = "0.1.0",
-    note = "Please use `ProfileManagerOperations::load_profile` via an injected manager instance."
-)]
-pub fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile> {
-    let manager = CoreProfileManager::new();
-    manager.load_profile(profile_name, app_name)
-}
-
-/*
- * (DEPRECATED - Use CoreProfileManager::list_profiles)
- * Lists the names of all available profiles.
- */
-#[deprecated(
-    since = "0.1.0",
-    note = "Please use `ProfileManagerOperations::list_profiles` via an injected manager instance."
-)]
-pub fn list_profiles(app_name: &str) -> Result<Vec<String>> {
-    let manager = CoreProfileManager::new();
-    manager.list_profiles(app_name)
-}
-
 #[cfg(test)]
 mod profile_tests {
     use super::*;

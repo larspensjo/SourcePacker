@@ -163,26 +163,6 @@ impl ConfigManagerOperations for CoreConfigManager {
     }
 }
 
-// --- Existing free functions (to be deprecated/removed later) ---
-
-/*
- * (DEPRECATED - Use CoreConfigManager::save_last_profile_name)
- * Saves the name of the last successfully used profile to a configuration file.
- */
-pub fn save_last_profile_name(app_name: &str, profile_name: &str) -> Result<()> {
-    let manager = CoreConfigManager::new();
-    manager.save_last_profile_name(app_name, profile_name)
-}
-
-/*
- * (DEPRECATED - Use CoreConfigManager::load_last_profile_name)
- * Loads the name of the last used profile from its configuration file.
- */
-pub fn load_last_profile_name(app_name: &str) -> Result<Option<String>> {
-    let manager = CoreConfigManager::new();
-    manager.load_last_profile_name(app_name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

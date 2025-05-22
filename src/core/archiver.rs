@@ -226,37 +226,6 @@ impl ArchiverOperations for CoreArchiver {
     }
 }
 
-// Deprecate old free functions
-#[deprecated(
-    since = "0.1.1",
-    note = "Please use `ArchiverOperations::create_archive_content` via an injected manager instance."
-)]
-pub fn create_archive_content(
-    nodes: &[FileNode],
-    root_path_for_display: &Path,
-) -> io::Result<String> {
-    let archiver = CoreArchiver::new();
-    archiver.create_archive_content(nodes, root_path_for_display)
-}
-
-#[deprecated(
-    since = "0.1.1",
-    note = "Please use `ArchiverOperations::get_file_timestamp` via an injected manager instance."
-)]
-pub fn get_file_timestamp(path: &Path) -> io::Result<SystemTime> {
-    let archiver = CoreArchiver::new();
-    archiver.get_file_timestamp(path)
-}
-
-#[deprecated(
-    since = "0.1.1",
-    note = "Please use `ArchiverOperations::check_archive_status` via an injected manager instance."
-)]
-pub fn check_archive_status(profile: &Profile, file_nodes_tree: &[FileNode]) -> ArchiveStatus {
-    let archiver = CoreArchiver::new();
-    archiver.check_archive_status(profile, file_nodes_tree)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

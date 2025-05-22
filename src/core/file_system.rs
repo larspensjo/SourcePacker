@@ -160,19 +160,6 @@ fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
     }
 }
 
-/*
- * (DEPRECATED - Use CoreFileSystemScanner::scan_directory)
- * Scans a directory recursively and builds a tree of FileNode objects representing all files and subdirectories.
- */
-#[deprecated(
-    since = "0.1.0",
-    note = "Please use `FileSystemScannerOperations::scan_directory` via an injected manager instance."
-)]
-pub fn scan_directory(root_path: &Path) -> Result<Vec<FileNode>> {
-    let scanner = CoreFileSystemScanner::new();
-    scanner.scan_directory(root_path)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

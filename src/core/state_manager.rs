@@ -83,28 +83,6 @@ impl StateManagerOperations for CoreStateManager {
     }
 }
 
-/// (DEPRECATED - Use `StateManagerOperations::apply_profile_to_tree`)
-/// Applies the selection states from a Profile to a tree of FileNodes.
-#[deprecated(
-    since = "0.1.2",
-    note = "Please use `StateManagerOperations::apply_profile_to_tree` via an injected manager instance."
-)]
-pub fn apply_profile_to_tree(tree: &mut Vec<FileNode>, profile: &Profile) {
-    let manager = CoreStateManager::new();
-    manager.apply_profile_to_tree(tree, profile);
-}
-
-/// (DEPRECATED - Use `StateManagerOperations::update_folder_selection`)
-/// Updates the selection state of a folder and all its children recursively.
-#[deprecated(
-    since = "0.1.2",
-    note = "Please use `StateManagerOperations::update_folder_selection` via an injected manager instance."
-)]
-pub fn update_folder_selection(node: &mut FileNode, new_state: FileState) {
-    let manager = CoreStateManager::new();
-    manager.update_folder_selection(node, new_state);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
