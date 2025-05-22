@@ -140,6 +140,8 @@ impl MyAppLogic {
     pub fn on_main_window_created(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         self.main_window_id = Some(window_id);
         let mut commands = Vec::new();
+        let mut status_message = "Ready".to_string();
+        let mut status_is_error = false;
 
         let mut loaded_profile_on_startup = false;
         match self
@@ -164,25 +166,33 @@ impl MyAppLogic {
                         self.root_path_for_scan = profile.root_folder.clone();
                         self.current_profile_cache = Some(profile);
                         loaded_profile_on_startup = true;
+                        status_message = format!(
+                            "Profile '{}' loaded.",
+                            self.current_profile_name.as_ref().unwrap()
+                        );
                     }
                     Err(e) => {
-                        eprintln!(
-                            "AppLogic: Failed to load last profile '{}' via manager: {:?}. Proceeding with default.",
+                        let err_msg = format!(
+                            "Failed to load last profile '{}': {:?}. Using default.",
                             last_profile_name, e
                         );
+                        eprintln!("AppLogic: {}", err_msg);
                         self.current_profile_name = None;
                         self.current_profile_cache = None;
+                        status_message = err_msg;
+                        status_is_error = true;
                     }
                 }
             }
             Ok(None) => {
                 println!("AppLogic: No last profile name found. Proceeding with default state.");
+                status_message = "No last profile. Default state.".to_string();
             }
             Err(e) => {
-                eprintln!(
-                    "AppLogic: Error loading last profile name: {:?}. Proceeding with default.",
-                    e
-                );
+                let err_msg = format!("Error loading last profile name: {:?}. Using default.", e);
+                eprintln!("AppLogic: {}", err_msg);
+                status_message = err_msg;
+                status_is_error = true;
             }
         }
 
@@ -211,18 +221,34 @@ impl MyAppLogic {
                         );
                     }
                 }
+                // If status_is_error is false, it means profile loading (if attempted) was okay.
+                // If it's true, we keep the error message from profile loading.
+                if !status_is_error {
+                    status_message = format!(
+                        "Scanned '{}'. {}",
+                        self.root_path_for_scan.display(),
+                        if loaded_profile_on_startup {
+                            format!(
+                                "Profile '{}' applied.",
+                                self.current_profile_name
+                                    .as_ref()
+                                    .unwrap_or(&"".to_string())
+                            )
+                        } else {
+                            "Default scan complete.".to_string()
+                        }
+                    );
+                }
             }
             Err(e) => {
-                eprintln!(
-                    "AppLogic: Failed to scan directory {:?}: {}",
+                let err_msg = format!(
+                    "Failed to scan directory {:?}: {}",
                     self.root_path_for_scan, e
                 );
-                let error_node_path = PathBuf::from("/error_node_scan_failed");
-                self.file_nodes_cache = vec![FileNode::new(
-                    error_node_path,
-                    format!("Error scanning directory: {}", e),
-                    false,
-                )];
+                eprintln!("AppLogic: {}", err_msg);
+                self.file_nodes_cache.clear(); // Keep it clear on scan error
+                status_message = err_msg;
+                status_is_error = true;
             }
         }
 
@@ -238,12 +264,18 @@ impl MyAppLogic {
                 items: descriptors,
             });
         } else if self.file_nodes_cache.is_empty() {
+            // Explicitly clear tree if scan resulted in empty (e.g., after an error)
             commands.push(PlatformCommand::PopulateTreeView {
                 window_id,
                 items: vec![],
             });
         }
 
+        commands.push(PlatformCommand::UpdateStatusBarText {
+            window_id,
+            text: status_message,
+            is_error: status_is_error,
+        });
         commands.push(PlatformCommand::ShowWindow { window_id });
         commands
     }
@@ -534,7 +566,13 @@ impl MyAppLogic {
                     });
                 }
                 Err(e) => {
-                    eprintln!("AppLogic: Failed to create archive content: {}", e);
+                    let err_msg = format!("Failed to create archive content: {}", e);
+                    eprintln!("AppLogic: {}", err_msg);
+                    commands.push(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        is_error: true,
+                    });
                 }
             }
         }
@@ -564,6 +602,8 @@ impl MyAppLogic {
         result: Option<PathBuf>,
     ) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
+        let mut status_update_cmd: Option<PlatformCommand> = None;
+
         if self.main_window_id == Some(window_id) {
             if let Some(profile_file_path) = result {
                 println!(
@@ -575,6 +615,7 @@ impl MyAppLogic {
                     .load_profile_from_path(&profile_file_path)
                 {
                     Ok(loaded_profile) => {
+                        let profile_name_clone = loaded_profile.name.clone(); // Clone for status message
                         println!(
                             "AppLogic: Successfully loaded profile '{}' via manager from path.",
                             loaded_profile.name
@@ -591,6 +632,7 @@ impl MyAppLogic {
                                 "AppLogic: Failed to save last profile name '{}': {:?}",
                                 loaded_profile.name, e
                             );
+                            // Non-fatal, but could be a status message.
                         }
 
                         match self
@@ -607,30 +649,58 @@ impl MyAppLogic {
                                     commands.push(cmd);
                                 }
                                 self.update_current_archive_status();
+                                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                                    window_id,
+                                    text: format!(
+                                        "Profile '{}' loaded and scanned.",
+                                        profile_name_clone
+                                    ),
+                                    is_error: false,
+                                });
                             }
                             Err(e) => {
-                                eprintln!("AppLogic: Error rescanning dir for profile: {}", e);
+                                let err_msg = format!("Error rescanning dir for profile: {}", e);
+                                eprintln!("AppLogic: {}", err_msg);
                                 self.file_nodes_cache.clear();
                                 if let Some(cmd) = self.refresh_tree_view_from_cache(window_id) {
                                     commands.push(cmd);
                                 }
                                 self.current_archive_status = None;
+                                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                                    window_id,
+                                    text: err_msg,
+                                    is_error: true,
+                                });
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!(
-                            "AppLogic: Failed to load profile from {:?} via manager: {:?}",
+                        let err_msg = format!(
+                            "Failed to load profile from {:?} via manager: {:?}",
                             profile_file_path, e
                         );
+                        eprintln!("AppLogic: {}", err_msg);
                         self.current_profile_name = None;
                         self.current_profile_cache = None;
                         self.current_archive_status = None;
+                        status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                            window_id,
+                            text: err_msg,
+                            is_error: true,
+                        });
                     }
                 }
             } else {
                 println!("AppLogic: Load profile dialog cancelled.");
+                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                    window_id,
+                    text: "Load profile cancelled.".to_string(),
+                    is_error: false,
+                });
             }
+        }
+        if let Some(cmd) = status_update_cmd {
+            commands.push(cmd);
         }
         commands
     }
@@ -666,7 +736,9 @@ impl MyAppLogic {
         window_id: WindowId,
         result: Option<PathBuf>,
     ) -> Vec<PlatformCommand> {
-        let commands = Vec::new();
+        let mut commands = Vec::new(); // Changed from Vec::new() to allow status updates.
+        let mut status_update_cmd: Option<PlatformCommand> = None;
+
         if self.main_window_id == Some(window_id) {
             match self.pending_action.take() {
                 Some(PendingAction::SavingArchive) => {
@@ -688,24 +760,45 @@ impl MyAppLogic {
                                             Err(e) => eprintln!(
                                                 "AppLogic: Failed to save profile (via manager) after updating archive path: {}",
                                                 e
-                                            ),
+                                            ), // Could be a status bar error
                                         }
                                     }
                                     self.update_current_archive_status();
+                                    status_update_cmd =
+                                        Some(PlatformCommand::UpdateStatusBarText {
+                                            window_id,
+                                            text: format!("Archive saved to '{}'", path.display()),
+                                            is_error: false,
+                                        });
                                 }
                                 Err(e) => {
-                                    eprintln!(
-                                        "AppLogic: Failed to write archive to {:?}: {}",
-                                        path, e
-                                    );
+                                    let err_msg =
+                                        format!("Failed to write archive to {:?}: {}", path, e);
+                                    eprintln!("AppLogic: {}", err_msg);
+                                    status_update_cmd =
+                                        Some(PlatformCommand::UpdateStatusBarText {
+                                            window_id,
+                                            text: err_msg,
+                                            is_error: true,
+                                        });
                                 }
                             }
                         } else {
                             eprintln!("AppLogic: SaveArchiveDialog - No pending content.");
+                            status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                                window_id,
+                                text: "Error: No archive content to save.".to_string(),
+                                is_error: true,
+                            });
                         }
                     } else {
                         println!("AppLogic: Save archive dialog cancelled.");
-                        self.pending_archive_content = None;
+                        self.pending_archive_content = None; // Clear content if dialog cancelled
+                        status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                            window_id,
+                            text: "Save archive cancelled.".to_string(),
+                            is_error: false,
+                        });
                     }
                 }
                 Some(PendingAction::SavingProfile) => {
@@ -720,6 +813,7 @@ impl MyAppLogic {
                             {
                                 let new_profile = self
                                     .create_profile_from_current_state(profile_name_str.clone());
+                                let profile_name_clone = new_profile.name.clone(); // For status msg
 
                                 match self
                                     .profile_manager
@@ -749,31 +843,74 @@ impl MyAppLogic {
                                             );
                                         }
                                         self.update_current_archive_status();
+                                        status_update_cmd =
+                                            Some(PlatformCommand::UpdateStatusBarText {
+                                                window_id,
+                                                text: format!(
+                                                    "Profile '{}' saved.",
+                                                    profile_name_clone
+                                                ),
+                                                is_error: false,
+                                            });
                                     }
                                     Err(e) => {
-                                        eprintln!(
-                                            "AppLogic: Failed to save profile (via manager) as '{}': {}",
+                                        let err_msg = format!(
+                                            "Failed to save profile (via manager) as '{}': {}",
                                             new_profile.name, e
                                         );
+                                        eprintln!("AppLogic: {}", err_msg);
+                                        status_update_cmd =
+                                            Some(PlatformCommand::UpdateStatusBarText {
+                                                window_id,
+                                                text: err_msg,
+                                                is_error: true,
+                                            });
                                     }
                                 }
                             } else {
-                                eprintln!("AppLogic: Profile save filename stem not valid UTF-8");
+                                let err_msg =
+                                    "Profile save filename stem not valid UTF-8".to_string();
+                                eprintln!("AppLogic: {}", err_msg);
+                                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                                    window_id,
+                                    text: err_msg,
+                                    is_error: true,
+                                });
                             }
                         } else {
-                            eprintln!("AppLogic: Could not extract profile name from save path");
+                            let err_msg =
+                                "Could not extract profile name from save path".to_string();
+                            eprintln!("AppLogic: {}", err_msg);
+                            status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                                window_id,
+                                text: err_msg,
+                                is_error: true,
+                            });
                         }
                     } else {
                         println!("AppLogic: Save profile dialog cancelled.");
+                        status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                            window_id,
+                            text: "Save profile cancelled.".to_string(),
+                            is_error: false,
+                        });
                     }
                 }
                 None => {
-                    eprintln!(
-                        "AppLogic: FileSaveDialogCompleted received but no pending action was set."
-                    );
+                    let err_msg = "FileSaveDialogCompleted received but no pending action was set."
+                        .to_string();
+                    eprintln!("AppLogic: {}", err_msg);
                     self.pending_archive_content = None;
+                    status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        is_error: true,
+                    });
                 }
             }
+        }
+        if let Some(cmd) = status_update_cmd {
+            commands.push(cmd);
         }
         commands
     }

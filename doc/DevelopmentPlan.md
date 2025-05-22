@@ -168,6 +168,12 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   The current last_profile_name.txt is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for app_settings.json might be beneficial. The core::config module can be expanded for this.
 *   The current tests for on_main_window_created in handler_tests.rs rely on the actual file system operations of core::load_last_profile_name and core::load_profile. For more isolated unit tests of MyAppLogic, these core functions could be mocked (e.g., by introducing traits and dependency injection for these specific core functionalities, or by using conditional compilation for test-specific implementations). This is a more advanced testing setup.
 *   handler.rs and handler_tests.rs are big. Is it possible to separate them into smaller modules or files for easier maintenance and testing? If so, the tests should be moved back into the same file, removing the need for pub(crate)= declarations.
+*   It seems to me that handle_wm_create is growing with hard coded functionality. Would it be better to control these through the command structure? That is, the window_common.rs shouldn't manage the complete UI, only manage the individual components. That would be on_main_window_created? The question is, will this require a big refactor?
+
+## P2.12: Sophisticated Status Bar Control:**
+*   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.
+*   Centralized Error-to-Status Mapping:
+    *   Instead of formatting error strings directly in each error handling site within `MyAppLogic`, you could create helper functions or a dedicated error-handling module that converts specific `Error` types into user-friendly status messages and decides if `is_error` should be true.
 
 # Phase 3: Enhancements & UX Improvements
 

@@ -321,16 +321,15 @@ impl Win32ApiInternalState {
                     title,
                     default_filename,
                     filter_spec,
-                    initial_dir, // Add initial_dir here
+                    initial_dir,
                 } => self._handle_show_save_file_dialog_impl(
                     window_id,
                     title,
                     default_filename,
                     filter_spec,
-                    initial_dir, // Pass it along
+                    initial_dir,
                 ),
                 PlatformCommand::ShowOpenFileDialog {
-                    // New case
                     window_id,
                     title,
                     filter_spec,
@@ -341,6 +340,11 @@ impl Win32ApiInternalState {
                     filter_spec,
                     initial_dir,
                 ),
+                PlatformCommand::UpdateStatusBarText {
+                    window_id,
+                    text,
+                    is_error,
+                } => window_common::update_status_bar_text(self, window_id, &text, is_error),
             };
 
             if let Err(e) = result {
@@ -377,10 +381,12 @@ impl PlatformInterface {
         let window_id = self.internal_state.generate_window_id();
 
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: HWND(std::ptr::null_mut()), // Placeholder, will be updated after creation
+            hwnd: HWND(std::ptr::null_mut()),
             id: window_id,
             treeview_state: None,
             hwnd_button_generate: None,
+            hwnd_status_bar: None,      // Initialize new field
+            status_bar_is_error: false, // Initialize new field
         };
         self.internal_state
             .window_map
@@ -406,7 +412,6 @@ impl PlatformInterface {
         ) {
             Ok(h) => h,
             Err(e) => {
-                // If window creation fails, remove the preliminary entry
                 self.internal_state
                     .window_map
                     .write()
@@ -430,8 +435,8 @@ impl PlatformInterface {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
                     println!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}.",
-                        window_id, window_data.hwnd_button_generate
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}, Status HWND is {:?}.",
+                        window_id, window_data.hwnd_button_generate, window_data.hwnd_status_bar
                     );
                 } else {
                     eprintln!(
@@ -486,19 +491,15 @@ impl PlatformInterface {
                 title,
                 default_filename,
                 filter_spec,
-                initial_dir, // Add initial_dir here
-            } => {
-                // Call the centralized internal handler via the internal_state Arc
-                self.internal_state._handle_show_save_file_dialog_impl(
-                    window_id,
-                    title,
-                    default_filename,
-                    filter_spec,
-                    initial_dir, // Pass it along
-                )
-            }
+                initial_dir,
+            } => self.internal_state._handle_show_save_file_dialog_impl(
+                window_id,
+                title,
+                default_filename,
+                filter_spec,
+                initial_dir,
+            ),
             PlatformCommand::ShowOpenFileDialog {
-                // New case
                 window_id,
                 title,
                 filter_spec,
@@ -509,10 +510,18 @@ impl PlatformInterface {
                 filter_spec,
                 initial_dir,
             ),
+            PlatformCommand::UpdateStatusBarText {
+                window_id,
+                text,
+                is_error,
+            } => window_common::update_status_bar_text(
+                &self.internal_state,
+                window_id,
+                &text,
+                is_error,
+            ),
         }
     }
-
-    // Removed PlatformInterface::handle_show_save_file_dialog as its logic is now in Win32ApiInternalState::_handle_show_save_file_dialog_impl
 
     pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));

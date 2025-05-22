@@ -127,7 +127,6 @@ pub enum PlatformCommand {
         item_id: TreeItemId,
         new_state: CheckState,
     },
-    /// Shows a native "Save File" dialog.
     ShowSaveFileDialog {
         window_id: WindowId,
         title: String,
@@ -141,6 +140,11 @@ pub enum PlatformCommand {
         title: String,
         filter_spec: String,
         initial_dir: Option<PathBuf>,
+    },
+    UpdateStatusBarText {
+        window_id: WindowId,
+        text: String,
+        is_error: bool,
     },
 }
 
