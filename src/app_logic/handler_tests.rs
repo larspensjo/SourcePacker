@@ -863,12 +863,31 @@ fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_mock_a
     mock_archiver.set_save_archive_content_result(Ok(()));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::UpToDate);
 
+    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id set in setup
+
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id, // Use the actual window_id
         result: Some(archive_save_path.clone()),
     });
 
-    assert!(cmds.is_empty());
+    // Expect one command: UpdateStatusBarText
+    assert_eq!(cmds.len(), 1, "Expected one command for status bar update");
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText {
+            window_id: cmd_win_id,
+            text,
+            is_error,
+        } => {
+            assert_eq!(*cmd_win_id, main_window_id);
+            assert_eq!(
+                *text,
+                format!("Archive saved to '{}'", archive_save_path.display())
+            );
+            assert_eq!(*is_error, false);
+        }
+        _ => panic!("Expected UpdateStatusBarText command, got {:?}", cmds[0]),
+    }
+
     assert_eq!(*logic.test_pending_archive_content(), None);
 
     let save_calls_archiver = mock_archiver.get_save_archive_content_calls();
@@ -902,12 +921,32 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
     logic.test_set_pending_action(PendingAction::SavingArchive);
     logic.test_set_pending_archive_content("WILL BE CLEARED".to_string());
 
+    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id
+
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: WindowId(1),
-        result: None,
+        window_id: main_window_id, // Use the actual window_id
+        result: None,              // Dialog cancelled
     });
 
-    assert!(cmds.is_empty());
+    // Expect one command: UpdateStatusBarText
+    assert_eq!(
+        cmds.len(),
+        1,
+        "Expected one command for status bar update on cancel"
+    );
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText {
+            window_id: cmd_win_id,
+            text,
+            is_error,
+        } => {
+            assert_eq!(*cmd_win_id, main_window_id);
+            assert_eq!(*text, "Save archive cancelled.");
+            assert_eq!(*is_error, false);
+        }
+        _ => panic!("Expected UpdateStatusBarText command, got {:?}", cmds[0]),
+    }
+
     assert_eq!(*logic.test_pending_archive_content(), None);
     assert!(logic.test_pending_action().is_none());
 }
@@ -917,11 +956,32 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
     let (mut logic, _, _, _, _mock_archiver, _mock_state_manager) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::SavingProfile);
 
+    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id
+
     let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: WindowId(1),
-        result: None,
+        window_id: main_window_id, // Use the actual window_id
+        result: None,              // Dialog cancelled
     });
-    assert!(cmds.is_empty());
+
+    // Expect one command: UpdateStatusBarText
+    assert_eq!(
+        cmds.len(),
+        1,
+        "Expected one command for status bar update on profile save cancel"
+    );
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText {
+            window_id: cmd_win_id,
+            text,
+            is_error,
+        } => {
+            assert_eq!(*cmd_win_id, main_window_id);
+            assert_eq!(*text, "Save profile cancelled.");
+            assert_eq!(*is_error, false);
+        }
+        _ => panic!("Expected UpdateStatusBarText command, got {:?}", cmds[0]),
+    }
+
     assert!(logic.test_pending_action().is_none());
 }
 

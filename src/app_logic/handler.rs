@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002;
 // Made pub(crate) for access from handler_tests.rs
-pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePackerApp";
+pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 
 type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 

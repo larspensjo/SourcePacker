@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 fn main() -> PlatformResult<()> {
     println!("Application Starting...");
 
-    let platform_interface = match PlatformInterface::new("SourcePackerApp".to_string()) {
+    let platform_interface = match PlatformInterface::new("SourcePacker".to_string()) {
         Ok(pi) => pi,
         Err(e) => {
             eprintln!("Fatal: Failed to initialize the platform layer: {:?}", e);
