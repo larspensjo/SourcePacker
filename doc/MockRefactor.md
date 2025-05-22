@@ -184,19 +184,6 @@ This direct file operation will remain until `ProfileManagerOperations` is fully
 
 ## Phase 5: Future Tasks & Considerations:
 
-0.1.  **Cleanup Deprecated Free Functions:**
-    - Now that all `core` module interactions in `MyAppLogic` are through traits, the `#[deprecated]` free functions in `core/archiver.rs`, `core/state_manager.rs`, `core/file_system.rs`, `core/profiles.rs`, and `core/config.rs` can be fully removed along with their re-exports in `core/mod.rs` if they are not used anywhere else. This will clean up the `core` API.
-
-0.2  **Comprehensive Tests for `MyAppLogic` with `MockStateManager`:**
-    *   Specifically, test how `MyAppLogic` behaves when `MockStateManager.apply_profile_to_tree` or `MockStateManager.update_folder_selection` are called, and verify the resulting `PlatformCommand`s and internal state of `MyAppLogic` (e.g., `current_archive_status` changes based on new selection states).
-    *   Since the `MockStateManager` currently also performs the state modification, tests implicitly cover some of this. However, if the mock were to *only* record calls (without modifying the tree), tests would need to ensure `MyAppLogic` still behaves correctly based on the *assumption* that the state manager did its job.
-
-0.3.  **Review `ImproveTestingHandle.md`:**
-    - With all core dependencies now mockable, revisit `ImproveTestingHandle.md` to implement more comprehensive unit tests for `MyAppLogic`, especially focusing on error paths and complex interaction scenarios as outlined in "Phase 2: Implementing New, Comprehensive Unit Tests" of that document. For example:
-        - Test `ID_BUTTON_GENERATE_ARCHIVE_LOGIC` when `mock_archiver.create_archive_content` returns an `Err`.
-        - Test `FileSaveDialogCompleted` for `PendingAction::SavingArchive` when `mock_archiver.save_archive_content` returns an `Err`.
-        - Test scenarios where `mock_archiver.check_archive_status` returns different `ArchiveStatus` values and verify `MyAppLogic`'s internal state and generated `PlatformCommand`s.
-
 1.  **Refactor `FileOpenDialogCompleted` for Profile Loading:**
     *   The `AppEvent::FileOpenDialogCompleted` handler in `MyAppLogic` still directly opens and deserializes profile files (`File::open`, `serde_json::from_reader`).
     *   To fully align with the DI pattern for profile loading, consider adding a method like `load_profile_from_path(&self, path: &Path) -> Result<Profile, ProfileError>` to the `ProfileManagerOperations` trait.
