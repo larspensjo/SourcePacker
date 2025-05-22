@@ -190,9 +190,6 @@ This direct file operation will remain until `ProfileManagerOperations` is fully
     *   `MyAppLogic` would then call this trait method. `CoreProfileManager` would implement the actual file I/O and deserialization for this new method.
     *   `MockProfileManager` would be updated to mock this new method, allowing tests to directly return a `Profile` or an error for a given path without needing `create_temp_profile_file_for_direct_load`.
 
-2.  **Refactor `core::archiver` and `core::state_manager`:**
-    *   Review if `core::archiver` functions (like `create_archive_content`, `check_archive_status`) and `core::state_manager` functions (like `apply_profile_to_tree`, `update_folder_selection`) should also be refactored to use traits and dependency injection if `MyAppLogic`'s direct calls to them make testing complex or involve significant side effects (though currently they seem mostly pure or use already-mockable inputs like `FileNode` trees). This is Phase 4 of `MockRefactor.md`.
-
 3.  **Comprehensive Error Handling Tests:**
     *   With mocks for all major `core` dependencies, expand tests in `handler_tests.rs` to cover various error scenarios:
         *   `MockFileSystemScanner` returns `Err(FileSystemError::Io(...))` or `Err(FileSystemError::InvalidPath(...))`.
