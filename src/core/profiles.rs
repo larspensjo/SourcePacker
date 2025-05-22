@@ -9,8 +9,11 @@ use std::path::{Path, PathBuf};
  * This module is responsible for managing user profiles. Profiles store user-specific
  * configurations, such as the root folder to monitor, selection states of files,
  * and associated archive paths. It provides mechanisms to save, load, and list
- * these profiles, abstracting the underlying storage (typically JSON files).
- * It includes a trait for profile operations to facilitate testing and dependency injection.
+ * these profiles, abstracting the underlying storage (typically JSON files in a
+ * local, non-roaming application-specific directory).
+ *
+ * It includes a trait for profile operations (`ProfileManagerOperations`) to facilitate
+ * testing and dependency injection, and a concrete implementation (`CoreProfileManager`).
  */
 
 pub const PROFILE_FILE_EXTENSION: &str = "json";
@@ -95,8 +98,8 @@ fn is_valid_profile_name_char(c: char) -> bool {
 pub trait ProfileManagerOperations: Send + Sync {
     /*
      * Loads a profile by its name for a given application.
-     * Implementations handle retrieving the profile from storage (e.g., a JSON file)
-     * and deserializing it.
+     * Implementations handle retrieving the profile from storage (e.g., a JSON file
+     * in the application's local configuration directory) and deserializing it.
      */
     fn load_profile(&self, profile_name: &str, app_name: &str) -> Result<Profile>;
 
@@ -110,20 +113,23 @@ pub trait ProfileManagerOperations: Send + Sync {
 
     /*
      * Saves a given profile for a specific application.
-     * Implementations handle serializing the profile and persisting it to storage.
+     * Implementations handle serializing the profile and persisting it to storage
+     * (e.g., as a JSON file in the application's local configuration directory).
      * The profile's name is typically used to derive the filename.
      */
     fn save_profile(&self, profile: &Profile, app_name: &str) -> Result<()>;
 
     /*
      * Lists the names of all available profiles for a given application.
-     * Implementations scan the profile storage location and return a list of
-     * discovered profile names (usually derived from filenames).
+     * Implementations scan the profile storage location (the application's local
+     * configuration directory) and return a list of discovered profile names
+     * (usually derived from filenames).
      */
     fn list_profiles(&self, app_name: &str) -> Result<Vec<String>>;
 
     /*
      * Retrieves the path to the directory where profiles for the given application are stored.
+     * This path is typically under the application's local configuration directory.
      * Returns `None` if the directory cannot be determined or created.
      */
     fn get_profile_dir_path(&self, app_name: &str) -> Option<PathBuf>;
@@ -133,25 +139,28 @@ pub trait ProfileManagerOperations: Send + Sync {
  * The core implementation of `ProfileManagerOperations`.
  * This struct handles the actual file system interactions for loading, saving,
  * and listing profiles, storing them as JSON files in a standard application
- * configuration directory.
+ * local (non-roaming) configuration directory, under a "profiles" subfolder.
+ * It does not use an additional organization-level sub-folder.
  */
 pub struct CoreProfileManager {}
 
 impl CoreProfileManager {
     /*
      * Creates a new instance of `CoreProfileManager`.
-     * This constructor doesn't require any parameters as the manager typically
-     * derives paths dynamically based on the application name passed to its methods.
      */
     pub fn new() -> Self {
         CoreProfileManager {}
     }
 
-    // Private helper that was the old get_profile_dir
+    /*
+     * Retrieves the storage directory for profiles of a given application.
+     * This is a private helper method. The path is `%LOCALAPPDATA%/<app_name>/profiles/`.
+     * It ensures the directory exists, creating it if necessary.
+     */
     fn _get_profile_storage_dir(app_name: &str) -> Option<PathBuf> {
-        ProjectDirs::from("com", "SourcePackerOrg", app_name)
+        ProjectDirs::from("", "", app_name) // Use empty qualifier and organization
             .map(|proj_dirs| {
-                let profiles_path = proj_dirs.config_dir().join("profiles");
+                let profiles_path = proj_dirs.config_local_dir().join("profiles"); // Use config_local_dir
                 if !profiles_path.exists() {
                     if let Err(e) = fs::create_dir_all(&profiles_path) {
                         eprintln!(
@@ -174,11 +183,6 @@ impl Default for CoreProfileManager {
 }
 
 impl ProfileManagerOperations for CoreProfileManager {
-    /*
-     * Loads a profile by its name for a given application from a JSON file.
-     * The profile name is sanitized to form the filename. It reads from the
-     * standard profile directory.
-     */
     fn load_profile(&self, profile_name: &str, app_name: &str) -> Result<Profile> {
         if profile_name.trim().is_empty() || !profile_name.chars().all(is_valid_profile_name_char) {
             return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
@@ -199,23 +203,13 @@ impl ProfileManagerOperations for CoreProfileManager {
         Ok(profile)
     }
 
-    /*
-     * Loads a profile from a specific file path.
-     * This method directly attempts to open and deserialize a profile from the given `path`.
-     * It's used when a user selects a specific profile file, bypassing the standard
-     * profile directory and naming conventions.
-     */
     fn load_profile_from_path(&self, path: &Path) -> Result<Profile> {
-        let file = File::open(path)?; // Propagates io::Error as ProfileError::Io
+        let file = File::open(path)?;
         let reader = BufReader::new(file);
-        let profile: Profile = serde_json::from_reader(reader)?; // Propagates serde_json::Error as ProfileError::Serde
+        let profile: Profile = serde_json::from_reader(reader)?;
         Ok(profile)
     }
 
-    /*
-     * Saves a profile to a JSON file within the standard profile directory.
-     * The profile's name is sanitized to form the filename.
-     */
     fn save_profile(&self, profile: &Profile, app_name: &str) -> Result<()> {
         if profile.name.trim().is_empty() || !profile.name.chars().all(is_valid_profile_name_char) {
             return Err(ProfileError::InvalidProfileName(profile.name.clone()));
@@ -232,14 +226,10 @@ impl ProfileManagerOperations for CoreProfileManager {
         Ok(())
     }
 
-    /*
-     * Lists the names of all available profiles from the standard profile directory.
-     * Profile names are derived from the filenames (excluding the .json extension).
-     */
     fn list_profiles(&self, app_name: &str) -> Result<Vec<String>> {
         let dir = match CoreProfileManager::_get_profile_storage_dir(app_name) {
             Some(d) => d,
-            None => return Ok(Vec::new()), // If no dir, no profiles
+            None => return Ok(Vec::new()),
         };
 
         let mut profile_names = Vec::new();
@@ -250,7 +240,6 @@ impl ProfileManagerOperations for CoreProfileManager {
                 if path.is_file() {
                     if let Some(ext) = path.extension() {
                         if ext == PROFILE_FILE_EXTENSION {
-                            // Use the file stem as the profile name, which is what users expect
                             if let Some(stem) = path.file_stem() {
                                 profile_names.push(stem.to_string_lossy().into_owned());
                             }
@@ -263,10 +252,6 @@ impl ProfileManagerOperations for CoreProfileManager {
         Ok(profile_names)
     }
 
-    /*
-     * Retrieves the path to the directory where profiles for the given application are stored.
-     * This uses the same internal logic as load/save operations.
-     */
     fn get_profile_dir_path(&self, app_name: &str) -> Option<PathBuf> {
         CoreProfileManager::_get_profile_storage_dir(app_name)
     }
@@ -279,7 +264,6 @@ mod profile_tests {
     use std::fs;
     use tempfile::TempDir;
 
-    // Helper to get a TestProfileManager instance that uses a temporary directory
     struct TestProfileManager {
         mock_profile_dir: PathBuf,
     }
@@ -313,15 +297,6 @@ mod profile_tests {
         }
 
         fn load_profile_from_path(&self, path: &Path) -> Result<Profile> {
-            // For mock, we assume path is valid and directly try to load.
-            // More sophisticated mock might check if path is within its mock_profile_dir,
-            // or have specific paths pre-configured to return specific profiles or errors.
-            // For this test setup, simple pass-through to actual file ops is okay IF
-            // the test using this mock ensures the file exists.
-            // However, a true mock should not do real file I/O.
-            // Let's simulate by checking a predefined map or returning a default/error.
-            // For now, to keep it simple for the refactor, and assuming tests will
-            // setup any files needed by this mock's passthrough:
             let file = File::open(path)?;
             let reader = BufReader::new(file);
             serde_json::from_reader(reader).map_err(ProfileError::from)
@@ -375,7 +350,7 @@ mod profile_tests {
         let dir_opt = manager.get_profile_dir_path(&temp_app_name);
         assert!(dir_opt.is_some(), "Profile directory should be determined");
 
-        let dir_path = dir_opt.unwrap();
+        let dir_path = dir_opt.unwrap(); // This is <LOCALAPPDATA>/<app_name>/profiles
         assert!(
             dir_path.exists(),
             "Profile directory should be created: {:?}",
@@ -384,44 +359,81 @@ mod profile_tests {
         assert!(dir_path.is_dir(), "{:?} should be a directory", dir_path);
         assert_eq!(
             dir_path.file_name().unwrap_or_default(),
-            "profiles", // &OsStr
+            "profiles",
             "Path should end with 'profiles' segment. Path was: {:?}",
             dir_path
         );
+
+        // The parent of "profiles" should be the directory returned by config_local_dir()
+        // which for ProjectDirs::from("", "", app_name) is typically <LOCALAPPDATA>/<app_name>
+        // or <LOCALAPPDATA>/<app_name>/config or similar.
         if let Some(parent_of_profiles) = dir_path.parent() {
-            assert_eq!(parent_of_profiles.file_name().unwrap_or_default(), "config"); // &OsStr
-            if let Some(parent_of_config) = parent_of_profiles.parent() {
-                assert_eq!(
-                    parent_of_config
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_str()
-                        .unwrap(), // Convert &OsStr to &str
-                    temp_app_name // String, comparison with &str is fine
+            // `parent_of_profiles` is the path returned by `config_local_dir()`
+            // For ProjectDirs::from("", "", app_name) on Windows, this is typically:
+            // C:\Users\<user>\AppData\Local\<app_name>\
+            // OR C:\Users\<user>\AppData\Local\<app_name>\config
+            // The key is that `temp_app_name` should be a segment in this path.
+            let parent_of_profiles_str = parent_of_profiles.to_string_lossy();
+            assert!(
+                parent_of_profiles_str.contains(&temp_app_name),
+                "The parent directory of 'profiles' ({:?}) should contain the app name '{}'",
+                parent_of_profiles,
+                temp_app_name
+            );
+
+            assert!(
+                !parent_of_profiles_str.contains("SourcePackerOrg"),
+                "Path should not contain 'SourcePackerOrg'. Path was: {:?}",
+                parent_of_profiles_str
+            );
+
+            // Verify it's generally in AppData/Local (platform dependent check)
+            if cfg!(windows) {
+                assert!(
+                    parent_of_profiles_str
+                        .to_lowercase()
+                        .contains("appdata\\local"),
+                    "Path should be under AppData\\Local on Windows. Path was: {:?}",
+                    parent_of_profiles_str
                 );
-                if let Some(org_level_dir) = parent_of_config.parent() {
-                    assert_eq!(
-                        org_level_dir.file_name().unwrap_or_default(),
-                        "SourcePackerOrg"
-                    ); // &OsStr
-                } // else panic! - omitted for brevity
-            } // else panic!
-        } // else panic!
+            } else if cfg!(target_os = "macos") {
+                // Example for macOS: ~/Library/Application Support/<app_name>
+                // or ~/Library/Caches/<app_name> if data_local_dir() was used
+                // config_local_dir() on macOS is typically ~/Library/Application Support/<bundle_id or app_name>
+                assert!(
+                    parent_of_profiles_str.contains("Library/Application Support")
+                        || parent_of_profiles_str.contains("Library/Preferences"),
+                    "Path on macOS should be under Library/Application Support or Preferences. Path was: {:?}",
+                    parent_of_profiles_str
+                );
+            } else if cfg!(unix) {
+                // Example for Linux: ~/.config/<app_name> or ~/.local/share/<app_name>
+                assert!(
+                    parent_of_profiles_str.contains(".config")
+                        || parent_of_profiles_str.contains(".local/share"),
+                    "Path on Linux should be under .config or .local/share. Path was: {:?}",
+                    parent_of_profiles_str
+                );
+            }
+        } else {
+            panic!(
+                "'profiles' directory ({:?}) should have a parent.",
+                dir_path
+            );
+        }
 
         // Cleanup
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &temp_app_name) {
-            // Attempt to remove the "SourcePackerOrg" directory, which is the grandparent of the profile dir
-            if let Some(app_specific_dir) = proj_dirs.config_dir().parent() {
-                // This is <org_name>/<app_name>
-                if let Some(org_dir) = app_specific_dir.parent() {
-                    // This is <org_name>
-                    if org_dir.exists()
-                        && org_dir
-                            .file_name()
-                            .map_or(false, |name| name == "SourcePackerOrg")
-                    {
-                        let _ = fs::remove_dir_all(org_dir);
-                    }
+        if let Some(proj_dirs) = ProjectDirs::from("", "", &temp_app_name) {
+            // The directory to remove is the one returned by config_local_dir()
+            // because "profiles" is a subdirectory within it.
+            let app_base_config_local_dir = proj_dirs.config_local_dir();
+            if app_base_config_local_dir.exists() {
+                if let Err(e) = fs::remove_dir_all(app_base_config_local_dir) {
+                    eprintln!(
+                        "Test cleanup failed for {:?}: {}",
+                        proj_dirs.config_local_dir(),
+                        e
+                    );
                 }
             }
         }
@@ -430,9 +442,9 @@ mod profile_tests {
     #[test]
     fn test_save_and_load_profile_with_test_manager() -> Result<()> {
         let temp_dir_obj = TempDir::new().expect("Failed to create temp dir for test");
-        let manager = TestProfileManager::new(&temp_dir_obj); // Use TestProfileManager
+        let manager = TestProfileManager::new(&temp_dir_obj);
 
-        let app_name_for_test = "TestAppWithMockDir"; // app_name is illustrative for TestProfileManager
+        let app_name_for_test = "TestAppWithMockDir";
         let profile_name = "My Mocked Profile".to_string();
         let root = PathBuf::from("/mock/project");
         let mut selected = HashSet::new();
@@ -475,10 +487,8 @@ mod profile_tests {
             archive_path: None,
         };
 
-        // Save it first using the manager to ensure it's in the mock_profile_dir
         manager.save_profile(&profile_to_save, app_name_for_test)?;
 
-        // Construct the path it would have been saved to
         let sanitized_filename = sanitize_profile_name(&profile_name);
         let direct_path = manager
             .mock_profile_dir
@@ -514,15 +524,14 @@ mod profile_tests {
 
         let mut listed_names = manager.list_profiles(app_name_for_test)?;
 
-        // CORRECTED: list_profiles returns names derived from the sanitized file stems.
         let mut expected_sanitized_names: Vec<String> = profiles_to_create
             .iter()
-            .map(|s| sanitize_profile_name(s)) // Expect the sanitized names
+            .map(|s| sanitize_profile_name(s))
             .collect();
 
         listed_names.sort_unstable();
         expected_sanitized_names.sort_unstable();
-        assert_eq!(listed_names, expected_sanitized_names); // This should now pass
+        assert_eq!(listed_names, expected_sanitized_names);
         Ok(())
     }
     #[test]
@@ -575,7 +584,7 @@ mod profile_tests {
         assert_eq!(
             sanitize_profile_name("  LeadingTrailingSpaces  "),
             "LeadingTrailingSpaces"
-        ); // Note: original sanitize doesn't trim spaces, but file stem might
+        );
         assert_eq!(sanitize_profile_name("file.with.dots"), "filewithdots");
     }
 }

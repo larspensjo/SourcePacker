@@ -156,6 +156,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
 ## P2.11: General Cleanup and Refinements
+*   There is one _get_app_config_dir and one _get_profile_storage_dir. They have duplicate functionality. Consider consolidating them.
 *   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component)
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]`
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.

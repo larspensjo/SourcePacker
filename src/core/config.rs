@@ -6,16 +6,20 @@ use std::path::PathBuf;
 const LAST_PROFILE_FILENAME: &str = "last_profile_name.txt";
 
 /*
- * Manages application configuration, such as the last used profile name.
- * It defines errors related to configuration, provides a concrete implementation
- * (`CoreConfigManager`) for configuration operations, and a trait (`ConfigManagerOperations`)
- * for abstracting these operations, facilitating testability and dependency injection.
+ * Manages application-specific configuration settings, such as the name of the
+ * last used profile. This module defines how these settings are persisted and
+ * retrieved, abstracting the underlying storage mechanism (typically files in a
+ * standard user directory).
+ *
+ * It uses a trait-based approach (`ConfigManagerOperations`) to allow for
+ * different storage backends or mock implementations for testing. The primary
+ * concrete implementation (`CoreConfigManager`) handles file system interactions.
  */
 
 /*
  * Defines custom error types for application configuration management.
  * This enum centralizes error handling for reading or writing configuration files,
- * such as the last used profile name.
+ * such as the last used profile name, providing specific error contexts.
  */
 #[derive(Debug)]
 pub enum ConfigError {
@@ -69,16 +73,16 @@ pub type Result<T> = std::result::Result<T, ConfigError>;
 pub trait ConfigManagerOperations: Send + Sync {
     /*
      * Loads the name of the last used profile for a given application.
-     * Implementations should handle storage retrieval (e.g., from a file) and return
-     * the profile name if found, or None if no last profile was saved. Errors during
-     * loading should be returned as `ConfigError`.
+     * Implementations should handle storage retrieval (e.g., from a file in the
+     * application's local configuration directory) and return the profile name
+     * if found, or `None` if no last profile was saved.
      */
     fn load_last_profile_name(&self, app_name: &str) -> Result<Option<String>>;
 
     /*
      * Saves the name of the last used profile for a given application.
-     * Implementations should handle persisting the profile name (e.g., to a file).
-     * Errors during saving should be returned as `ConfigError`.
+     * Implementations should handle persisting the profile name (e.g., to a file
+     * in the application's local configuration directory).
      */
     fn save_last_profile_name(&self, app_name: &str, profile_name: &str) -> Result<()>;
 }
@@ -87,28 +91,27 @@ pub trait ConfigManagerOperations: Send + Sync {
  * The core implementation of `ConfigManagerOperations`.
  * This struct handles the actual file system interactions for loading and saving
  * application configuration, such as the last used profile name, using standard
- * project directory locations.
+ * local (non-roaming) project directory locations without an organization sub-folder.
  */
 pub struct CoreConfigManager {}
 
 impl CoreConfigManager {
     /*
      * Creates a new instance of `CoreConfigManager`.
-     * This constructor doesn't require any parameters as the manager typically
-     * derives paths dynamically based on the application name passed to its methods.
      */
     pub fn new() -> Self {
         CoreConfigManager {}
     }
 
     /*
-     * Retrieves the application's primary configuration directory.
+     * Retrieves the application's primary local configuration directory.
      * This is a private helper method used by the load and save operations.
-     * It ensures the directory exists, creating it if necessary.
+     * It ensures the directory exists, creating it if necessary. The path
+     * will be under the user's local application data directory (e.g., AppData/Local).
      */
     fn _get_app_config_dir(&self, app_name: &str) -> Option<PathBuf> {
-        ProjectDirs::from("com", "SourcePackerOrg", app_name).and_then(|proj_dirs| {
-            let config_path = proj_dirs.config_dir();
+        ProjectDirs::from("", "", app_name).and_then(|proj_dirs| {
+            let config_path = proj_dirs.config_local_dir(); // Changed to config_local_dir
             if !config_path.exists() {
                 if let Err(e) = fs::create_dir_all(config_path) {
                     eprintln!(
@@ -230,36 +233,50 @@ mod tests {
     #[test]
     fn test_core_config_manager_save_and_load() {
         let dir = tempdir().unwrap();
-        // For CoreConfigManager, we can't directly mock ProjectDirs easily in this test,
-        // so this test will use the actual ProjectDirs logic but point it to a unique app_name.
-        // This is more of an integration test for CoreConfigManager with ProjectDirs.
-        // A more isolated unit test would require mocking ProjectDirs itself or using TestConfigManager.
         let unique_app_name = format!("TestApp_{}", rand::random::<u64>());
         let manager = CoreConfigManager::new();
         let profile_name = "MyManagedProfile";
 
-        // Test saving
         assert!(
             manager
                 .save_last_profile_name(&unique_app_name, profile_name)
                 .is_ok()
         );
 
-        // Test loading
         match manager.load_last_profile_name(&unique_app_name) {
             Ok(Some(loaded_name)) => assert_eq!(loaded_name, profile_name),
             Ok(None) => panic!("Expected to load a profile name, but got None."),
             Err(e) => panic!("Failed to load profile name: {:?}", e),
         }
 
-        // Cleanup the test app's config directory
-        if let Some(proj_dirs) = ProjectDirs::from("com", "SourcePackerOrg", &unique_app_name) {
-            let config_dir_to_remove = proj_dirs.config_dir();
-            if config_dir_to_remove.exists() {
-                if let Err(e) = fs::remove_dir_all(config_dir_to_remove) {
-                    eprintln!("Test cleanup failed for {:?}: {}", config_dir_to_remove, e);
+        // Verify path structure (basic check)
+        if let Some(proj_dirs) = ProjectDirs::from("", "", &unique_app_name) {
+            let config_local_dir = proj_dirs.config_local_dir();
+            assert!(config_local_dir.join(LAST_PROFILE_FILENAME).exists());
+            assert!(
+                config_local_dir
+                    .to_string_lossy()
+                    .contains(&unique_app_name)
+            );
+            assert!(
+                !config_local_dir
+                    .to_string_lossy()
+                    .contains("SourcePackerOrg")
+            );
+            assert!(config_local_dir.to_string_lossy().contains("Local")); // Check for AppData/Local part
+
+            // Cleanup the test app's config directory
+            if config_local_dir.exists() {
+                if let Err(e) = fs::remove_dir_all(config_local_dir) {
+                    eprintln!(
+                        "Test cleanup failed for {:?}: {}",
+                        proj_dirs.config_local_dir(),
+                        e
+                    );
                 }
             }
+        } else {
+            panic!("Could not get ProjectDirs for cleanup and path verification.");
         }
     }
 
@@ -267,18 +284,16 @@ mod tests {
     fn test_test_config_manager_save_and_load_last_profile_name() {
         let dir = tempdir().unwrap();
         let mock_dir_path = dir.path().to_path_buf();
-        let manager = TestConfigManager::new(mock_dir_path); // Uses the mocked path
+        let manager = TestConfigManager::new(mock_dir_path);
         let profile_name = "MyLastProfile";
-        let app_name = "AnyApp"; // app_name doesn't affect TestConfigManager's path
+        let app_name = "AnyApp";
 
-        // Test saving
         assert!(
             manager
                 .save_last_profile_name(app_name, profile_name)
                 .is_ok()
         );
 
-        // Test loading
         match manager.load_last_profile_name(app_name) {
             Ok(Some(loaded_name)) => assert_eq!(loaded_name, profile_name),
             Ok(None) => panic!("Expected to load a profile name, but got None."),
@@ -307,7 +322,6 @@ mod tests {
         let manager = TestConfigManager::new(mock_dir_path.clone());
         let app_name = "AnyApp";
 
-        // Create an empty file
         let file_path = mock_dir_path.join(LAST_PROFILE_FILENAME);
         File::create(&file_path).unwrap();
 
@@ -327,14 +341,12 @@ mod tests {
         let first_profile_name = "OldProfile";
         let second_profile_name = "NewProfile";
 
-        // Save first name
         manager
             .save_last_profile_name(app_name, first_profile_name)
             .unwrap();
         let loaded_name1 = manager.load_last_profile_name(app_name).unwrap().unwrap();
         assert_eq!(loaded_name1, first_profile_name);
 
-        // Save second name (should overwrite)
         manager
             .save_last_profile_name(app_name, second_profile_name)
             .unwrap();
