@@ -9,8 +9,8 @@ pub mod state_manager;
  * This module consolidates the core, platform-agnostic logic of the application.
  * It re-exports key data structures and core functionalities (including abstractions
  * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
- * and `ArchiverOperations`) for file system operations, profile management,
- * configuration, and archiving.
+ * `ArchiverOperations`, and `StateManagerOperations`) for file system operations,
+ * profile management, configuration, archiving, and state management.
  */
 
 // Re-export key structures and enums
@@ -65,7 +65,7 @@ pub use archiver::create_archive_content;
     note = "Please use `ArchiverOperations::get_file_timestamp` via an injected manager instance."
 )]
 pub use archiver::get_file_timestamp;
-pub use archiver::{ArchiverOperations, CoreArchiver}; // New exports
+pub use archiver::{ArchiverOperations, CoreArchiver};
 
 // Re-export config related items
 #[deprecated(
@@ -82,4 +82,15 @@ pub use config::{
     ConfigError, ConfigManagerOperations, CoreConfigManager as CoreConfigManagerForConfig,
 };
 
-pub use state_manager::{apply_profile_to_tree, update_folder_selection};
+// Re-export state_manager related items
+#[deprecated(
+    since = "0.1.2",
+    note = "Please use `StateManagerOperations::apply_profile_to_tree` via an injected manager instance."
+)]
+pub use state_manager::apply_profile_to_tree;
+#[deprecated(
+    since = "0.1.2",
+    note = "Please use `StateManagerOperations::update_folder_selection` via an injected manager instance."
+)]
+pub use state_manager::update_folder_selection;
+pub use state_manager::{CoreStateManager, StateManagerOperations}; // New exports

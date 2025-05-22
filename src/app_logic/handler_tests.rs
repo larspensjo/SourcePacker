@@ -386,12 +386,14 @@ impl ArchiverOperations for MockArchiver {
 }
 // --- End MockArchiver ---
 
+// Instantiate a MyAppLogic with all mocks.
+// Return it, and the mocks to make it possible for tests to test.
 fn setup_logic_with_mocks() -> (
     MyAppLogic,
     Arc<MockConfigManager>,
     Arc<MockProfileManager>,
     Arc<MockFileSystemScanner>,
-    Arc<MockArchiver>, // New return from step 1.5
+    Arc<MockArchiver>,
 ) {
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
