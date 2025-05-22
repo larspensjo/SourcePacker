@@ -19,6 +19,13 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 use tempfile::{NamedTempFile, tempdir};
 
+/*
+ * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
+ * It utilizes mock implementations of core dependencies (`ConfigManagerOperations`,
+ * `ProfileManagerOperations`, etc.) to isolate `MyAppLogic`'s behavior for testing.
+ * Tests focus on event handling, state transitions, command generation, and error paths.
+ */
+
 struct MockConfigManager {
     load_last_profile_name_result: Mutex<Result<Option<String>, ConfigError>>,
     saved_profile_name: Mutex<Option<(String, String)>>,
@@ -1081,6 +1088,15 @@ fn test_handle_window_destroyed_clears_main_window_id_and_state() {
     assert!(logic.test_current_archive_status().is_none());
     assert!(logic.test_file_nodes_cache().is_empty());
     assert!(logic.test_path_to_tree_item_id().is_empty());
+}
+
+#[test]
+fn test_on_quit_executes_without_panic() {
+    // Verifies that MyAppLogic::on_quit() can be called without panicking.
+    // Currently, on_quit only prints a message, so no further assertions are made.
+    // If on_quit evolves, this test should be expanded to verify its behavior.
+    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.on_quit(); // The test passes if this line does not panic.
 }
 
 fn make_test_tree_for_applogic() -> Vec<FileNode> {
