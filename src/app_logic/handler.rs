@@ -1,6 +1,7 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
     FileState, FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
+    StateManagerOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
@@ -28,8 +29,9 @@ pub(crate) enum PendingAction {
  * Manages the core application state and UI logic in a platform-agnostic manner.
  * It processes UI events received from the platform layer and generates commands
  * to update the UI. It depends on `ConfigManagerOperations` for app configuration,
- * `ProfileManagerOperations` for profile data, and `FileSystemScannerOperations`
- * for directory scanning.
+ * `ProfileManagerOperations` for profile data, `FileSystemScannerOperations`
+ * for directory scanning, `ArchiverOperations` for archiving, and
+ * `StateManagerOperations` for tree state management.
  */
 pub struct MyAppLogic {
     main_window_id: Option<WindowId>,
@@ -46,13 +48,15 @@ pub struct MyAppLogic {
     profile_manager: Arc<dyn ProfileManagerOperations>,
     file_system_scanner: Arc<dyn FileSystemScannerOperations>,
     archiver: Arc<dyn ArchiverOperations>,
+    state_manager: Arc<dyn StateManagerOperations>,
 }
 
 impl MyAppLogic {
     /*
      * Initializes a new instance of the application logic.
      * Requires implementations for `ConfigManagerOperations` (app config),
-     * `ProfileManagerOperations` (profile data), and `FileSystemScannerOperations` (directory scanning).
+     * `ProfileManagerOperations` (profile data), `FileSystemScannerOperations` (directory scanning),
+     * `ArchiverOperations` (archiving), and `StateManagerOperations` (tree state management).
      * Sets up default application states.
      */
     pub fn new(
@@ -60,6 +64,7 @@ impl MyAppLogic {
         profile_manager: Arc<dyn ProfileManagerOperations>,
         file_system_scanner: Arc<dyn FileSystemScannerOperations>,
         archiver: Arc<dyn ArchiverOperations>,
+        state_manager: Arc<dyn StateManagerOperations>,
     ) -> Self {
         MyAppLogic {
             main_window_id: None,
@@ -76,6 +81,7 @@ impl MyAppLogic {
             profile_manager,
             file_system_scanner,
             archiver,
+            state_manager,
         }
     }
 
@@ -186,7 +192,7 @@ impl MyAppLogic {
         );
 
         match self
-            .file_system_scanner // Use the injected scanner
+            .file_system_scanner
             .scan_directory(&self.root_path_for_scan)
         {
             Ok(nodes) => {
@@ -198,8 +204,11 @@ impl MyAppLogic {
 
                 if loaded_profile_on_startup {
                     if let Some(profile) = &self.current_profile_cache {
-                        core::apply_profile_to_tree(&mut self.file_nodes_cache, profile);
-                        println!("AppLogic: Applied loaded profile to the scanned tree.");
+                        self.state_manager
+                            .apply_profile_to_tree(&mut self.file_nodes_cache, profile);
+                        println!(
+                            "AppLogic: Applied loaded profile to the scanned tree via state_manager."
+                        );
                     }
                 }
             }
@@ -302,7 +311,6 @@ impl MyAppLogic {
 
     fn update_current_archive_status(&mut self) {
         if let Some(profile) = &self.current_profile_cache {
-            // Use the injected archiver
             let status = self
                 .archiver
                 .check_archive_status(profile, &self.file_nodes_cache);
@@ -395,7 +403,6 @@ impl MyAppLogic {
             self.file_nodes_cache.clear();
             self.path_to_tree_item_id.clear();
         }
-        // This event typically does not generate new commands for the platform.
         Vec::new()
     }
 
@@ -421,7 +428,6 @@ impl MyAppLogic {
 
         if let Some(path_for_model_update) = path_of_toggled_node {
             {
-                // Scope for mutable borrow of self.file_nodes_cache
                 let node_to_update_model_for =
                     Self::find_filenode_mut(&mut self.file_nodes_cache, &path_for_model_update);
 
@@ -430,16 +436,16 @@ impl MyAppLogic {
                         CheckState::Checked => FileState::Selected,
                         CheckState::Unchecked => FileState::Deselected,
                     };
-                    core::state_manager::update_folder_selection(node_model, new_model_file_state);
+                    self.state_manager
+                        .update_folder_selection(node_model, new_model_file_state);
                 } else {
                     eprintln!(
                         "AppLogic: Model node not found for path {:?} to update state.",
                         path_for_model_update
                     );
                 }
-            } // End scope for mutable borrow
+            }
 
-            // Now, get a read reference for visual updates
             if let Some(root_node_for_visual_update) =
                 Self::find_filenode_ref(&self.file_nodes_cache, &path_for_model_update)
             {
@@ -489,7 +495,6 @@ impl MyAppLogic {
                 |p| p.root_folder.clone(),
             );
 
-            // Use the injected archiver
             match self
                 .archiver
                 .create_archive_content(&self.file_nodes_cache, &display_root_path)
@@ -498,7 +503,6 @@ impl MyAppLogic {
                     self.pending_archive_content = Some(content);
                     self.pending_action = Some(PendingAction::SavingArchive);
 
-                    // ... (dialog setup logic remains the same)
                     let default_filename = self
                         .current_profile_cache
                         .as_ref()
@@ -595,7 +599,7 @@ impl MyAppLogic {
                         {
                             Ok(nodes) => {
                                 self.file_nodes_cache = nodes;
-                                core::apply_profile_to_tree(
+                                self.state_manager.apply_profile_to_tree(
                                     &mut self.file_nodes_cache,
                                     &loaded_profile,
                                 );
@@ -611,7 +615,6 @@ impl MyAppLogic {
                                     commands.push(cmd);
                                 }
                                 self.current_archive_status = None;
-                                // Consider adding a PlatformCommand to show an error to the user
                             }
                         }
                     }
@@ -623,7 +626,6 @@ impl MyAppLogic {
                         self.current_profile_name = None;
                         self.current_profile_cache = None;
                         self.current_archive_status = None;
-                        // Consider adding a PlatformCommand to show an error to the user
                     }
                 }
             } else {
@@ -671,7 +673,6 @@ impl MyAppLogic {
                     if let Some(path) = result {
                         if let Some(content) = self.pending_archive_content.take() {
                             println!("AppLogic: Saving archive to {:?}", path);
-                            // Use the injected archiver to save content
                             match self.archiver.save_archive_content(&path, &content) {
                                 Ok(_) => {
                                     println!("AppLogic: Successfully saved archive to {:?}", path);
@@ -697,7 +698,6 @@ impl MyAppLogic {
                                         "AppLogic: Failed to write archive to {:?}: {}",
                                         path, e
                                     );
-                                    // Consider adding a PlatformCommand to show an error
                                 }
                             }
                         } else {
@@ -705,7 +705,7 @@ impl MyAppLogic {
                         }
                     } else {
                         println!("AppLogic: Save archive dialog cancelled.");
-                        self.pending_archive_content = None; // Ensure cleared if dialog cancelled
+                        self.pending_archive_content = None;
                     }
                 }
                 Some(PendingAction::SavingProfile) => {
@@ -755,16 +755,13 @@ impl MyAppLogic {
                                             "AppLogic: Failed to save profile (via manager) as '{}': {}",
                                             new_profile.name, e
                                         );
-                                        // Consider adding a PlatformCommand to show an error
                                     }
                                 }
                             } else {
                                 eprintln!("AppLogic: Profile save filename stem not valid UTF-8");
-                                // Consider adding a PlatformCommand to show an error
                             }
                         } else {
                             eprintln!("AppLogic: Could not extract profile name from save path");
-                            // Consider adding a PlatformCommand to show an error
                         }
                     } else {
                         println!("AppLogic: Save profile dialog cancelled.");
@@ -774,7 +771,7 @@ impl MyAppLogic {
                     eprintln!(
                         "AppLogic: FileSaveDialogCompleted received but no pending action was set."
                     );
-                    self.pending_archive_content = None; // Defensive clear
+                    self.pending_archive_content = None;
                 }
             }
         }
@@ -783,12 +780,10 @@ impl MyAppLogic {
 
     fn handle_window_resized(
         &mut self,
-        _window_id: WindowId, // Parameters received but not used yet
+        _window_id: WindowId,
         _width: i32,
         _height: i32,
     ) -> Vec<PlatformCommand> {
-        // Logic for WindowResized, if any, would go here.
-        // For now, it does nothing and returns no commands.
         Vec::new()
     }
 }
@@ -939,7 +934,6 @@ impl MyAppLogic {
         self.profile_manager = v;
     }
 
-    // New test helper for file_system_scanner
     pub(crate) fn test_file_system_scanner(&self) -> &Arc<dyn FileSystemScannerOperations> {
         &self.file_system_scanner
     }
@@ -947,11 +941,17 @@ impl MyAppLogic {
         self.file_system_scanner = v;
     }
 
-    // New test helper for archiver
     pub(crate) fn test_archiver(&self) -> &Arc<dyn ArchiverOperations> {
         &self.archiver
     }
     pub(crate) fn test_set_archiver(&mut self, v: Arc<dyn ArchiverOperations>) {
         self.archiver = v;
+    }
+
+    pub(crate) fn test_state_manager(&self) -> &Arc<dyn StateManagerOperations> {
+        &self.state_manager
+    }
+    pub(crate) fn test_set_state_manager(&mut self, v: Arc<dyn StateManagerOperations>) {
+        self.state_manager = v;
     }
 }

@@ -5,7 +5,10 @@ mod core;
 mod platform_layer;
 
 use app_logic::handler::MyAppLogic;
-use core::{CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager};
+use core::{
+    CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
+    CoreStateManager,
+};
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
 use std::sync::{Arc, Mutex};
 
@@ -25,17 +28,19 @@ fn main() -> PlatformResult<()> {
     let core_profile_manager = Arc::new(CoreProfileManager::new());
     let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new());
     let core_archiver = Arc::new(CoreArchiver::new());
+    let core_state_manager = Arc::new(CoreStateManager::new());
 
     let mut my_app_logic = MyAppLogic::new(
         core_config_manager,
         core_profile_manager,
         core_file_system_scanner,
         core_archiver,
+        core_state_manager,
     );
     println!("Application logic initialized.");
 
     let main_window_config = WindowConfig {
-        title: "SourcePacker - Archiver Refactor",
+        title: "SourcePacker",
         width: 800,
         height: 600,
     };

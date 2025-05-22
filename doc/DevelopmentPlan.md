@@ -152,10 +152,10 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   Run `check_archive_status` (P1.6). `[ArchiveSyncNotifyUserV1]`
     *   Update status bar and any other relevant UI.
 
-## P2.10: (Old P2.7) AppEvent.Execute Refactoring Discussion
+## P2.10: AppEvent.Execute Refactoring Discussion
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
-## P2.11: (Old P2.8) General Cleanup and Refinements
+## P2.11: General Cleanup and Refinements
 *   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component)
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]`
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
