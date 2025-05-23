@@ -11,14 +11,11 @@ use windows::{
         },
         Graphics::Gdi::{
             BeginPaint, COLOR_WINDOW, COLOR_WINDOWTEXT, EndPaint, FillRect, GetSysColor,
-            GetSysColorBrush, HBRUSH, HDC, PAINTSTRUCT, SetBkMode, SetTextColor, TRANSPARENT,
+            GetSysColorBrush, HBRUSH, HDC, PAINTSTRUCT, ScreenToClient, SetBkMode, SetTextColor,
+            TRANSPARENT,
         },
         System::SystemServices::{IMAGE_DOS_HEADER, SS_LEFT},
-        UI::Controls::{
-            HTREEITEM, NM_CLICK, NMHDR, NMMOUSE, TVHITTESTINFO, TVHITTESTINFO_FLAGS,
-            TVHT_ONITEMRIGHT, TVHT_ONITEMSTATEICON, TVIF_PARAM, TVIF_STATE, TVIS_STATEIMAGEMASK,
-            TVITEMEXW, TVM_GETITEMW, TVM_HITTEST, TVN_ITEMCHANGEDW,
-        },
+        UI::Controls::*,
         UI::WindowsAndMessaging::*,
     },
     core::{BOOL, HSTRING, PCWSTR},
@@ -357,15 +354,25 @@ impl Win32ApiInternalState {
     fn get_tree_item_toggle_event(
         self: &Arc<Self>,
         window_id: WindowId,
-        h_item: HTREEITEM,
+        h_item: HTREEITEM, // This h_item comes from the WPARAM of WM_APP_TREEVIEW_CHECKBOX_CLICKED
     ) -> Option<AppEvent> {
+        eprintln!(
+            "Platform (get_tree_item_toggle_event): Received h_item: {:?}",
+            h_item
+        ); // ADD THIS
+
         let windows_guard = self.window_map.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
         let tv_state = window_data.treeview_state.as_ref()?;
 
+        eprintln!(
+            "Platform (get_tree_item_toggle_event): TreeView HWND: {:?}",
+            tv_state.hwnd
+        ); // ADD THIS
+
         let mut tv_item_get = TVITEMEXW {
             mask: TVIF_STATE | TVIF_PARAM,
-            hItem: h_item,
+            hItem: h_item, // Use the h_item passed into this function
             stateMask: TVIS_STATEIMAGEMASK.0,
             lParam: LPARAM(0),
             ..Default::default()
@@ -381,21 +388,63 @@ impl Win32ApiInternalState {
         };
 
         if get_item_result.0 == 0 {
+            // LRESULT is 0 on failure
+            eprintln!(
+                "Platform (get_tree_item_toggle_event): TVM_GETITEMW FAILED for h_item {:?}. Error: {:?}",
+                h_item,
+                unsafe { GetLastError() }
+            );
             return None;
         }
 
+        // ADD THESE LOGS:
+        eprintln!(
+            "Platform (get_tree_item_toggle_event): TVM_GETITEMW for h_item {:?} returned raw item state: {:#010X}, lParam: {}",
+            h_item, tv_item_get.state, tv_item_get.lParam.0
+        );
+
         let state_image_idx = (tv_item_get.state & TVIS_STATEIMAGEMASK.0) >> 12;
+        eprintln!(
+            "Platform (get_tree_item_toggle_event): Calculated state_image_idx: {}",
+            state_image_idx
+        );
+
         let new_check_state = if state_image_idx == 2 {
             CheckState::Checked
         } else {
             CheckState::Unchecked
         };
 
+        eprintln!(
+            "Platform (get_tree_item_toggle_event): Determined new_check_state: {:?}",
+            new_check_state
+        );
+
         let app_item_id_val = tv_item_get.lParam.0 as u64;
-        if app_item_id_val == 0 && !tv_state.htreeitem_to_item_id.contains_key(&(h_item.0)) {
-            return None;
+        let app_item_id: TreeItemId;
+
+        if app_item_id_val != 0 {
+            app_item_id = TreeItemId(app_item_id_val);
+            eprintln!(
+                "Platform (get_tree_item_toggle_event): AppItemId from lParam: {:?}",
+                app_item_id
+            );
+        } else {
+            // Fallback to map if lParam was 0 (should ideally not happen with current add_item logic)
+            if let Some(mapped_id) = tv_state.htreeitem_to_item_id.get(&(h_item.0)) {
+                app_item_id = *mapped_id;
+                eprintln!(
+                    "Platform (get_tree_item_toggle_event): AppItemId from htreeitem_to_item_id map: {:?}",
+                    app_item_id
+                );
+            } else {
+                eprintln!(
+                    "Platform (get_tree_item_toggle_event): AppItemId is 0 via lParam AND h_item {:?} not found in htreeitem_to_item_id map. Cannot create AppEvent.",
+                    h_item
+                );
+                return None;
+            }
         }
-        let app_item_id = TreeItemId(app_item_id_val);
 
         Some(AppEvent::TreeViewItemToggled {
             window_id,
@@ -648,77 +697,186 @@ impl Win32ApiInternalState {
 
     fn handle_wm_notify(
         self: &Arc<Self>,
-        hwnd: HWND,
+        hwnd: HWND, // HWND of the window that received WM_NOTIFY (parent of the control)
         _wparam: WPARAM,
         lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
         let nmhdr_ptr = lparam.0 as *const NMHDR;
         if nmhdr_ptr.is_null() {
+            eprintln!("Platform: WM_NOTIFY - NMHDR pointer (lParam) is null.");
             return None;
         }
         let nmhdr = unsafe { &*nmhdr_ptr };
 
-        if nmhdr.idFrom as i32 == control_treeview::ID_TREEVIEW_CTRL {
-            match nmhdr.code {
-                NM_CLICK => {
-                    let nmmouse_ptr = lparam.0 as *const NMMOUSE;
-                    if nmmouse_ptr.is_null() {
+        // Ensure the notification is from our TreeView control
+        if nmhdr.idFrom as i32 != control_treeview::ID_TREEVIEW_CTRL {
+            return None; // Notification not from TreeView, ignore here
+        }
+
+        match nmhdr.code {
+            NM_CLICK => {
+                println!("\nPlatform: NM_CLICK received for TreeView control.");
+                let hwnd_tv_from_notify = nmhdr.hwndFrom; // This is the HWND of the TreeView control itself
+
+                if hwnd_tv_from_notify.is_invalid() {
+                    eprintln!("Platform: NM_CLICK from invalid HWND in NMHDR (TreeView).");
+                    return None;
+                }
+
+                // --- Get Cursor Screen Position using GetCursorPos ---
+                let mut screen_pt_of_click = POINT::default();
+                unsafe {
+                    if GetCursorPos(&mut screen_pt_of_click).is_err() {
+                        eprintln!(
+                            "Platform: GetCursorPos FAILED for NM_CLICK. Error: {:?}",
+                            GetLastError()
+                        );
                         return None;
                     }
-                    let nmmouse = unsafe { &*nmmouse_ptr };
+                }
+                println!(
+                    "Platform: GetCursorPos reported screen coords: (x:{}, y:{})",
+                    screen_pt_of_click.x, screen_pt_of_click.y
+                );
 
-                    if let Some(windows_guard_for_click) = self.window_map.read().ok() {
-                        if let Some(window_data_for_click) = windows_guard_for_click.get(&window_id)
-                        {
-                            if let Some(ref tv_state_for_click) =
-                                window_data_for_click.treeview_state
-                            {
-                                let mut tvht_info = TVHITTESTINFO {
-                                    pt: nmmouse.pt,
-                                    flags: TVHITTESTINFO_FLAGS(0),
-                                    hItem: HTREEITEM(0),
-                                };
-                                let h_item_hit = HTREEITEM(
-                                    unsafe {
-                                        SendMessageW(
-                                            tv_state_for_click.hwnd,
-                                            TVM_HITTEST,
-                                            Some(WPARAM(0)),
-                                            Some(LPARAM(&mut tvht_info as *mut _ as isize)),
-                                        )
-                                    }
-                                    .0,
+                // --- ScreenToClient Transformation ---
+                let mut client_pt_for_hittest = screen_pt_of_click; // Copy for transformation
+                println!(
+                    "Platform: Values BEFORE ScreenToClient: treeview_hwnd={:?}, point_to_convert.x={}, point_to_convert.y={}",
+                    hwnd_tv_from_notify, client_pt_for_hittest.x, client_pt_for_hittest.y
+                );
+
+                let s2c_success = unsafe {
+                    ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest).as_bool()
+                };
+
+                if !s2c_success {
+                    eprintln!(
+                        "Platform: ScreenToClient FAILED for TreeView HWND {:?}. Error: {:?}",
+                        hwnd_tv_from_notify,
+                        unsafe { GetLastError() }
+                    );
+                    return None;
+                }
+                println!(
+                    "Platform: Values AFTER ScreenToClient (coords for HitTest): (x:{}, y:{})",
+                    client_pt_for_hittest.x, client_pt_for_hittest.y
+                );
+
+                // Proceed with hit-testing using client_pt_for_hittest
+                if let Some(windows_guard) = self.window_map.read().ok() {
+                    if let Some(window_data) = windows_guard.get(&window_id) {
+                        if let Some(ref tv_state) = window_data.treeview_state {
+                            if hwnd_tv_from_notify != tv_state.hwnd {
+                                eprintln!(
+                                    "Platform: NM_CLICK (TreeView) hwndFrom ({:?}) mismatch with cached tv_state.hwnd ({:?}). Aborting.",
+                                    hwnd_tv_from_notify, tv_state.hwnd
                                 );
-                                let state_click_mask = TVHT_ONITEMSTATEICON.0 | TVHT_ONITEMRIGHT.0;
-                                if h_item_hit.0 != 0 && (tvht_info.flags.0 & state_click_mask) != 0
-                                {
-                                    unsafe {
-                                        if PostMessageW(
-                                            Some(hwnd),
-                                            WM_APP_TREEVIEW_CHECKBOX_CLICKED,
-                                            WPARAM(h_item_hit.0 as usize),
-                                            LPARAM(0),
-                                        )
-                                        .is_err()
-                                        {
-                                            eprintln!("Failed to post checkbox click message.");
-                                        }
+                                return None;
+                            }
+
+                            let mut tvht_info = TVHITTESTINFO {
+                                pt: client_pt_for_hittest,
+                                flags: TVHITTESTINFO_FLAGS(0),
+                                hItem: HTREEITEM(0),
+                            };
+                            println!(
+                                "Platform: Hit testing TreeView {:?} at derived client coords (x:{}, y:{})",
+                                hwnd_tv_from_notify,
+                                client_pt_for_hittest.x,
+                                client_pt_for_hittest.y
+                            );
+                            let h_item_hit = HTREEITEM(
+                                unsafe {
+                                    SendMessageW(
+                                        hwnd_tv_from_notify,
+                                        TVM_HITTEST,
+                                        Some(WPARAM(0)),
+                                        Some(LPARAM(&mut tvht_info as *mut _ as isize)),
+                                    )
+                                }
+                                .0,
+                            );
+                            println!(
+                                "Platform: TVM_HITTEST on TreeView {:?} returned hItem: {:?}, flags: {:#X}",
+                                hwnd_tv_from_notify, h_item_hit, tvht_info.flags.0
+                            );
+
+                            if h_item_hit.0 != 0
+                                && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0
+                            {
+                                println!(
+                                    "Platform: Click on STATE ICON of hItem {:?}. Posting WM_APP_TREEVIEW_CHECKBOX_CLICKED.",
+                                    h_item_hit
+                                );
+                                unsafe {
+                                    if PostMessageW(
+                                        Some(hwnd), // Post to the main window
+                                        WM_APP_TREEVIEW_CHECKBOX_CLICKED,
+                                        WPARAM(h_item_hit.0 as usize),
+                                        LPARAM(0),
+                                    )
+                                    .is_err()
+                                    {
+                                        eprintln!("Platform: Failed to post checkbox‐clicked.");
                                     }
                                 }
+                            } else {
+                                // Detailed logging for non-state-icon clicks
+                                if h_item_hit.0 != 0 {
+                                    let mut flags_str = String::new();
+                                    if (tvht_info.flags.0 & TVHT_ONITEMLABEL.0) != 0 {
+                                        flags_str += "ONITEMLABEL ";
+                                    }
+                                    if (tvht_info.flags.0 & TVHT_ONITEMICON.0) != 0 {
+                                        flags_str += "ONITEMICON ";
+                                    }
+                                    // Add other TVHT_ flags as needed for debugging
+                                    println!(
+                                        "Platform: Click was NOT on state icon but on item {:?} (flags: {:#X} -> {}).",
+                                        h_item_hit,
+                                        tvht_info.flags.0,
+                                        flags_str.trim()
+                                    );
+                                } else {
+                                    println!(
+                                        "Platform: Click was NOT on state icon and NOT on any item (hItem: {:?}, flags: {:#X}).",
+                                        h_item_hit, tvht_info.flags.0
+                                    );
+                                }
                             }
+                        } else {
+                            eprintln!(
+                                "Platform: NM_CLICK - No TreeViewInternalState for window_id {:?}",
+                                window_id
+                            );
                         }
+                    } else {
+                        eprintln!(
+                            "Platform: NM_CLICK - No NativeWindowData for window_id {:?}",
+                            window_id
+                        );
                     }
-                    None
+                } else {
+                    eprintln!("Platform: NM_CLICK - Could not get read lock on window_map.");
                 }
-                TVN_ITEMCHANGEDW => control_treeview::handle_treeview_itemchanged_notification(
-                    self, window_id, lparam,
-                ),
-                _ => None,
+                return None; // NM_CLICK processing ends here for the TreeView
             }
-        } else {
-            None
+            TVN_ITEMCHANGEDW => {
+                // Handle TVN_ITEMCHANGEDW if needed (e.g., for selection changes not related to checkboxes)
+                // For now, it just calls your existing handler.
+                print!(
+                    "Platform: TVN_ITEMCHANGEDW window id {:?} lparam: {:?}\n",
+                    window_id, lparam
+                );
+                return control_treeview::handle_treeview_itemchanged_notification(
+                    self, window_id, lparam,
+                );
+            }
+            _ => { /* Other notification codes for the TreeView */ }
         }
+        None
     }
 
     fn handle_wm_app_treeview_checkbox_clicked(

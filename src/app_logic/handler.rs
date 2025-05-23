@@ -8,7 +8,6 @@ use crate::platform_layer::{
     WindowId,
 };
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -959,6 +958,42 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn on_quit(&mut self) {
         println!("AppLogic: on_quit called by platform. Application is exiting.");
+
+        let temp_name: Option<&str>;
+        if let Some(name_ref) = &self.current_profile_name {
+            temp_name = Some(name_ref.as_str());
+            println!("Debug: Matched Some: {}", temp_name.unwrap());
+        } else {
+            temp_name = Some(""); // Using Some("") to avoid direct use of "" in the next step
+            println!("Debug: Matched None, using empty string placeholder");
+        }
+
+        let profile_name_to_save = temp_name.unwrap_or(""); // Safely unwrap or provide default
+        println!("Debug: profile_name_to_save is '{}'", profile_name_to_save);
+
+        match self
+            .config_manager
+            .save_last_profile_name(APP_NAME_FOR_PROFILES, profile_name_to_save)
+        {
+            Ok(_) => {
+                if profile_name_to_save.is_empty() {
+                    println!("AppLogic: Successfully cleared last profile name in config on exit.");
+                } else {
+                    println!(
+                        "AppLogic: Successfully saved last active profile name '{}' to config on exit.",
+                        profile_name_to_save
+                    );
+                }
+            }
+            Err(e) => {
+                // Since we are quitting, there's not much to do other than log.
+                // The user won't see UI updates here.
+                eprintln!(
+                    "AppLogic: Error saving last profile name to config on exit: {:?}",
+                    e
+                );
+            }
+        }
     }
 }
 
