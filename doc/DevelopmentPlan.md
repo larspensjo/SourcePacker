@@ -155,6 +155,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   `handler.rs` and `handler_tests.rs` are big. Is it possible to separate them into smaller modules or files for easier maintenance and testing? If so, the tests should be moved back into the same file, removing the need for `pub(crate)` declarations.
 *   It seems to me that `handle_wm_create` is growing with hard coded functionality. Would it be better to control these through the command structure? That is, `window_common.rs` shouldn't manage the complete UI, only manage the individual components. That would be `on_main_window_created`? The question is, will this require a big refactor?
     *   **Decision:** For now, keep `handle_wm_create` for essential child controls like buttons/status bar defined at window creation. More dynamic content (like TreeView items) is already command-driven. Revisit if it becomes too unwieldy.
+*  Testing the `PlatformInterface::run()` loop: Testing the interaction between the `run()` loop and `MyAppLogic`'s command queue is more of an integration test. It might be beneficial to have some tests that simulate OS messages and verify that commands are dequeued and "executed" (perhaps via a mock `Win32ApiInternalState` for these tests).
 
 ## P2.12: Sophisticated Status Bar Control:**
 *   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.

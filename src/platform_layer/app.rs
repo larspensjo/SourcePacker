@@ -149,7 +149,7 @@ impl Win32ApiInternalState {
     /// Win32ApiInternalState::process_commands_from_event_handler.
     /// It takes `&Arc<Self>` because `process_commands_from_event_handler` might be called recursively.
     fn _handle_show_save_file_dialog_impl(
-        self: &Arc<Self>, // match how process_commands_from_event_handler is called
+        self: &Arc<Self>,
         window_id: WindowId,
         title: String,
         default_filename: String,
@@ -162,7 +162,7 @@ impl Win32ApiInternalState {
             Some(default_filename),
             filter_spec,
             initial_dir,
-            OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR, // Specific flags for save
+            OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR,
             |ofn_ptr| unsafe { GetSaveFileNameW(ofn_ptr) },
             |win_id, res_path| AppEvent::FileSaveDialogCompleted {
                 window_id: win_id,
@@ -184,7 +184,7 @@ impl Win32ApiInternalState {
             None,
             filter_spec,
             initial_dir,
-            OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR, // Specific flags for open
+            OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR,
             |ofn_ptr| unsafe { GetOpenFileNameW(ofn_ptr) },
             |win_id, res_path| AppEvent::FileOpenDialogCompleted {
                 window_id: win_id,
@@ -197,12 +197,12 @@ impl Win32ApiInternalState {
         self: &Arc<Self>,
         window_id: WindowId,
         title: String,
-        default_filename: Option<String>, // Used for pre-filling filename, primarily for save
+        default_filename: Option<String>,
         filter_spec: String,
         initial_dir: Option<PathBuf>,
-        specific_flags: OPEN_FILENAME_FLAGS, // Dialog-specific flags (e.g., OFN_OVERWRITEPROMPT)
-        dialog_fn: FDialog, // The actual Win32 dialog function (GetSaveFileNameW or GetOpenFileNameW)
-        event_constructor: FEvent, // Closure to construct the appropriate AppEvent
+        specific_flags: OPEN_FILENAME_FLAGS,
+        dialog_fn: FDialog,
+        event_constructor: FEvent,
     ) -> PlatformResult<()>
     where
         FDialog: FnOnce(&mut OPENFILENAMEW) -> windows::core::BOOL,
@@ -214,17 +214,13 @@ impl Win32ApiInternalState {
         if let Some(fname) = default_filename {
             if !fname.is_empty() {
                 let default_name_utf16: Vec<u16> = fname.encode_utf16().collect();
-                // Ensure null termination fits if string is max length
                 let len_to_copy = std::cmp::min(default_name_utf16.len(), file_buffer.len() - 1);
                 file_buffer[..len_to_copy].copy_from_slice(&default_name_utf16[..len_to_copy]);
-                // The rest of file_buffer is already zeroes.
             }
         }
 
         let title_hstring = HSTRING::from(title);
         let filter_utf16: Vec<u16> = filter_spec.encode_utf16().collect();
-
-        // Safely get PCWSTR for initial_dir
         let initial_dir_hstring = initial_dir.map(|p| HSTRING::from(p.to_string_lossy().as_ref()));
         let initial_dir_pcwstr = initial_dir_hstring
             .as_ref()
@@ -238,7 +234,7 @@ impl Win32ApiInternalState {
             lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
             lpstrTitle: PCWSTR(title_hstring.as_ptr()),
             lpstrInitialDir: initial_dir_pcwstr,
-            Flags: OFN_EXPLORER | specific_flags, // Combine common OFN_EXPLORER with specific flags
+            Flags: OFN_EXPLORER | specific_flags,
             ..Default::default()
         };
 
@@ -253,8 +249,6 @@ impl Win32ApiInternalState {
             );
         } else {
             let error_code = unsafe { CommDlgExtendedError() };
-            // CDERR_DIALOGFAILURE (0xFFFF) and other errors might occur.
-            // 0 means user cancelled or closed dialog without error.
             if error_code != COMMON_DLG_ERRORS(0) {
                 eprintln!(
                     "Platform: Dialog function failed or was cancelled with error. CommDlgExtendedError: {:?}",
@@ -265,11 +259,11 @@ impl Win32ApiInternalState {
             }
         }
 
-        // Construct and send the event
         let event = event_constructor(window_id, path_result);
 
-        // Send the event to AppLogic and process any commands it returns
-        let commands_from_dialog_completion = if let Some(handler_arc) = self
+        // Send the event to AppLogic. MyAppLogic will enqueue commands.
+        // The main loop in PlatformInterface::run() will pick them up.
+        if let Some(handler_arc) = self
             .event_handler
             .lock()
             .unwrap()
@@ -277,22 +271,17 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event)
+                handler_guard.handle_event(event); // This now returns ()
             } else {
                 eprintln!("Platform: Failed to lock event handler after dialog completion.");
-                vec![]
             }
         } else {
             eprintln!("Platform: Event handler not available after dialog completion.");
-            vec![]
-        };
-
-        // Process any commands returned by the app logic
-        if !commands_from_dialog_completion.is_empty() {
-            self.process_commands_from_event_handler(commands_from_dialog_completion);
         }
+        // Removed: self.process_commands_from_event_handler(commands_from_dialog_completion);
         Ok(())
     }
+
     fn _handle_show_profile_selection_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -301,29 +290,17 @@ impl Win32ApiInternalState {
         prompt: String,
         emphasize_create_new: bool,
     ) -> PlatformResult<()> {
-        // This is where the actual Win32 dialog code will go.
-        // For P2.6.3, we'll simulate a choice to unblock MyAppLogic development.
-        // In a real implementation, this would be modal and block until user interaction.
         println!(
             "Platform (STUB): Showing Profile Selection Dialog. Title: '{}', Prompt: '{}', Emphasize Create: {}, Profiles: {:?}",
             title, prompt, emphasize_create_new, available_profiles
         );
 
-        // Simulate user action for now:
-        // Option 1: Simulate choosing the first available profile if any
-        // Option 2: Simulate clicking "Create New"
-        // Option 3: Simulate "Cancel"
-
         let (chosen_profile_name, create_new_requested, cancelled) =
             if !available_profiles.is_empty() && !emphasize_create_new {
-                // Simulate choosing the first profile
                 (Some(available_profiles[0].clone()), false, false)
             } else if emphasize_create_new || available_profiles.is_empty() {
-                // Simulate "Create New" if no profiles or if "Create New" is emphasized
                 (None, true, false)
             } else {
-                // Simulate cancel if other conditions aren't met (e.g. has profiles, but not emphasizing create)
-                // This branch might not be hit with current logic but good for completeness
                 (None, false, true)
             };
 
@@ -333,13 +310,12 @@ impl Win32ApiInternalState {
         );
 
         let event = AppEvent::ProfileSelectionDialogCompleted {
-            window_id: window_id,
-            chosen_profile_name: chosen_profile_name,
-            create_new_requested: create_new_requested,
+            window_id,
+            chosen_profile_name,
+            create_new_requested,
             user_cancelled: cancelled,
         };
 
-        // Send event back to AppLogic
         if let Some(handler_arc) = self
             .event_handler
             .lock()
@@ -348,11 +324,7 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                let commands = handler_guard.handle_event(event);
-                if !commands.is_empty() {
-                    // Process commands recursively. This is important.
-                    self.process_commands_from_event_handler(commands);
-                }
+                handler_guard.handle_event(event); // MyAppLogic enqueues commands
             } else {
                 eprintln!(
                     "Platform: Failed to lock event handler for ProfileSelectionDialogCompleted."
@@ -363,7 +335,6 @@ impl Win32ApiInternalState {
         }
         Ok(())
     }
-
     fn _handle_show_input_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -376,13 +347,11 @@ impl Win32ApiInternalState {
             "Platform (STUB): Showing Input Dialog. Title: '{}', Prompt: '{}', Default: {:?}, Tag: {:?}",
             title, prompt, default_text, context_tag
         );
-        // Simulate user entering "TestProfileNameFromStub"
         let event = AppEvent::InputDialogCompleted {
             window_id,
-            text: Some("TestProfileNameFromStub".to_string()), // Simulate successful input
+            text: Some("TestProfileNameFromStub".to_string()),
             context_tag,
         };
-        // Send event back to AppLogic (similar to ProfileSelectionDialog)
         if let Some(handler_arc) = self
             .event_handler
             .lock()
@@ -391,10 +360,7 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                let commands = handler_guard.handle_event(event);
-                if !commands.is_empty() {
-                    self.process_commands_from_event_handler(commands);
-                }
+                handler_guard.handle_event(event);
             }
         }
         Ok(())
@@ -410,12 +376,10 @@ impl Win32ApiInternalState {
             "Platform (STUB): Showing Folder Picker Dialog. Title: '{}', Initial Dir: {:?}",
             title, initial_dir
         );
-        // Simulate user picking a folder
         let event = AppEvent::FolderPickerDialogCompleted {
             window_id,
-            path: Some(PathBuf::from("./mock_picked_folder_stub")), // Simulate successful pick
+            path: Some(PathBuf::from("./mock_picked_folder_stub")),
         };
-        // Send event back to AppLogic (similar to ProfileSelectionDialog)
         if let Some(handler_arc) = self
             .event_handler
             .lock()
@@ -424,10 +388,7 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                let commands = handler_guard.handle_event(event);
-                if !commands.is_empty() {
-                    self.process_commands_from_event_handler(commands);
-                }
+                handler_guard.handle_event(event);
             }
         }
         Ok(())
@@ -439,97 +400,92 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
-    pub fn process_commands_from_event_handler(self: &Arc<Self>, commands: Vec<PlatformCommand>) {
-        for cmd in commands {
-            let result = match cmd {
-                PlatformCommand::SetWindowTitle { window_id, title } => {
-                    window_common::set_window_title(self, window_id, &title)
-                }
-                PlatformCommand::ShowWindow { window_id } => {
-                    window_common::show_window(self, window_id, true)
-                }
-                PlatformCommand::CloseWindow { window_id } => {
-                    window_common::destroy_native_window(self, window_id)
-                }
-                PlatformCommand::PopulateTreeView { window_id, items } => {
-                    control_treeview::populate_treeview(self, window_id, items)
-                }
-                PlatformCommand::UpdateTreeItemVisualState {
-                    window_id,
-                    item_id,
-                    new_state,
-                } => control_treeview::update_treeview_item_visual_state(
-                    self, window_id, item_id, new_state,
-                ),
-                PlatformCommand::ShowSaveFileDialog {
-                    window_id,
-                    title,
-                    default_filename,
-                    filter_spec,
-                    initial_dir,
-                } => self._handle_show_save_file_dialog_impl(
-                    window_id,
-                    title,
-                    default_filename,
-                    filter_spec,
-                    initial_dir,
-                ),
-                PlatformCommand::ShowOpenFileDialog {
-                    window_id,
-                    title,
-                    filter_spec,
-                    initial_dir,
-                } => self._handle_show_open_file_dialog_impl(
-                    window_id,
-                    title,
-                    filter_spec,
-                    initial_dir,
-                ),
-                PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text,
-                    is_error,
-                } => window_common::update_status_bar_text(self, window_id, &text, is_error),
-                PlatformCommand::ShowProfileSelectionDialog {
-                    window_id,
-                    available_profiles,
-                    title,
-                    prompt,
-                    emphasize_create_new,
-                } => self._handle_show_profile_selection_dialog_impl(
-                    window_id,
-                    available_profiles,
-                    title,
-                    prompt,
-                    emphasize_create_new,
-                ),
-                PlatformCommand::ShowInputDialog {
-                    window_id,
-                    title,
-                    prompt,
-                    default_text,
-                    context_tag,
-                } => self._handle_show_input_dialog_impl(
-                    window_id,
-                    title,
-                    prompt,
-                    default_text,
-                    context_tag,
-                ),
-                PlatformCommand::ShowFolderPickerDialog {
-                    window_id,
-                    title,
-                    initial_dir,
-                } => self._handle_show_folder_picker_dialog_impl(window_id, title, initial_dir),
-                PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
-            };
-
-            if let Err(e) = result {
-                eprintln!(
-                    "Platform: Error executing command from event handler: {:?}",
-                    e
-                );
+    /*
+     * Executes a single platform command directly.
+     * This method centralizes the handling of all platform commands, whether
+     * they originate from the initial setup or from event handling by MyAppLogic.
+     * It's called by the main run loop after dequeuing commands from MyAppLogic.
+     */
+    fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
+        println!("Platform: Executing command: {:?}", command); // Basic logging
+        match command {
+            PlatformCommand::SetWindowTitle { window_id, title } => {
+                window_common::set_window_title(self, window_id, &title)
             }
+            PlatformCommand::ShowWindow { window_id } => {
+                window_common::show_window(self, window_id, true)
+            }
+            PlatformCommand::CloseWindow { window_id } => {
+                window_common::destroy_native_window(self, window_id)
+            }
+            PlatformCommand::PopulateTreeView { window_id, items } => {
+                control_treeview::populate_treeview(self, window_id, items)
+            }
+            PlatformCommand::UpdateTreeItemVisualState {
+                window_id,
+                item_id,
+                new_state,
+            } => control_treeview::update_treeview_item_visual_state(
+                self, window_id, item_id, new_state,
+            ),
+            PlatformCommand::ShowSaveFileDialog {
+                window_id,
+                title,
+                default_filename,
+                filter_spec,
+                initial_dir,
+            } => self._handle_show_save_file_dialog_impl(
+                window_id,
+                title,
+                default_filename,
+                filter_spec,
+                initial_dir,
+            ),
+            PlatformCommand::ShowOpenFileDialog {
+                window_id,
+                title,
+                filter_spec,
+                initial_dir,
+            } => {
+                self._handle_show_open_file_dialog_impl(window_id, title, filter_spec, initial_dir)
+            }
+            PlatformCommand::UpdateStatusBarText {
+                window_id,
+                text,
+                is_error,
+            } => window_common::update_status_bar_text(self, window_id, &text, is_error),
+            PlatformCommand::ShowProfileSelectionDialog {
+                window_id,
+                available_profiles,
+                title,
+                prompt,
+                emphasize_create_new,
+            } => self._handle_show_profile_selection_dialog_impl(
+                window_id,
+                available_profiles,
+                title,
+                prompt,
+                emphasize_create_new,
+            ),
+            PlatformCommand::ShowInputDialog {
+                window_id,
+                title,
+                prompt,
+                default_text,
+                context_tag,
+            } => self._handle_show_input_dialog_impl(
+                window_id,
+                title,
+                prompt,
+                default_text,
+                context_tag,
+            ),
+            PlatformCommand::ShowFolderPickerDialog {
+                window_id,
+                title,
+                initial_dir,
+            } => self._handle_show_folder_picker_dialog_impl(window_id, title, initial_dir),
+            PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
         }
     }
 }
@@ -738,24 +694,89 @@ impl PlatformInterface {
         }
     }
 
+    /*
+     * Starts the platform's main event loop.
+     * This method takes ownership of the `event_handler` (MyAppLogic) and continuously
+     * processes messages. Before checking for OS messages, it drains and executes
+     * any commands enqueued in MyAppLogic. It only returns when the application
+     * is quitting.
+     */
     pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
+
+        let app_logic_ref = event_handler; // Keep a strong reference for the loop
+
         unsafe {
             let mut msg = MSG::default();
             loop {
+                // 1. Drain MyAppLogic's command queue and execute commands
+                loop {
+                    let command_opt = if let Ok(mut logic_guard) = app_logic_ref.lock() {
+                        // Downcast to access MyAppLogic specific methods
+                        // Note: This assumes event_handler always IS a Mutex<MyAppLogic>
+                        // If it could be other PlatformEventHandlers, a more robust downcast is needed
+                        // or try_dequeue_command would need to be part of the trait.
+                        // For this project structure, it's MyAppLogic.
+                        if let Some(my_app_logic_concrete) = logic_guard
+                            .as_any_mut() // Requires PlatformEventHandler to have `as_any_mut`
+                            .downcast_mut::<crate::app_logic::handler::MyAppLogic>()
+                        // Fully qualified path
+                        {
+                            my_app_logic_concrete.try_dequeue_command()
+                        } else {
+                            eprintln!(
+                                "Platform: Failed to downcast event_handler to MyAppLogic for dequeuing."
+                            );
+                            None
+                        }
+                    } else {
+                        eprintln!("Platform: Failed to lock MyAppLogic to dequeue command.");
+                        None
+                    };
+
+                    if let Some(command) = command_opt {
+                        if let Err(e) = self.internal_state._execute_platform_command(command) {
+                            eprintln!("Platform: Error executing command from queue: {:?}", e);
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                // 2. Process OS messages
                 let result = GetMessageW(&mut msg, None, 0, 0);
+
                 if result.0 > 0 {
+                    // Message received
                     let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
+                    DispatchMessageW(&msg); // This will call facade_wnd_proc_router
                 } else if result.0 == 0 {
+                    // WM_QUIT
                     println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
                     break;
                 } else {
+                    // Error
                     let last_error = GetLastError();
                     eprintln!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
+                    // If WM_QUIT was posted due to last window closing, and then GetMessageW fails,
+                    // this could lead to an error return even if shutdown was intended.
+                    // Check if quitting was intended.
+                    if self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
+                        && self
+                            .internal_state
+                            .active_windows_count
+                            .load(Ordering::Relaxed)
+                            == 0
+                    {
+                        println!(
+                            "Platform: GetMessageW error during intended quit sequence, treating as clean exit."
+                        );
+                        break;
+                    }
+
                     return Err(PlatformError::OperationFailed(format!(
                         "GetMessageW failed: {}",
                         windows::core::Error::from_win32()
@@ -763,9 +784,14 @@ impl PlatformInterface {
                 }
             }
         }
-        if let Ok(mut handler_guard) = event_handler.lock() {
+
+        // Call on_quit on MyAppLogic
+        if let Ok(mut handler_guard) = app_logic_ref.lock() {
             handler_guard.on_quit();
+        } else {
+            eprintln!("Platform: Failed to lock MyAppLogic for on_quit call.");
         }
+
         *self.internal_state.event_handler.lock().unwrap() = None;
         println!("Platform: Message loop exited cleanly.");
         Ok(())

@@ -54,18 +54,9 @@ fn main() -> PlatformResult<()> {
     };
     println!("Main window requested with ID: {:?}", main_window_id);
 
-    let initial_commands = my_app_logic.on_main_window_created(main_window_id);
-    println!(
-        "AppLogic generated {} initial command(s).",
-        initial_commands.len()
-    );
-
-    for cmd in initial_commands {
-        if let Err(e) = platform_interface.execute_command(cmd) {
-            eprintln!("Error executing initial command: {:?}", e);
-        }
-    }
-    println!("Initial commands executed.");
+    // Call on_main_window_created to enqueue initial commands
+    my_app_logic.on_main_window_created(main_window_id);
+    println!("AppLogic.on_main_window_created called; initial commands enqueued.");
 
     let app_event_handler = Arc::new(Mutex::new(my_app_logic));
 

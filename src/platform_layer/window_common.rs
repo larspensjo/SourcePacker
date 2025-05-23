@@ -266,6 +266,8 @@ impl Win32ApiInternalState {
                 if create_app_menu(hwnd).is_err() {
                     eprintln!("Platform: Failed to create application menu.");
                 }
+                // No AppEvent sent from WM_CREATE itself typically to MyAppLogic here,
+                // but MyAppLogic::on_main_window_created is called from main.rs
             }
             WM_SIZE => {
                 event_to_send = self.handle_wm_size(hwnd, wparam, lparam, window_id);
@@ -274,12 +276,31 @@ impl Win32ApiInternalState {
                 event_to_send = self.handle_wm_command(hwnd, wparam, lparam, window_id);
             }
             WM_CLOSE => {
-                lresult_override = Some(self.handle_wm_close(hwnd, wparam, lparam, window_id));
+                // WM_CLOSE is special: it first asks AppLogic if it's okay to close.
+                // AppLogic responds by enqueuing PlatformCommand::CloseWindow if okay.
+                event_to_send = Some(AppEvent::WindowCloseRequested { window_id });
+                // We don't destroy the window here directly.
+                // AppLogic handles the AppEvent::WindowCloseRequested.
+                // If it decides to close, it enqueues PlatformCommand::CloseWindow.
+                // The platform run loop will pick that up and execute it,
+                // which then calls window_common::send_close_message -> DestroyWindow.
+                // DefWindowProcW for WM_CLOSE calls DestroyWindow by default.
+                // We want AppLogic to control this, so we handle the event,
+                // and then if no specific command is issued by AppLogic to actually close,
+                // we might just return 0 to indicate we handled it, or let DefWindowProc run.
+                // For now, let's assume AppLogic will always enqueue a CloseWindow command if it wants to close.
+                // If AppLogic doesn't enqueue CloseWindow, the window remains.
+                // The original logic was to intercept and only destroy if app logic confirmed.
+                // By sending the event, and AppLogic enqueuing CloseWindow, the run loop will handle it.
+                // So, we just need to send the event. The LRESULT can be 0.
+                lresult_override = Some(LRESULT(0)); // Indicate we've handled it; AppLogic decides actual close.
             }
             WM_DESTROY => {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
             }
             WM_NCDESTROY => {
+                // This is the final stage of window destruction.
+                // The GWLP_USERDATA is cleared by the facade_wnd_proc_router here.
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
             }
             WM_PAINT => {
@@ -297,33 +318,31 @@ impl Win32ApiInternalState {
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
             }
             WM_CTLCOLORSTATIC => {
-                let hdc_static_ctrl = HDC(wparam.0 as *mut c_void); // wparam is the HDC for the static control
-                let hwnd_static_ctrl = HWND(lparam.0 as *mut c_void); // lparam is the HWND of the static control
+                let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
+                let hwnd_static_ctrl = HWND(lparam.0 as *mut c_void);
 
                 if let Some(windows_guard) = self.window_map.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         if Some(hwnd_static_ctrl) == window_data.hwnd_status_bar {
                             unsafe {
                                 if window_data.status_bar_is_error {
-                                    // Red color for error messages
                                     SetTextColor(hdc_static_ctrl, COLORREF(0x000000FF));
                                 } else {
-                                    // Default window text color
                                     SetTextColor(
                                         hdc_static_ctrl,
                                         COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
                                     );
                                 }
                                 SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                                // Return a handle to the stock HOLLOW_BRUSH or similar for transparency,
-                                // or the parent's background brush.
-                                // For simple static controls, returning the parent's brush or HOLLOW_BRUSH works.
-                                // GetStockObject(HOLLOW_BRUSH) might be an option, or GetSysColorBrush(COLOR_WINDOW).
                                 lresult_override =
                                     Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
                             }
                         }
                     }
+                }
+                // If not handled by our status bar, let DefWindowProc handle it.
+                if lresult_override.is_none() {
+                    return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
                 }
             }
             _ => {
@@ -331,17 +350,19 @@ impl Win32ApiInternalState {
             }
         }
 
-        let mut commands_to_execute = Vec::new();
+        // If an AppEvent was generated, send it to MyAppLogic.
+        // MyAppLogic will enqueue any resulting PlatformCommands.
+        // The main run loop will pick those up.
         if let Some(event) = event_to_send {
-            if let Some(handler) = event_handler_opt {
-                if let Ok(mut handler_guard) = handler.lock() {
-                    commands_to_execute = handler_guard.handle_event(event);
+            if let Some(handler_arc) = event_handler_opt {
+                if let Ok(mut handler_guard) = handler_arc.lock() {
+                    handler_guard.handle_event(event);
+                } else {
+                    eprintln!("Platform: Failed to lock event handler in handle_window_message.");
                 }
+            } else {
+                eprintln!("Platform: Event handler not available in handle_window_message.");
             }
-        }
-
-        if !commands_to_execute.is_empty() {
-            self.process_commands_from_event_handler(commands_to_execute);
         }
 
         if let Some(lresult) = lresult_override {
@@ -618,45 +639,6 @@ impl Win32ApiInternalState {
             }
         }
         None
-    }
-
-    fn handle_wm_close(
-        self: &Arc<Self>,
-        hwnd: HWND,
-        _wparam: WPARAM,
-        _lparam: LPARAM,
-        window_id: WindowId,
-    ) -> LRESULT {
-        let close_requested_event = AppEvent::WindowCloseRequested { window_id };
-        let mut commands_from_app_logic = Vec::new();
-
-        let event_handler_opt = self
-            .event_handler
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|weak_handler| weak_handler.upgrade());
-
-        if let Some(handler) = event_handler_opt {
-            if let Ok(mut handler_guard) = handler.lock() {
-                commands_from_app_logic = handler_guard.handle_event(close_requested_event);
-            }
-        }
-
-        let app_logic_confirmed_close = commands_from_app_logic.iter().any(|cmd| {
-             matches!(cmd, PlatformCommand::CloseWindow { window_id: cmd_window_id } if *cmd_window_id == window_id)
-        });
-
-        if app_logic_confirmed_close {
-            self.process_commands_from_event_handler(commands_from_app_logic);
-        } else {
-            let other_commands = commands_from_app_logic
-                .into_iter()
-                .filter(|cmd| !matches!(cmd, PlatformCommand::CloseWindow { .. }))
-                .collect();
-            self.process_commands_from_event_handler(other_commands);
-        }
-        LRESULT(0)
     }
 
     fn handle_wm_destroy(
@@ -959,21 +941,13 @@ pub(crate) fn send_close_message(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.window_map.read().ok() {
-        if let Some(window_data) = windows_guard.get(&window_id) {
-            unsafe { PostMessageW(Some(window_data.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0))? };
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found",
-                window_id
-            )))
-        }
-    } else {
-        Err(PlatformError::OperationFailed(
-            "Failed to acquire read lock".into(),
-        ))
-    }
+    // This function is called when AppLogic explicitly wants to close the window via PlatformCommand::CloseWindow.
+    // It should bypass further AppLogic checks and directly proceed to destroy.
+    println!(
+        "Platform: send_close_message received for WindowId {:?}, proceeding to destroy.",
+        window_id
+    );
+    destroy_native_window(internal_state, window_id) // Directly call destroy
 }
 
 pub(crate) fn destroy_native_window(

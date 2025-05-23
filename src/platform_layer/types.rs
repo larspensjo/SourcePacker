@@ -1,11 +1,13 @@
+use std::any::Any;
 use std::path::PathBuf;
+
 /// An opaque identifier for a native window, managed by the platform layer.
 ///
 /// The application logic layer uses this ID to refer to specific windows
 /// when sending commands or receiving events, without needing to know about
 /// native window handles like HWND.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WindowId(pub(crate) usize); // pub(crate) for internal platform use
+pub struct WindowId(pub(crate) usize);
 
 /// An opaque identifier for an item within a tree-like control (e.g., TreeView).
 ///
@@ -26,7 +28,6 @@ pub struct WindowConfig<'a> {
     pub title: &'a str,
     pub width: i32,
     pub height: i32,
-    // Future: pub parent: Option<WindowId>, pub has_menu: bool, etc.
 }
 
 /// Represents the visual check state of an item, typically a checkbox.
@@ -34,7 +35,6 @@ pub struct WindowConfig<'a> {
 pub enum CheckState {
     Checked,
     Unchecked,
-    // Indeterminate, // Requires custom drawing or specific control versions.
 }
 
 /// Describes a single item to be displayed in a tree-like control.
@@ -43,7 +43,6 @@ pub enum CheckState {
 /// and hierarchy of a tree view, which the platform layer then renders.
 #[derive(Debug, Clone)]
 pub struct TreeItemDescriptor {
-    /// A unique identifier for this item, provided by the application logic.
     pub id: TreeItemId,
     pub text: String,
     pub is_folder: bool,
@@ -84,12 +83,12 @@ pub enum AppEvent {
     /// Signals that a button was clicked.
     ButtonClicked {
         window_id: WindowId,
-        control_id: i32, // Using the raw control ID for now
+        control_id: i32,
     },
     /// Signals the result of a "Save File" dialog.
     FileSaveDialogCompleted {
         window_id: WindowId,
-        result: Option<std::path::PathBuf>, // Some(path) if successful, None if cancelled
+        result: Option<std::path::PathBuf>,
     },
     MenuLoadProfileClicked,
     MenuSaveProfileAsClicked,
@@ -108,13 +107,13 @@ pub enum AppEvent {
     /// Result of a generic input dialog.
     InputDialogCompleted {
         window_id: WindowId,
-        text: Option<String>,        // Some(text) if OK, None if Cancelled
-        context_tag: Option<String>, // To identify the purpose of the input dialog
+        text: Option<String>,
+        context_tag: Option<String>,
     },
     /// Result of a folder picker dialog.
     FolderPickerDialogCompleted {
         window_id: WindowId,
-        path: Option<PathBuf>, // Some(path) if OK, None if Cancelled
+        path: Option<PathBuf>,
     },
 }
 
@@ -126,20 +125,20 @@ pub enum AppEvent {
 /// native UI elements.
 #[derive(Debug)]
 pub enum PlatformCommand {
-    /// Sets the title of a specified window.
-    SetWindowTitle { window_id: WindowId, title: String },
-    /// Makes a specified window visible.
-    ShowWindow { window_id: WindowId },
-    /// Instructs the platform layer to initiate the closing process for a window.
-    /// This typically results in a `WM_CLOSE` message being sent to the native window.
-    CloseWindow { window_id: WindowId },
-    /// Populates a tree view control within a specified window with a new set of items.
-    /// Any existing items in the tree view are typically cleared first.
+    SetWindowTitle {
+        window_id: WindowId,
+        title: String,
+    },
+    ShowWindow {
+        window_id: WindowId,
+    },
+    CloseWindow {
+        window_id: WindowId,
+    },
     PopulateTreeView {
         window_id: WindowId,
         items: Vec<TreeItemDescriptor>,
     },
-    /// Updates the check state of a specific item in a tree view.
     UpdateTreeItemVisualState {
         window_id: WindowId,
         item_id: TreeItemId,
@@ -149,7 +148,6 @@ pub enum PlatformCommand {
         window_id: WindowId,
         title: String,
         default_filename: String,
-        /// Example: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     },
@@ -164,29 +162,25 @@ pub enum PlatformCommand {
         text: String,
         is_error: bool,
     },
-    /// Instructs the platform to show a dialog for profile selection or creation.
     ShowProfileSelectionDialog {
         window_id: WindowId,
         available_profiles: Vec<String>,
         title: String,
         prompt: String,
-        emphasize_create_new: bool, // Hint to UI to make "Create New" more prominent if no profiles exist
+        emphasize_create_new: bool,
     },
-    /// Instructs the platform to show a generic text input dialog.
     ShowInputDialog {
         window_id: WindowId,
         title: String,
         prompt: String,
         default_text: Option<String>,
-        context_tag: Option<String>, // Opaque tag for AppLogic to identify response
+        context_tag: Option<String>,
     },
-    /// Instructs the platform to show a folder picker dialog.
     ShowFolderPickerDialog {
         window_id: WindowId,
         title: String,
         initial_dir: Option<PathBuf>,
     },
-    /// Instructs the platform to terminate the application.
     QuitApplication,
 }
 
@@ -198,12 +192,18 @@ pub enum PlatformCommand {
 /// logic about user interactions or system events.
 pub trait PlatformEventHandler: Send + Sync + 'static {
     /// Called by the platform layer when a native UI event has been processed.
-    ///
-    /// The implementor should handle the event and can optionally return a list
-    /// of `PlatformCommand`s to be executed by the platform layer in response.
-    fn handle_event(&mut self, event: AppEvent) -> Vec<PlatformCommand>;
+    /// The implementor should handle the event and enqueue `PlatformCommand`s
+    /// for the platform layer to execute.
+    fn handle_event(&mut self, event: AppEvent); // Return type changed to ()
 
     /// Called by the platform layer when the application is about to exit its main loop.
     /// This allows the application logic to perform any necessary cleanup.
-    fn on_quit(&mut self) {} // Default empty implementation
+    fn on_quit(&mut self) {}
+
+    /// Provides a way to get `&mut dyn Any` for downcasting, if necessary.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    /// Attempts to dequeue a single `PlatformCommand` from the internal queue.
+    /// This is called by the platform layer's run loop.
+    fn try_dequeue_command(&mut self) -> Option<PlatformCommand>;
 }

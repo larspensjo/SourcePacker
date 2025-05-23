@@ -10,7 +10,7 @@ use crate::platform_layer::{
     WindowId,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -23,7 +23,8 @@ use tempfile::{NamedTempFile, tempdir};
  * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
  * It utilizes mock implementations of core dependencies (`ConfigManagerOperations`,
  * `ProfileManagerOperations`, etc.) to isolate `MyAppLogic`'s behavior for testing.
- * Tests focus on event handling, state transitions, command generation, and error paths.
+ * Tests focus on event handling, state transitions, command generation (now via
+ * dequeuing), and error paths.
  */
 
 struct MockConfigManager {
@@ -397,9 +398,6 @@ impl ArchiverOperations for MockArchiver {
 struct MockStateManager {
     apply_profile_to_tree_calls: Mutex<Vec<(Vec<FileNode>, Profile)>>,
     update_folder_selection_calls: Mutex<Vec<(FileNode, FileState)>>,
-    // If you need to simulate changes to the FileNode tree,
-    // the mock can store the tree and modify it, or take a closure.
-    // For now, just recording calls.
 }
 
 impl MockStateManager {
@@ -423,16 +421,11 @@ impl MockStateManager {
 
 impl StateManagerOperations for MockStateManager {
     fn apply_profile_to_tree(&self, tree: &mut Vec<FileNode>, profile: &Profile) {
-        // For the mock, we'll record the call and also perform a simplified
-        // version of the real logic to ensure the tree passed to subsequent
-        // operations in MyAppLogic is in a somewhat expected state for tests.
-        // A more advanced mock might allow configuring specific behaviors.
         self.apply_profile_to_tree_calls
             .lock()
             .unwrap()
             .push((tree.clone(), profile.clone()));
 
-        // Simulate the real operation for test consistency:
         for node in tree.iter_mut() {
             if profile.selected_paths.contains(&node.path) {
                 node.state = FileState::Selected;
@@ -442,20 +435,17 @@ impl StateManagerOperations for MockStateManager {
                 node.state = FileState::Unknown;
             }
             if node.is_dir && !node.children.is_empty() {
-                // Recurse on a mutable borrow of children
                 self.apply_profile_to_tree(&mut node.children, profile);
             }
         }
     }
 
     fn update_folder_selection(&self, node: &mut FileNode, new_state: FileState) {
-        // Record the call
         self.update_folder_selection_calls
             .lock()
             .unwrap()
             .push((node.clone(), new_state));
 
-        // Simulate the real operation for test consistency:
         node.state = new_state;
         if node.is_dir {
             for child in node.children.iter_mut() {
@@ -540,9 +530,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
-    let cmds = logic.on_main_window_created(WindowId(1));
+    logic.on_main_window_created(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
-    // Verify state
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
         Some(last_profile_name_to_load)
@@ -554,12 +544,10 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
     assert_eq!(*logic.test_root_path_for_scan(), startup_profile_root);
 
-    // Verify MockStateManager was called
     let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
     assert_eq!(apply_calls.len(), 1);
     assert_eq!(apply_calls[0].1.name, mock_loaded_profile.name);
 
-    // Verify file nodes cache
     assert_eq!(logic.test_file_nodes_cache().len(), 1);
     assert_eq!(
         logic.test_file_nodes_cache()[0].name,
@@ -567,14 +555,12 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
     assert_eq!(logic.test_file_nodes_cache()[0].state, FileState::Selected);
 
-    // Verify archive status
     assert_eq!(
         *logic.test_current_archive_status(),
         Some(ArchiveStatus::NotYetGenerated)
     );
     assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
 
-    // Verify commands: SetWindowTitle, PopulateTreeView, UpdateStatusBarText, ShowWindow
     assert!(
         cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title.contains(last_profile_name_to_load))),
         "Expected SetWindowTitle command with profile name. Got: {:?}", cmds
@@ -608,24 +594,23 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
     let (
         mut logic,
         mock_config_manager,
-        mock_profile_manager, // Used for list_profiles
+        mock_profile_manager,
         _mock_file_system_scanner,
         _mock_archiver,
         _mock_state_manager,
     ) = setup_logic_with_mocks();
 
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
-    // Simulate profile_manager.list_profiles() returning an empty list
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    let cmds = logic.on_main_window_created(WindowId(1));
+    logic.on_main_window_created(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
     assert!(logic.test_current_profile_name().is_none());
     assert!(logic.test_current_profile_cache().is_none());
     assert!(logic.test_file_nodes_cache().is_empty());
     assert!(logic.test_current_archive_status().is_none());
 
-    // Verify commands: Expect ShowProfileSelectionDialog
     assert_eq!(
         cmds.len(),
         1,
@@ -662,23 +647,21 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
     let (
         mut logic,
         mock_config_manager,
-        mock_profile_manager, // Used for list_profiles
+        mock_profile_manager,
         _mock_file_system_scanner,
         _mock_archiver,
         _mock_state_manager,
     ) = setup_logic_with_mocks();
 
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
-    // Simulate profile_manager.list_profiles() returning some profiles
     let existing_profiles = vec!["ProfileA".to_string(), "ProfileB".to_string()];
     mock_profile_manager.set_list_profiles_result(Ok(existing_profiles.clone()));
 
-    let cmds = logic.on_main_window_created(WindowId(1));
+    logic.on_main_window_created(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
     assert!(logic.test_current_profile_name().is_none());
-    // ... (other state assertions remain the same) ...
 
-    // Verify commands: Expect ShowProfileSelectionDialog with different text
     assert_eq!(
         cmds.len(),
         1,
@@ -710,7 +693,7 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
     let (
         mut logic,
         mock_config_manager,
-        mock_profile_manager, // For list_profiles in initiate_profile_selection_or_creation
+        mock_profile_manager,
         _mock_file_system_scanner,
         _mock_archiver,
         _mock_state_manager,
@@ -718,15 +701,13 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
 
     let config_error = ConfigError::Io(io::Error::new(io::ErrorKind::Other, "config load failure"));
     mock_config_manager.set_load_last_profile_name_result(Err(config_error));
-    // list_profiles might still be called by initiate_profile_selection_or_creation
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    let cmds = logic.on_main_window_created(WindowId(1));
+    logic.on_main_window_created(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
     assert!(logic.test_current_profile_name().is_none());
-    // ... (other state assertions) ...
 
-    // Verify commands: ShowProfileSelectionDialog + UpdateStatusBarText for the initial error
     assert_eq!(
         cmds.len(),
         2,
@@ -734,7 +715,6 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
         cmds
     );
 
-    // Check for ShowProfileSelectionDialog (order might vary depending on push order)
     assert!(
         cmds.iter().any(|cmd| matches!(
             cmd,
@@ -746,7 +726,6 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
         "Expected ShowProfileSelectionDialog command"
     );
 
-    // Check for the error status message
     assert!(
         cmds.iter().any(|cmd| match cmd {
             PlatformCommand::UpdateStatusBarText {
@@ -785,15 +764,13 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
         "profile not found physically",
     ));
     mock_profile_manager.set_load_profile_result(last_profile_name, Err(profile_error));
-    // list_profiles might still be called
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    let cmds = logic.on_main_window_created(WindowId(1));
+    logic.on_main_window_created(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
     assert!(logic.test_current_profile_name().is_none());
-    // ... (other state assertions) ...
 
-    // Verify commands: ShowProfileSelectionDialog + UpdateStatusBarText for the profile load error
     assert_eq!(
         cmds.len(),
         2,
@@ -841,14 +818,13 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
         _mock_state_manager,
     ) = setup_logic_with_mocks();
 
-    // Simulate ProfileManagerOperations.list_profiles() returning an error
     mock_profile_manager.set_list_profiles_result(Err(ProfileError::Io(io::Error::new(
         io::ErrorKind::PermissionDenied,
         "cannot access profiles dir",
     ))));
 
-    // Directly call the method to test its isolated behavior
-    let cmds = logic.initiate_profile_selection_or_creation(WindowId(1));
+    logic.initiate_profile_selection_or_creation(WindowId(1));
+    let cmds = logic.test_drain_commands();
 
     assert_eq!(
         cmds.len(),
@@ -920,26 +896,24 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         window_id: WindowId(1),
         result: Some(profile_json_path_from_dialog.clone()),
     };
-    let _cmds = logic.handle_event(event);
+    logic.handle_event(event);
+    let _cmds = logic.test_drain_commands(); // Drain commands, though not directly asserted here for brevity
 
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
         Some(profile_to_load_name)
     );
 
-    // Verify MockStateManager was called for apply_profile_to_tree
     let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
     assert_eq!(apply_calls.len(), 1);
     assert_eq!(apply_calls[0].1.name, mock_loaded_profile.name);
 
-    // Assert FileNode state after MockStateManager's apply_profile_to_tree
     assert_eq!(logic.test_file_nodes_cache().len(), 1);
     assert_eq!(
         logic.test_file_nodes_cache()[0].name,
         "scanned_after_load_via_manager.txt"
     );
     assert_eq!(
-        // This depends on MockStateManager correctly simulating the apply logic
         logic.test_file_nodes_cache()[0].state,
         FileState::Selected,
         "FileNode state should be Selected after apply_profile_to_tree on profile load"
@@ -982,7 +956,8 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
         result: Some(profile_save_path_from_dialog.clone()),
     };
 
-    let _cmds = logic.handle_event(event);
+    logic.handle_event(event);
+    let _cmds = logic.test_drain_commands(); // Drain commands
 
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
@@ -1023,10 +998,12 @@ fn test_handle_button_click_generates_save_dialog_archive_with_mock_archiver() {
     let mock_content = "Mock archive content from archiver".to_string();
     mock_archiver.set_create_archive_content_result(Ok(mock_content.clone()));
 
-    let cmds = logic.handle_event(AppEvent::ButtonClicked {
+    logic.handle_event(AppEvent::ButtonClicked {
         window_id: WindowId(1),
         control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
     });
+    let cmds = logic.test_drain_commands();
+
     assert_eq!(cmds.len(), 1, "Expected one command for save dialog");
     match &cmds[0] {
         PlatformCommand::ShowSaveFileDialog { .. } => {}
@@ -1057,10 +1034,12 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
 
     mock_archiver.set_create_archive_content_result(Ok("content".to_string()));
 
-    let cmds = logic.handle_event(AppEvent::ButtonClicked {
+    logic.handle_event(AppEvent::ButtonClicked {
         window_id: WindowId(1),
         control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
     });
+    let cmds = logic.test_drain_commands();
+
     assert_eq!(cmds.len(), 1);
     match &cmds[0] {
         PlatformCommand::ShowSaveFileDialog {
@@ -1103,14 +1082,14 @@ fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_mock_a
     mock_archiver.set_save_archive_content_result(Ok(()));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::UpToDate);
 
-    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id set in setup
+    let main_window_id = logic.test_main_window_id().unwrap();
 
-    let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: main_window_id, // Use the actual window_id
+    logic.handle_event(AppEvent::FileSaveDialogCompleted {
+        window_id: main_window_id,
         result: Some(archive_save_path.clone()),
     });
+    let cmds = logic.test_drain_commands();
 
-    // Expect one command: UpdateStatusBarText
     assert_eq!(cmds.len(), 1, "Expected one command for status bar update");
     match &cmds[0] {
         PlatformCommand::UpdateStatusBarText {
@@ -1161,14 +1140,14 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
     logic.test_set_pending_action(PendingAction::SavingArchive);
     logic.test_set_pending_archive_content("WILL BE CLEARED".to_string());
 
-    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id
+    let main_window_id = logic.test_main_window_id().unwrap();
 
-    let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: main_window_id, // Use the actual window_id
-        result: None,              // Dialog cancelled
+    logic.handle_event(AppEvent::FileSaveDialogCompleted {
+        window_id: main_window_id,
+        result: None,
     });
+    let cmds = logic.test_drain_commands();
 
-    // Expect one command: UpdateStatusBarText
     assert_eq!(
         cmds.len(),
         1,
@@ -1196,14 +1175,14 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
     let (mut logic, _, _, _, _mock_archiver, _mock_state_manager) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::SavingProfile);
 
-    let main_window_id = logic.test_main_window_id().unwrap(); // Get the window_id
+    let main_window_id = logic.test_main_window_id().unwrap();
 
-    let cmds = logic.handle_event(AppEvent::FileSaveDialogCompleted {
-        window_id: main_window_id, // Use the actual window_id
-        result: None,              // Dialog cancelled
+    logic.handle_event(AppEvent::FileSaveDialogCompleted {
+        window_id: main_window_id,
+        result: None,
     });
+    let cmds = logic.test_drain_commands();
 
-    // Expect one command: UpdateStatusBarText
     assert_eq!(
         cmds.len(),
         1,
@@ -1257,20 +1236,20 @@ fn test_handle_treeview_item_toggled_updates_archive_status_via_mock_archiver() 
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::OutdatedRequiresUpdate);
 
-    let cmds = logic.handle_event(AppEvent::TreeViewItemToggled {
+    logic.handle_event(AppEvent::TreeViewItemToggled {
         window_id: WindowId(1),
         item_id: tree_item_id_for_foo,
         new_state: CheckState::Checked,
     });
+    let cmds = logic.test_drain_commands();
 
-    // Verify MockStateManager was called for update_folder_selection
     let update_calls = mock_state_manager.get_update_folder_selection_calls();
     assert_eq!(update_calls.len(), 1);
-    assert_eq!(update_calls[0].0.path, foo_full_path); // Path of the node passed to update_folder_selection
-    assert_eq!(update_calls[0].1, FileState::Selected); // New state passed
+    assert_eq!(update_calls[0].0.path, foo_full_path);
+    assert_eq!(update_calls[0].1, FileState::Selected);
 
     assert_eq!(logic.test_file_nodes_cache()[0].state, FileState::Selected);
-    assert_eq!(cmds.len(), 1);
+    assert_eq!(cmds.len(), 1); // Expect one UpdateTreeItemVisualState command
 
     assert_eq!(
         *logic.test_current_archive_status(),
@@ -1287,7 +1266,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
         mock_archiver_arc,
-        mock_state_manager, // Get the mock
+        mock_state_manager,
     ) = setup_logic_with_mocks();
 
     let profile_name = "ProfileForStatusUpdateViaMockArchiver";
@@ -1299,7 +1278,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let mock_profile_to_load = Profile {
         name: profile_name.to_string(),
         root_folder: root_folder_for_profile.clone(),
-        selected_paths: HashSet::new(), // Empty selected paths
+        selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_for_profile.clone()),
     };
@@ -1322,9 +1301,9 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         window_id: WindowId(1),
         result: Some(profile_json_path_from_dialog.clone()),
     };
-    let _cmds = logic.handle_event(event);
+    logic.handle_event(event);
+    let _cmds = logic.test_drain_commands();
 
-    // Verify MockStateManager was called for apply_profile_to_tree
     let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
     assert_eq!(apply_calls.len(), 1);
     assert_eq!(apply_calls[0].1.name, mock_profile_to_load.name);
@@ -1343,7 +1322,6 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     assert_eq!(nodes_call_arg.len(), scanned_file_nodes.len());
     if !nodes_call_arg.is_empty() {
         assert_eq!(nodes_call_arg[0].name, scanned_file_nodes[0].name);
-        // After MockStateManager.apply_profile_to_tree with empty selected_paths, state should be Unknown
         assert_eq!(
             nodes_call_arg[0].state,
             FileState::Unknown,
@@ -1355,9 +1333,11 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    let cmds = logic.handle_event(AppEvent::WindowCloseRequested {
+    logic.handle_event(AppEvent::WindowCloseRequested {
         window_id: WindowId(1),
     });
+    let cmds = logic.test_drain_commands();
+
     assert_eq!(cmds.len(), 1);
     assert!(matches!(cmds[0], PlatformCommand::CloseWindow { .. }));
 }
@@ -1377,9 +1357,10 @@ fn test_handle_window_destroyed_clears_main_window_id_and_state() {
     ));
     logic.test_path_to_tree_item_id_insert(&PathBuf::from("./file"), TreeItemId(1));
 
-    let cmds = logic.handle_event(AppEvent::WindowDestroyed {
+    logic.handle_event(AppEvent::WindowDestroyed {
         window_id: WindowId(1),
     });
+    let cmds = logic.test_drain_commands();
 
     assert!(cmds.is_empty());
     assert_eq!(logic.test_main_window_id(), None);
@@ -1392,11 +1373,8 @@ fn test_handle_window_destroyed_clears_main_window_id_and_state() {
 
 #[test]
 fn test_on_quit_executes_without_panic() {
-    // Verifies that MyAppLogic::on_quit() can be called without panicking.
-    // Currently, on_quit only prints a message, so no further assertions are made.
-    // If on_quit evolves, this test should be expanded to verify its behavior.
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.on_quit(); // The test passes if this line does not panic.
+    logic.on_quit();
 }
 
 fn make_test_tree_for_applogic() -> Vec<FileNode> {
@@ -1487,8 +1465,8 @@ fn test_collect_visual_updates_recursive_applogic() {
     let file2_id = path_map.get(&PathBuf::from("/root/sub/file2.txt")).unwrap();
 
     assert!(updates.contains(&(*file1_id, CheckState::Checked)));
-    assert!(updates.contains(&(*sub_id, CheckState::Unchecked)));
-    assert!(updates.contains(&(*file2_id, CheckState::Unchecked)));
+    assert!(updates.contains(&(*sub_id, CheckState::Unchecked))); // dir1 itself is Unknown -> Unchecked
+    assert!(updates.contains(&(*file2_id, CheckState::Unchecked))); // file2.txt is Deselected -> Unchecked
 
     assert_eq!(
         updates.len(),
