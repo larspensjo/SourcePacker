@@ -38,22 +38,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 ## P2.6: **Always Active Profile: Startup Sequence**
 **Goal:** Ensure an active profile before the main UI is fully operational. The main window remains hidden or minimally shown until profile activation.
 
-### P2.6.1: `MyAppLogic::on_main_window_created` Refactor
-*   Attempt to load the last used profile name (`config_manager.load_last_profile_name`) and then the profile itself (`profile_manager.load_profile`).
-*   **If successful:**
-    *   Set profile as active (`current_profile_cache`, `current_profile_name`).
-    *   Update window title to "SourcePacker - [ProfileName]".
-    *   Proceed to P2.6.5 (Scan, Apply, Populate, Show).
-*   **If loading fails (or no last profile):**
-    *   Main window remains hidden.
-    *   Call new internal method `MyAppLogic::initiate_profile_selection_or_creation(window_id)`.
-
-### P2.6.2: `MyAppLogic::initiate_profile_selection_or_creation(window_id)`
-*   Get `available_profiles` using `profile_manager.list_profiles()` (P1.3).
-*   **Determine Dialog Texts:**
-    *   If `available_profiles` is empty: Title "Welcome!", Prompt "No profiles found. Please create a new profile to get started." Emphasize "Create New".
-    *   Else: Title "Select or Create Profile", Prompt "Please select a profile to continue, or create a new one."
-*   Issue `PlatformCommand::ShowProfileSelectionDialog` (New Command) with `window_id`, `available_profiles`, determined texts, and `emphasize_create_new` flag.
+(Earlier steps already completed)
 
 ### P2.6.3: Implement New Platform Commands and Events
 *   **Platform Commands:**
@@ -66,32 +51,53 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   `ProfileSelectionDialogCompleted { window_id, chosen_profile_name: Option<String>, create_new_requested: bool, cancelled: bool }`
     *   `InputDialogCompleted { window_id, text: Option<String>, context_tag: Option<String> }`
     *   `FolderPickerDialogCompleted { window_id, path: Option<PathBuf> }`
-*   **Platform Layer Implementation:**
-    *   Implement native dialogs for these commands, sending back the corresponding `AppEvent`.
-    *   `ShowProfileSelectionDialog`: Modal, list box, "Select", "Create New", "Quit Application" buttons.
-    *   `ShowInputDialog`: Modal, text input, "OK", "Cancel".
-    *   `ShowFolderPickerDialog`: Native folder browser, use `initial_dir` (e.g., Documents, last valid path).
-    *   `QuitApplication`: Posts `WM_QUIT`.
-    *   `SetWindowBusyCursor`: Changes mouse cursor.
+*   **Platform Layer Implementation (Stubs for Now):**
+    *   Implement STUB handlers for these commands in the platform layer. These stubs will:
+        *   Log that they were called.
+        *   Simulate a predefined user response (e.g., "Create New" for profile selection, a sample name for input, a sample path for folder picker).
+        *   Post a custom `WM_APP_...` message to the window's message queue, containing information about the simulated response.
+        *   (Actual native dialogs deferred, `SetWindowBusyCursor` deferred).
+    *   Implement handlers in `Win32ApiInternalState::handle_window_message` for these `WM_APP_...` messages. These handlers will:
+        *   Construct the appropriate `AppEvent` (e.g., `ProfileSelectionDialogCompleted`).
+        *   Send this `AppEvent` to `MyAppLogic` via the registered event handler.
+        *   Process any commands returned by `MyAppLogic` using `Win32ApiInternalState::process_commands_from_event_handler`.
+    *   Implement handling for `PlatformCommand::QuitApplication` (e.g., by calling `PostQuitMessage`).
 
-### P2.6.4: `MyAppLogic` Event Handling for Profile Flow
+### P2.6.4: Refactor to Internal Command Queue Architecture
+*   **Goal:** Decouple `MyAppLogic` command generation from immediate platform execution, improve event flow clarity, and simplify platform stub implementations for dialogs.
+*   **`MyAppLogic` Changes:**
+    *   Add an internal `command_queue: VecDeque<PlatformCommand>`.
+    *   Modify `on_main_window_created()`, `handle_event()`, and all sub-handlers (e.g., `handle_profile_selection_dialog_completed`) to enqueue `PlatformCommand`s into this internal queue instead of returning `Vec<PlatformCommand>`. Their return types will likely change to `()`.
+    *   Add a method like `try_dequeue_command(&mut self) -> Option<PlatformCommand>` for the platform layer to retrieve commands.
+*   **`PlatformInterface` / `Win32ApiInternalState` Changes:**
+    *   The existing `PlatformInterface::execute_command()` and `Win32ApiInternalState::process_commands_from_event_handler()` methods will merge into a single command execution method within `Win32ApiInternalState` (e.g., `execute_platform_command_directly(command)`).
+    *   Modify `PlatformInterface::run()`:
+        *   The main message loop will be restructured. Before calling `GetMessageW` (or `PeekMessageW`), it will first drain `MyAppLogic`'s internal command queue, executing each command using the new `execute_platform_command_directly` method.
+        *   After processing OS messages (via `DispatchMessageW`), the loop repeats.
+*   **Platform Stub Dialog Handlers (e.g., `_handle_show_profile_selection_dialog_impl`):**
+    *   These stubs will now directly invoke `my_app_logic.handle_event(simulated_event)` after simulating a user response. (This is safe because the `event_handler` in `Win32ApiInternalState` will be registered by the time these stubs are called via the new main loop logic).
+    *   `MyAppLogic` will then enqueue any resulting commands, which the main loop will pick up. This removes the need for `PostMessageW` for the *stubs*.
+*   **`main.rs` Changes:**
+    *   The initial commands from `my_app_logic.on_main_window_created()` will no longer be executed in a separate loop in `main.rs`. They will be enqueued by `MyAppLogic` and processed by the modified `PlatformInterface::run()` loop.
+
+### P2.6.5: `MyAppLogic` Event Handling for Profile Flow
 *   **Handle `AppEvent::ProfileSelectionDialogCompleted`:**
     *   If `cancelled`: Issue `PlatformCommand::QuitApplication`.
     *   If `chosen_profile_name`: Attempt to load.
-        *   On success: Set active, save as last used. Proceed to P2.6.5.
+        *   On success: Set active, save as last used. Proceed to P2.6.6.
         *   On failure: Status bar error (e.g., "Could not load profile '[X]'. May be corrupt."), then `initiate_profile_selection_or_creation(window_id)`.
     *   If `create_new_requested`: Call `MyAppLogic::start_new_profile_creation_flow(window_id)`.
 *   **`MyAppLogic::start_new_profile_creation_flow(window_id)`:**
-    *   **Step 1 (Name):** Issue `ShowInputDialog` (title: "New Profile (1/2): Name", prompt: "Enter profile name:", context: "NewProfileName").
+    *   **Step 1 (Name):** Issue `ShowInputDialog` (title: "New Profile (1/2): Name", prompt: "Enter profile name:", context_tag: Some("NewProfileName".to_string())).
 *   **Handle `AppEvent::InputDialogCompleted` (for "NewProfileName"):**
-    *   If `text` is valid: Store name. Issue `ShowFolderPickerDialog` (title: "New Profile (2/2): Select Root Folder").
+    *   If `text` is valid: Store name. Issue `ShowFolderPickerDialog` (title: "New Profile (2/2): Select Root Folder", initial_dir: None).
     *   If `text` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
     *   If `text` invalid: Status bar error ("Invalid name..."). Re-issue `ShowInputDialog` for name.
 *   **Handle `AppEvent::FolderPickerDialogCompleted`:**
-    *   If `path` is Some: Create `Profile`, save it (P1.3). Set active, save as last used. Proceed to P2.6.5.
+    *   If `path` is Some: Create `Profile`, save it (P1.3). Set active, save as last used. Proceed to P2.6.6.
     *   If `path` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
 
-### P2.6.5: Post-Profile Activation: Scan, Apply, Populate, Show
+### P2.6.6: Post-Profile Activation: Scan, Apply, Populate, Show
 *   This step is reached after a profile is successfully loaded or created.
 *   Perform directory scan based on active `profile.root_folder` (P1.2).
 *   Apply profile to the scanned tree (P1.4).
@@ -140,8 +146,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component).
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]` User-friendly error messages are key.
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
+*   Consolidate Status Messages: The on_main_window_created failure paths now push an error message, and initiate_profile_selection_or_creation also pushes its own message. Review if these should be combined or if the platform layer should only display the latest status message for a given window. The current behavior is that multiple UpdateStatusBarText commands will be processed sequentially.
 *   Profile Name in `create_profile_from_current_state`: Update `MyAppLogic.current_profile_name` only after successful save.
-*   Review `Win32ApiInternalState::process_commands_from_event_handler` vs `PlatformInterface::execute_command`.
 *   Break out large functions in `app_logic/handler.rs`. `[TechModularityLogicalModulesV1]`
 *   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
 *   The current `last_profile_name.txt` is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for `app_settings.json` might be beneficial. The `core::config` module can be expanded for this.

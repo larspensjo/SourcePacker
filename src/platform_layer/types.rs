@@ -98,6 +98,24 @@ pub enum AppEvent {
         window_id: WindowId,
         result: Option<PathBuf>,
     },
+    /// Result of the profile selection dialog shown at startup or when switching profiles.
+    ProfileSelectionDialogCompleted {
+        window_id: WindowId,
+        chosen_profile_name: Option<String>,
+        create_new_requested: bool,
+        user_cancelled: bool,
+    },
+    /// Result of a generic input dialog.
+    InputDialogCompleted {
+        window_id: WindowId,
+        text: Option<String>,        // Some(text) if OK, None if Cancelled
+        context_tag: Option<String>, // To identify the purpose of the input dialog
+    },
+    /// Result of a folder picker dialog.
+    FolderPickerDialogCompleted {
+        window_id: WindowId,
+        path: Option<PathBuf>, // Some(path) if OK, None if Cancelled
+    },
 }
 
 // --- Commands from App Logic to Platform ---
@@ -146,6 +164,30 @@ pub enum PlatformCommand {
         text: String,
         is_error: bool,
     },
+    /// Instructs the platform to show a dialog for profile selection or creation.
+    ShowProfileSelectionDialog {
+        window_id: WindowId,
+        available_profiles: Vec<String>,
+        title: String,
+        prompt: String,
+        emphasize_create_new: bool, // Hint to UI to make "Create New" more prominent if no profiles exist
+    },
+    /// Instructs the platform to show a generic text input dialog.
+    ShowInputDialog {
+        window_id: WindowId,
+        title: String,
+        prompt: String,
+        default_text: Option<String>,
+        context_tag: Option<String>, // Opaque tag for AppLogic to identify response
+    },
+    /// Instructs the platform to show a folder picker dialog.
+    ShowFolderPickerDialog {
+        window_id: WindowId,
+        title: String,
+        initial_dir: Option<PathBuf>,
+    },
+    /// Instructs the platform to terminate the application.
+    QuitApplication,
 }
 
 // --- Trait for App Logic to Handle Events ---

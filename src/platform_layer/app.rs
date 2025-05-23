@@ -293,6 +293,151 @@ impl Win32ApiInternalState {
         }
         Ok(())
     }
+    fn _handle_show_profile_selection_dialog_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        available_profiles: Vec<String>,
+        title: String,
+        prompt: String,
+        emphasize_create_new: bool,
+    ) -> PlatformResult<()> {
+        // This is where the actual Win32 dialog code will go.
+        // For P2.6.3, we'll simulate a choice to unblock MyAppLogic development.
+        // In a real implementation, this would be modal and block until user interaction.
+        println!(
+            "Platform (STUB): Showing Profile Selection Dialog. Title: '{}', Prompt: '{}', Emphasize Create: {}, Profiles: {:?}",
+            title, prompt, emphasize_create_new, available_profiles
+        );
+
+        // Simulate user action for now:
+        // Option 1: Simulate choosing the first available profile if any
+        // Option 2: Simulate clicking "Create New"
+        // Option 3: Simulate "Cancel"
+
+        let (chosen_profile_name, create_new_requested, cancelled) =
+            if !available_profiles.is_empty() && !emphasize_create_new {
+                // Simulate choosing the first profile
+                (Some(available_profiles[0].clone()), false, false)
+            } else if emphasize_create_new || available_profiles.is_empty() {
+                // Simulate "Create New" if no profiles or if "Create New" is emphasized
+                (None, true, false)
+            } else {
+                // Simulate cancel if other conditions aren't met (e.g. has profiles, but not emphasizing create)
+                // This branch might not be hit with current logic but good for completeness
+                (None, false, true)
+            };
+
+        println!(
+            "Platform (STUB): Simulating dialog result: chosen='{:?}', create_new={}, cancelled={}",
+            chosen_profile_name, create_new_requested, cancelled
+        );
+
+        let event = AppEvent::ProfileSelectionDialogCompleted {
+            window_id: window_id,
+            chosen_profile_name: chosen_profile_name,
+            create_new_requested: create_new_requested,
+            user_cancelled: cancelled,
+        };
+
+        // Send event back to AppLogic
+        if let Some(handler_arc) = self
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                let commands = handler_guard.handle_event(event);
+                if !commands.is_empty() {
+                    // Process commands recursively. This is important.
+                    self.process_commands_from_event_handler(commands);
+                }
+            } else {
+                eprintln!(
+                    "Platform: Failed to lock event handler for ProfileSelectionDialogCompleted."
+                );
+            }
+        } else {
+            eprintln!("Platform: Event handler not available for ProfileSelectionDialogCompleted.");
+        }
+        Ok(())
+    }
+
+    fn _handle_show_input_dialog_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        title: String,
+        prompt: String,
+        default_text: Option<String>,
+        context_tag: Option<String>,
+    ) -> PlatformResult<()> {
+        println!(
+            "Platform (STUB): Showing Input Dialog. Title: '{}', Prompt: '{}', Default: {:?}, Tag: {:?}",
+            title, prompt, default_text, context_tag
+        );
+        // Simulate user entering "TestProfileNameFromStub"
+        let event = AppEvent::InputDialogCompleted {
+            window_id,
+            text: Some("TestProfileNameFromStub".to_string()), // Simulate successful input
+            context_tag,
+        };
+        // Send event back to AppLogic (similar to ProfileSelectionDialog)
+        if let Some(handler_arc) = self
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                let commands = handler_guard.handle_event(event);
+                if !commands.is_empty() {
+                    self.process_commands_from_event_handler(commands);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn _handle_show_folder_picker_dialog_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        title: String,
+        initial_dir: Option<PathBuf>,
+    ) -> PlatformResult<()> {
+        println!(
+            "Platform (STUB): Showing Folder Picker Dialog. Title: '{}', Initial Dir: {:?}",
+            title, initial_dir
+        );
+        // Simulate user picking a folder
+        let event = AppEvent::FolderPickerDialogCompleted {
+            window_id,
+            path: Some(PathBuf::from("./mock_picked_folder_stub")), // Simulate successful pick
+        };
+        // Send event back to AppLogic (similar to ProfileSelectionDialog)
+        if let Some(handler_arc) = self
+            .event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|wh| wh.upgrade())
+        {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                let commands = handler_guard.handle_event(event);
+                if !commands.is_empty() {
+                    self.process_commands_from_event_handler(commands);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn _handle_quit_application_impl(self: &Arc<Self>) -> PlatformResult<()> {
+        println!("Platform: Received QuitApplication command. Posting WM_QUIT.");
+        unsafe { PostQuitMessage(0) };
+        Ok(())
+    }
 
     pub fn process_commands_from_event_handler(self: &Arc<Self>, commands: Vec<PlatformCommand>) {
         for cmd in commands {
@@ -345,6 +490,38 @@ impl Win32ApiInternalState {
                     text,
                     is_error,
                 } => window_common::update_status_bar_text(self, window_id, &text, is_error),
+                PlatformCommand::ShowProfileSelectionDialog {
+                    window_id,
+                    available_profiles,
+                    title,
+                    prompt,
+                    emphasize_create_new,
+                } => self._handle_show_profile_selection_dialog_impl(
+                    window_id,
+                    available_profiles,
+                    title,
+                    prompt,
+                    emphasize_create_new,
+                ),
+                PlatformCommand::ShowInputDialog {
+                    window_id,
+                    title,
+                    prompt,
+                    default_text,
+                    context_tag,
+                } => self._handle_show_input_dialog_impl(
+                    window_id,
+                    title,
+                    prompt,
+                    default_text,
+                    context_tag,
+                ),
+                PlatformCommand::ShowFolderPickerDialog {
+                    window_id,
+                    title,
+                    initial_dir,
+                } => self._handle_show_folder_picker_dialog_impl(window_id, title, initial_dir),
+                PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
             };
 
             if let Err(e) = result {
@@ -520,6 +697,44 @@ impl PlatformInterface {
                 &text,
                 is_error,
             ),
+            PlatformCommand::ShowProfileSelectionDialog {
+                window_id,
+                available_profiles,
+                title,
+                prompt,
+                emphasize_create_new,
+            } => self
+                .internal_state
+                ._handle_show_profile_selection_dialog_impl(
+                    window_id,
+                    available_profiles,
+                    title,
+                    prompt,
+                    emphasize_create_new,
+                ),
+            PlatformCommand::ShowInputDialog {
+                window_id,
+                title,
+                prompt,
+                default_text,
+                context_tag,
+            } => self.internal_state._handle_show_input_dialog_impl(
+                window_id,
+                title,
+                prompt,
+                default_text,
+                context_tag,
+            ),
+            PlatformCommand::ShowFolderPickerDialog {
+                window_id,
+                title,
+                initial_dir,
+            } => self.internal_state._handle_show_folder_picker_dialog_impl(
+                window_id,
+                title,
+                initial_dir,
+            ),
+            PlatformCommand::QuitApplication => self.internal_state._handle_quit_application_impl(),
         }
     }
 

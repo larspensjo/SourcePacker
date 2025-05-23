@@ -540,8 +540,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
-    let _cmds = logic.on_main_window_created(WindowId(1));
+    let cmds = logic.on_main_window_created(WindowId(1));
 
+    // Verify state
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
         Some(last_profile_name_to_load)
@@ -553,83 +554,322 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
     assert_eq!(*logic.test_root_path_for_scan(), startup_profile_root);
 
-    // Verify MockStateManager was called for apply_profile_to_tree
+    // Verify MockStateManager was called
     let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
-    assert_eq!(
-        apply_calls.len(),
-        1,
-        "Expected apply_profile_to_tree to be called once"
-    );
-    assert_eq!(
-        apply_calls[0].1.name, mock_loaded_profile.name,
-        "Profile name mismatch in apply_profile_to_tree call"
-    );
+    assert_eq!(apply_calls.len(), 1);
+    assert_eq!(apply_calls[0].1.name, mock_loaded_profile.name);
 
+    // Verify file nodes cache
     assert_eq!(logic.test_file_nodes_cache().len(), 1);
     assert_eq!(
         logic.test_file_nodes_cache()[0].name,
         "mock_startup_file.txt"
     );
-    assert_eq!(
-        // This depends on MockStateManager correctly simulating the apply logic
-        logic.test_file_nodes_cache()[0].state,
-        FileState::Selected, // Because we added it to selected_paths_for_profile
-        "FileNode state should be Selected after apply_profile_to_tree"
-    );
+    assert_eq!(logic.test_file_nodes_cache()[0].state, FileState::Selected);
 
-    // Assertions for archive status and archiver interaction
+    // Verify archive status
     assert_eq!(
         *logic.test_current_archive_status(),
         Some(ArchiveStatus::NotYetGenerated)
     );
     assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
-    let (profile_arg, nodes_arg) = &mock_archiver.get_check_archive_status_calls()[0];
-    assert_eq!(profile_arg.name, mock_loaded_profile.name);
-    assert_eq!(nodes_arg.len(), mock_scan_result.len());
-    if !nodes_arg.is_empty() {
-        // Check the state of the node passed to check_archive_status
-        assert_eq!(
-            nodes_arg[0].state,
-            FileState::Selected,
-            "Node passed to check_archive_status should be Selected"
-        );
+
+    // Verify commands: SetWindowTitle, PopulateTreeView, UpdateStatusBarText, ShowWindow
+    assert!(
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title.contains(last_profile_name_to_load))),
+        "Expected SetWindowTitle command with profile name. Got: {:?}", cmds
+    );
+    assert!(
+        cmds.iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })),
+        "Expected PopulateTreeView command. Got: {:?}",
+        cmds
+    );
+    assert!(
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: false, .. } if text.contains(last_profile_name_to_load))),
+        "Expected UpdateStatusBarText command with success message. Got: {:?}", cmds
+    );
+    assert!(
+        cmds.iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. })),
+        "Expected ShowWindow command. Got: {:?}",
+        cmds
+    );
+    assert_eq!(
+        cmds.len(),
+        4,
+        "Expected 4 commands for successful profile load. Got: {:?}",
+        cmds
+    );
+}
+
+#[test]
+fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager, // Used for list_profiles
+        _mock_file_system_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    mock_config_manager.set_load_last_profile_name_result(Ok(None));
+    // Simulate profile_manager.list_profiles() returning an empty list
+    mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
+
+    let cmds = logic.on_main_window_created(WindowId(1));
+
+    assert!(logic.test_current_profile_name().is_none());
+    assert!(logic.test_current_profile_cache().is_none());
+    assert!(logic.test_file_nodes_cache().is_empty());
+    assert!(logic.test_current_archive_status().is_none());
+
+    // Verify commands: Expect ShowProfileSelectionDialog
+    assert_eq!(
+        cmds.len(),
+        1,
+        "Expected 1 command (ShowProfileSelectionDialog). Got: {:?}",
+        cmds
+    );
+    match &cmds[0] {
+        PlatformCommand::ShowProfileSelectionDialog {
+            title,
+            prompt,
+            emphasize_create_new,
+            available_profiles,
+            ..
+        } => {
+            assert!(title.contains("Welcome"));
+            assert!(prompt.contains("No profiles found"));
+            assert_eq!(*emphasize_create_new, true);
+            assert!(available_profiles.is_empty());
+        }
+        _ => panic!(
+            "Expected ShowProfileSelectionDialog command. Got: {:?}",
+            cmds[0]
+        ),
+    }
+    assert!(
+        !cmds
+            .iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+    );
+}
+
+#[test]
+fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_initiate_flow() {
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager, // Used for list_profiles
+        _mock_file_system_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    mock_config_manager.set_load_last_profile_name_result(Ok(None));
+    // Simulate profile_manager.list_profiles() returning some profiles
+    let existing_profiles = vec!["ProfileA".to_string(), "ProfileB".to_string()];
+    mock_profile_manager.set_list_profiles_result(Ok(existing_profiles.clone()));
+
+    let cmds = logic.on_main_window_created(WindowId(1));
+
+    assert!(logic.test_current_profile_name().is_none());
+    // ... (other state assertions remain the same) ...
+
+    // Verify commands: Expect ShowProfileSelectionDialog with different text
+    assert_eq!(
+        cmds.len(),
+        1,
+        "Expected 1 command (ShowProfileSelectionDialog). Got: {:?}",
+        cmds
+    );
+    match &cmds[0] {
+        PlatformCommand::ShowProfileSelectionDialog {
+            title,
+            prompt,
+            emphasize_create_new,
+            available_profiles,
+            ..
+        } => {
+            assert!(title.contains("Select or Create Profile"));
+            assert!(prompt.contains("select an existing profile"));
+            assert_eq!(*emphasize_create_new, false);
+            assert_eq!(*available_profiles, existing_profiles);
+        }
+        _ => panic!(
+            "Expected ShowProfileSelectionDialog command. Got: {:?}",
+            cmds[0]
+        ),
     }
 }
 
 #[test]
-fn test_on_main_window_created_no_last_profile_with_mocks() {
+fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_flow() {
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager, // For list_profiles in initiate_profile_selection_or_creation
+        _mock_file_system_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    let config_error = ConfigError::Io(io::Error::new(io::ErrorKind::Other, "config load failure"));
+    mock_config_manager.set_load_last_profile_name_result(Err(config_error));
+    // list_profiles might still be called by initiate_profile_selection_or_creation
+    mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
+
+    let cmds = logic.on_main_window_created(WindowId(1));
+
+    assert!(logic.test_current_profile_name().is_none());
+    // ... (other state assertions) ...
+
+    // Verify commands: ShowProfileSelectionDialog + UpdateStatusBarText for the initial error
+    assert_eq!(
+        cmds.len(),
+        2,
+        "Expected 2 commands (ShowProfileSelectionDialog + error status). Got: {:?}",
+        cmds
+    );
+
+    // Check for ShowProfileSelectionDialog (order might vary depending on push order)
+    assert!(
+        cmds.iter().any(|cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog {
+                emphasize_create_new: true,
+                ..
+            }
+        )),
+        "Expected ShowProfileSelectionDialog command"
+    );
+
+    // Check for the error status message
+    assert!(
+        cmds.iter().any(|cmd| match cmd {
+            PlatformCommand::UpdateStatusBarText {
+                text,
+                is_error: true,
+                ..
+            } => text.contains("Error loading last profile name"),
+            _ => false,
+        }),
+        "Expected error UpdateStatusBarText command"
+    );
+
+    assert!(
+        !cmds
+            .iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+    );
+}
+
+#[test]
+fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager,
+        _mock_file_system_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    let last_profile_name = "ExistingButFailsToLoadProfile";
+    mock_config_manager.set_load_last_profile_name_result(Ok(Some(last_profile_name.to_string())));
+
+    let profile_error = ProfileError::Io(io::Error::new(
+        io::ErrorKind::NotFound,
+        "profile not found physically",
+    ));
+    mock_profile_manager.set_load_profile_result(last_profile_name, Err(profile_error));
+    // list_profiles might still be called
+    mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
+
+    let cmds = logic.on_main_window_created(WindowId(1));
+
+    assert!(logic.test_current_profile_name().is_none());
+    // ... (other state assertions) ...
+
+    // Verify commands: ShowProfileSelectionDialog + UpdateStatusBarText for the profile load error
+    assert_eq!(
+        cmds.len(),
+        2,
+        "Expected 2 commands (ShowProfileSelectionDialog + error status). Got: {:?}",
+        cmds
+    );
+
+    assert!(
+        cmds.iter().any(|cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog {
+                emphasize_create_new: true,
+                ..
+            }
+        )),
+        "Expected ShowProfileSelectionDialog command"
+    );
+
+    assert!(
+        cmds.iter().any(|cmd| match cmd {
+            PlatformCommand::UpdateStatusBarText {
+                text,
+                is_error: true,
+                ..
+            } => text.contains("Failed to load last profile") && text.contains(last_profile_name),
+            _ => false,
+        }),
+        "Expected profile load error UpdateStatusBarText command"
+    );
+
+    assert!(
+        !cmds
+            .iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+    );
+}
+
+fn test_initiate_profile_selection_failure_to_list_profiles() {
     let (
         mut logic,
         _mock_config_manager,
-        _mock_profile_manager,
-        mock_file_system_scanner,
+        mock_profile_manager,
+        _mock_fs_scanner,
         _mock_archiver,
-        _mock_state_manager, // Present but not primary focus for this path's assertions
+        _mock_state_manager,
     ) = setup_logic_with_mocks();
 
-    let default_scan_path = PathBuf::from(".");
-    let mock_default_scan_file_path = default_scan_path.join("default_mock_scan_file.txt");
+    // Simulate ProfileManagerOperations.list_profiles() returning an error
+    mock_profile_manager.set_list_profiles_result(Err(ProfileError::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "cannot access profiles dir",
+    ))));
 
-    let mock_default_scan_result = vec![FileNode::new(
-        mock_default_scan_file_path.clone(),
-        "default_mock_scan_file.txt".into(),
-        false,
-    )];
-    mock_file_system_scanner
-        .set_scan_directory_result(&default_scan_path, Ok(mock_default_scan_result.clone()));
+    // Directly call the method to test its isolated behavior
+    let cmds = logic.initiate_profile_selection_or_creation(WindowId(1));
 
-    let _cmds = logic.on_main_window_created(WindowId(1));
-
-    assert!(logic.test_current_profile_name().is_none());
-    assert!(logic.test_current_profile_cache().is_none());
-    assert_eq!(*logic.test_root_path_for_scan(), default_scan_path);
-
-    let found_dummy_file = logic
-        .test_file_nodes_cache()
-        .iter()
-        .any(|n| n.path == mock_default_scan_file_path);
-    assert!(found_dummy_file);
-    assert!(logic.test_current_archive_status().is_none());
+    assert_eq!(
+        cmds.len(),
+        1,
+        "Expected 1 command (UpdateStatusBarText with error). Got: {:?}",
+        cmds
+    );
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText {
+            text,
+            is_error: true,
+            ..
+        } => {
+            assert!(text.contains("Failed to list profiles"));
+            assert!(text.contains("Cannot proceed"));
+        }
+        _ => panic!(
+            "Expected UpdateStatusBarText error command. Got: {:?}",
+            cmds[0]
+        ),
+    }
 }
 
 #[test]

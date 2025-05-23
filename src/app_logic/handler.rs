@@ -133,16 +133,14 @@ impl MyAppLogic {
     /*
      * Handles the event indicating the main application window has been created.
      * It attempts to load the last used profile. If successful, it uses that profile's
-     * settings for the initial directory scan and state application. Otherwise, it
-     * proceeds with a default scan. Finally, it populates the UI and shows the window.
+     * settings to activate the UI. Otherwise, it initiates a flow for the user to
+     * select or create a new profile, keeping the main window hidden until a profile
+     * is active.
      */
     pub fn on_main_window_created(&mut self, window_id: WindowId) -> Vec<PlatformCommand> {
         self.main_window_id = Some(window_id);
         let mut commands = Vec::new();
-        let mut status_message = "Ready".to_string();
-        let mut status_is_error = false;
 
-        let mut loaded_profile_on_startup = false;
         match self
             .config_manager
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
@@ -158,124 +156,60 @@ impl MyAppLogic {
                 {
                     Ok(profile) => {
                         println!(
-                            "AppLogic: Successfully loaded last profile '{}' on startup via manager.",
+                            "AppLogic: Successfully loaded last profile '{}' on startup.",
                             profile.name
                         );
-                        self.current_profile_name = Some(profile.name.clone());
-                        self.root_path_for_scan = profile.root_folder.clone();
-                        self.current_profile_cache = Some(profile);
-                        loaded_profile_on_startup = true;
-                        status_message = format!(
-                            "Profile '{}' loaded.",
-                            self.current_profile_name.as_ref().unwrap()
-                        );
+                        let profile_name_for_title = profile.name.clone();
+                        let operation_status_message =
+                            format!("Profile '{}' loaded.", profile.name);
+
+                        commands.push(PlatformCommand::SetWindowTitle {
+                            window_id,
+                            title: format!("SourcePacker - [{}]", profile_name_for_title),
+                        });
+                        commands.extend(self._activate_profile_and_show_window(
+                            window_id,
+                            profile,
+                            operation_status_message,
+                        ));
                     }
                     Err(e) => {
                         let err_msg = format!(
-                            "Failed to load last profile '{}': {:?}. Using default.",
+                            "Failed to load last profile '{}': {:?}. Initiating selection.",
                             last_profile_name, e
                         );
                         eprintln!("AppLogic: {}", err_msg);
-                        self.current_profile_name = None;
-                        self.current_profile_cache = None;
-                        status_message = err_msg;
-                        status_is_error = true;
+                        // Store the error message to potentially show in status bar later if needed by initiate_profile_selection_or_creation
+                        // For now, initiate_profile_selection_or_creation sets its own message.
+                        commands.extend(self.initiate_profile_selection_or_creation(window_id));
+                        // Optionally, add a command here to set the status bar with err_msg
+                        // if initiate_profile_selection_or_creation doesn't immediately override it.
+                        commands.push(PlatformCommand::UpdateStatusBarText {
+                            window_id,
+                            text: err_msg, // Show the specific load error
+                            is_error: true,
+                        });
                     }
                 }
             }
             Ok(None) => {
-                println!("AppLogic: No last profile name found. Proceeding with default state.");
-                status_message = "No last profile. Default state.".to_string();
-            }
-            Err(e) => {
-                let err_msg = format!("Error loading last profile name: {:?}. Using default.", e);
-                eprintln!("AppLogic: {}", err_msg);
-                status_message = err_msg;
-                status_is_error = true;
-            }
-        }
-
-        println!(
-            "AppLogic: Initial scan of directory {:?}",
-            self.root_path_for_scan
-        );
-
-        match self
-            .file_system_scanner
-            .scan_directory(&self.root_path_for_scan)
-        {
-            Ok(nodes) => {
-                self.file_nodes_cache = nodes;
-                println!(
-                    "AppLogic: Scanned {} top-level nodes.",
-                    self.file_nodes_cache.len()
-                );
-
-                if loaded_profile_on_startup {
-                    if let Some(profile) = &self.current_profile_cache {
-                        self.state_manager
-                            .apply_profile_to_tree(&mut self.file_nodes_cache, profile);
-                        println!(
-                            "AppLogic: Applied loaded profile to the scanned tree via state_manager."
-                        );
-                    }
-                }
-                // If status_is_error is false, it means profile loading (if attempted) was okay.
-                // If it's true, we keep the error message from profile loading.
-                if !status_is_error {
-                    status_message = format!(
-                        "Scanned '{}'. {}",
-                        self.root_path_for_scan.display(),
-                        if loaded_profile_on_startup {
-                            format!(
-                                "Profile '{}' applied.",
-                                self.current_profile_name
-                                    .as_ref()
-                                    .unwrap_or(&"".to_string())
-                            )
-                        } else {
-                            "Default scan complete.".to_string()
-                        }
-                    );
-                }
+                println!("AppLogic: No last profile name found. Initiating selection/creation.");
+                commands.extend(self.initiate_profile_selection_or_creation(window_id));
             }
             Err(e) => {
                 let err_msg = format!(
-                    "Failed to scan directory {:?}: {}",
-                    self.root_path_for_scan, e
+                    "Error loading last profile name: {:?}. Initiating selection.",
+                    e
                 );
                 eprintln!("AppLogic: {}", err_msg);
-                self.file_nodes_cache.clear(); // Keep it clear on scan error
-                status_message = err_msg;
-                status_is_error = true;
+                commands.extend(self.initiate_profile_selection_or_creation(window_id));
+                commands.push(PlatformCommand::UpdateStatusBarText {
+                    window_id,
+                    text: err_msg,
+                    is_error: true,
+                });
             }
         }
-
-        self.update_current_archive_status();
-
-        self.next_tree_item_id_counter = 1;
-        self.path_to_tree_item_id.clear();
-        let descriptors = self.build_tree_item_descriptors_recursive();
-
-        if !descriptors.is_empty() {
-            commands.push(PlatformCommand::PopulateTreeView {
-                window_id,
-                items: descriptors,
-            });
-        } else if self.file_nodes_cache.is_empty() {
-            // Explicitly clear tree if scan resulted in empty (e.g., after an error)
-            commands.push(PlatformCommand::PopulateTreeView {
-                window_id,
-                items: vec![],
-            });
-        }
-
-        commands.push(PlatformCommand::UpdateStatusBarText {
-            window_id,
-            text: status_message,
-            is_error: status_is_error,
-        });
-        commands.push(PlatformCommand::ShowWindow { window_id });
         commands
     }
 
@@ -922,6 +856,220 @@ impl MyAppLogic {
     ) -> Vec<PlatformCommand> {
         Vec::new()
     }
+
+    /// Internal helper to finalize UI setup after a profile is active.
+    /// This scans the directory, applies the profile, populates the UI,
+    /// updates status, and shows the window.
+    fn _activate_profile_and_show_window(
+        &mut self,
+        window_id: WindowId,
+        profile_to_activate: Profile,
+        operation_status_message: String, // e.g., "Profile 'X' loaded."
+    ) -> Vec<PlatformCommand> {
+        let mut commands = Vec::new();
+        let mut status_message = operation_status_message;
+        let mut status_is_error = false;
+
+        // Set the active profile and its root path for scan
+        self.current_profile_name = Some(profile_to_activate.name.clone());
+        self.root_path_for_scan = profile_to_activate.root_folder.clone();
+        self.current_profile_cache = Some(profile_to_activate.clone()); // Clone the profile for the cache
+
+        println!(
+            "AppLogic: Activating profile '{}'. Scanning directory: {:?}",
+            self.current_profile_name.as_ref().unwrap(),
+            self.root_path_for_scan
+        );
+
+        // Proceed with scanning, applying profile, populating UI
+        match self
+            .file_system_scanner
+            .scan_directory(&self.root_path_for_scan)
+        {
+            Ok(nodes) => {
+                self.file_nodes_cache = nodes;
+                println!(
+                    "AppLogic: Scanned {} top-level nodes for active profile.",
+                    self.file_nodes_cache.len()
+                );
+
+                // Apply the activated profile to the scanned tree
+                self.state_manager
+                    .apply_profile_to_tree(&mut self.file_nodes_cache, &profile_to_activate);
+                println!(
+                    "AppLogic: Applied active profile '{}' to the scanned tree.",
+                    profile_to_activate.name
+                );
+            }
+            Err(e) => {
+                let err_msg = format!(
+                    "Failed to scan directory {:?} for profile '{}': {}",
+                    self.root_path_for_scan, profile_to_activate.name, e
+                );
+                eprintln!("AppLogic: {}", err_msg);
+                self.file_nodes_cache.clear();
+                status_message = err_msg; // Overwrite initial status message with error
+                status_is_error = true;
+            }
+        }
+
+        self.update_current_archive_status();
+
+        self.next_tree_item_id_counter = 1;
+        self.path_to_tree_item_id.clear();
+        let descriptors = self.build_tree_item_descriptors_recursive();
+
+        commands.push(PlatformCommand::PopulateTreeView {
+            window_id,
+            items: descriptors,
+        });
+
+        commands.push(PlatformCommand::UpdateStatusBarText {
+            window_id,
+            text: status_message,
+            is_error: status_is_error,
+        });
+        commands.push(PlatformCommand::ShowWindow { window_id });
+        commands
+    }
+
+    /*
+     * Initiates the UI flow for the user to select an existing profile or create a new one.
+     * This is typically called at startup if no last-used profile can be loaded, or if
+     * the user intends to switch profiles or is forced to after deleting an active profile.
+     * It lists available profiles and commands the platform layer to display a
+     * specialized dialog for this purpose.
+     */
+    pub(crate) fn initiate_profile_selection_or_creation(
+        &mut self,
+        window_id: WindowId,
+    ) -> Vec<PlatformCommand> {
+        println!("AppLogic: Initiating profile selection or creation flow.");
+        let mut commands = Vec::new();
+
+        match self.profile_manager.list_profiles(APP_NAME_FOR_PROFILES) {
+            Ok(available_profiles) => {
+                let (title, prompt, emphasize_create_new) = if available_profiles.is_empty() {
+                    (
+                        "Welcome to SourcePacker!".to_string(),
+                        "No profiles found. Please create a new profile to get started."
+                            .to_string(),
+                        true, // Emphasize "Create New"
+                    )
+                } else {
+                    (
+                        "Select or Create Profile".to_string(),
+                        "Please select an existing profile, or create a new one.".to_string(),
+                        false,
+                    )
+                };
+
+                println!(
+                    "AppLogic: Found {} available profiles. Dialog prompt: '{}'",
+                    available_profiles.len(),
+                    prompt
+                );
+
+                commands.push(PlatformCommand::ShowProfileSelectionDialog {
+                    window_id,
+                    available_profiles, // Pass the listed profiles
+                    title,
+                    prompt,
+                    emphasize_create_new,
+                });
+            }
+            Err(e) => {
+                let err_msg = format!(
+                    "Failed to list profiles: {:?}. Cannot proceed with profile selection.",
+                    e
+                );
+                eprintln!("AppLogic: {}", err_msg);
+                // This is a critical error. For now, update status bar.
+                // A more robust solution might involve a fatal error dialog or attempting to quit.
+                commands.push(PlatformCommand::UpdateStatusBarText {
+                    window_id,
+                    text: err_msg,
+                    is_error: true,
+                });
+                // Consider what should happen if listing profiles fails.
+                // Perhaps an option to quit or retry? For now, the UI will be stuck.
+                // P2.6.3 will add a "Quit Application" button to the dialog itself.
+            }
+        }
+        commands
+    }
+
+    fn handle_profile_selection_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        chosen_profile_name: Option<String>,
+        create_new_requested: bool,
+        cancelled: bool,
+    ) -> Vec<PlatformCommand> {
+        println!(
+            "AppLogic: ProfileSelectionDialogCompleted event received: window_id: {:?}, chosen: {:?}, create_new: {}, cancelled: {}",
+            window_id, chosen_profile_name, create_new_requested, cancelled
+        );
+        // Logic for P2.6.4 will go here.
+        // For now, just a placeholder. If cancelled, we might want to quit or re-prompt.
+        // If a profile is chosen or create_new is true, we'd proceed with profile activation or creation flow.
+        if cancelled {
+            // P2.6.4 specifies PlatformCommand::QuitApplication here. We'll add that command later.
+            println!(
+                "AppLogic: Profile selection was cancelled by user. (Currently no action taken)."
+            );
+            return vec![PlatformCommand::UpdateStatusBarText {
+                // Placeholder until QuitApplication command exists
+                window_id,
+                text: "Profile selection cancelled.".to_string(),
+                is_error: false,
+            }];
+        }
+
+        // Placeholder for successful selection or creation request
+        vec![PlatformCommand::UpdateStatusBarText {
+            window_id,
+            text: "Profile selection dialog completed (stub handler).".to_string(),
+            is_error: false,
+        }]
+    }
+
+    fn handle_input_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        text: Option<String>,
+        context_tag: Option<String>,
+    ) -> Vec<PlatformCommand> {
+        println!(
+            "AppLogic: InputDialogCompleted event received: window_id: {:?}, text: {:?}, context_tag: {:?}",
+            window_id, text, context_tag
+        );
+        // Logic for P2.6.4 will go here.
+        // Based on context_tag, proceed with profile creation steps.
+        vec![PlatformCommand::UpdateStatusBarText {
+            window_id,
+            text: "Input dialog completed (stub handler).".to_string(),
+            is_error: false,
+        }]
+    }
+
+    fn handle_folder_picker_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        path: Option<PathBuf>,
+    ) -> Vec<PlatformCommand> {
+        println!(
+            "AppLogic: FolderPickerDialogCompleted event received: window_id: {:?}, path: {:?}",
+            window_id, path
+        );
+        // Logic for P2.6.4 will go here.
+        // If path is Some, create profile, save, activate.
+        vec![PlatformCommand::UpdateStatusBarText {
+            window_id,
+            text: "Folder picker dialog completed (stub handler).".to_string(),
+            is_error: false,
+        }]
+    }
 }
 
 impl PlatformEventHandler for MyAppLogic {
@@ -953,6 +1101,25 @@ impl PlatformEventHandler for MyAppLogic {
                 width,
                 height,
             } => self.handle_window_resized(window_id, width, height),
+            AppEvent::ProfileSelectionDialogCompleted {
+                window_id,
+                chosen_profile_name,
+                create_new_requested,
+                user_cancelled,
+            } => self.handle_profile_selection_dialog_completed(
+                window_id,
+                chosen_profile_name,
+                create_new_requested,
+                user_cancelled,
+            ),
+            AppEvent::InputDialogCompleted {
+                window_id,
+                text,
+                context_tag,
+            } => self.handle_input_dialog_completed(window_id, text, context_tag),
+            AppEvent::FolderPickerDialogCompleted { window_id, path } => {
+                self.handle_folder_picker_dialog_completed(window_id, path)
+            }
         }
     }
 
