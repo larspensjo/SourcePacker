@@ -18,10 +18,12 @@ pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
 // Made pub(crate) for access from handler_tests.rs
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum PendingAction {
     SavingArchive,
     SavingProfile,
+    CreatingNewProfileGetName,
+    CreatingNewProfileGetRoot,
 }
 
 /*
@@ -45,6 +47,7 @@ pub struct MyAppLogic {
     current_archive_status: Option<ArchiveStatus>,
     pending_archive_content: Option<String>,
     pending_action: Option<PendingAction>,
+    pending_new_profile_name: Option<String>, // Used during new profile creation
     config_manager: Arc<dyn ConfigManagerOperations>,
     profile_manager: Arc<dyn ProfileManagerOperations>,
     file_system_scanner: Arc<dyn FileSystemScannerOperations>,
@@ -79,6 +82,7 @@ impl MyAppLogic {
             current_archive_status: None,
             pending_archive_content: None,
             pending_action: None,
+            pending_new_profile_name: None,
             config_manager,
             profile_manager,
             file_system_scanner,
@@ -166,11 +170,8 @@ impl MyAppLogic {
                         let operation_status_message =
                             format!("Profile '{}' loaded.", profile.name);
 
-                        self.synchronous_command_queue
-                            .push_back(PlatformCommand::SetWindowTitle {
-                                window_id,
-                                title: format!("SourcePacker - [{}]", profile_name_for_title),
-                            });
+                        // P2.6.6: Set window title, but don't show window yet.
+                        // ShowWindow will be handled by _activate_profile_and_show_window.
                         self._activate_profile_and_show_window(
                             window_id,
                             profile,
@@ -284,9 +285,27 @@ impl MyAppLogic {
                 .check_archive_status(profile, &self.file_nodes_cache);
             self.current_archive_status = Some(status);
             println!("AppLogic: Archive status updated to: {:?}", status);
+            // P2.8: Update status bar with archive status
+            if let Some(main_id) = self.main_window_id {
+                let status_text = format!("Archive: {:?}", status);
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id: main_id,
+                        text: status_text,
+                        is_error: matches!(status, ArchiveStatus::ErrorChecking(_)),
+                    });
+            }
         } else {
             self.current_archive_status = None;
             println!("AppLogic: No profile loaded, archive status cleared.");
+            if let Some(main_id) = self.main_window_id {
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id: main_id,
+                        text: "Archive: (No profile loaded)".to_string(),
+                        is_error: false,
+                    });
+            }
         }
     }
 
@@ -547,8 +566,6 @@ impl MyAppLogic {
                         );
                         self.current_profile_name = Some(loaded_profile.name.clone());
                         self.root_path_for_scan = loaded_profile.root_folder.clone();
-                        self.current_profile_cache = Some(loaded_profile.clone());
-
                         if let Err(e) = self
                             .config_manager
                             .save_last_profile_name(APP_NAME_FOR_PROFILES, &loaded_profile.name)
@@ -558,41 +575,16 @@ impl MyAppLogic {
                                 loaded_profile.name, e
                             );
                         }
-
-                        match self
-                            .file_system_scanner
-                            .scan_directory(&self.root_path_for_scan)
-                        {
-                            Ok(nodes) => {
-                                self.file_nodes_cache = nodes;
-                                self.state_manager.apply_profile_to_tree(
-                                    &mut self.file_nodes_cache,
-                                    &loaded_profile,
-                                );
-                                self.refresh_tree_view_from_cache(window_id);
-                                self.update_current_archive_status();
-                                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
-                                    window_id,
-                                    text: format!(
-                                        "Profile '{}' loaded and scanned.",
-                                        profile_name_clone
-                                    ),
-                                    is_error: false,
-                                });
-                            }
-                            Err(e) => {
-                                let err_msg = format!("Error rescanning dir for profile: {}", e);
-                                eprintln!("AppLogic: {}", err_msg);
-                                self.file_nodes_cache.clear();
-                                self.refresh_tree_view_from_cache(window_id);
-                                self.current_archive_status = None;
-                                status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
-                                    window_id,
-                                    text: err_msg,
-                                    is_error: true,
-                                });
-                            }
-                        }
+                        // P2.6.6: Delegate to _activate_profile_and_show_window
+                        let status_msg =
+                            format!("Profile '{}' loaded and scanned.", profile_name_clone);
+                        self._activate_profile_and_show_window(
+                            window_id,
+                            loaded_profile,
+                            status_msg,
+                        );
+                        // Status update command is now handled by _activate_profile_and_show_window
+                        status_update_cmd = None; // No longer needed here
                     }
                     Err(e) => {
                         let err_msg = format!(
@@ -706,7 +698,7 @@ impl MyAppLogic {
                         }
                     } else {
                         println!("AppLogic: Save archive dialog cancelled.");
-                        self.pending_archive_content = None;
+                        self.pending_archive_content = None; // Clear pending content on cancel
                         status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
                             window_id,
                             text: "Save archive cancelled.".to_string(),
@@ -745,6 +737,16 @@ impl MyAppLogic {
                                             .unwrap()
                                             .root_folder
                                             .clone();
+                                        // P2.6.6: Set window title, no need to show (already shown or will be by _activate_profile_and_show_window)
+                                        self.synchronous_command_queue.push_back(
+                                            PlatformCommand::SetWindowTitle {
+                                                window_id,
+                                                title: format!(
+                                                    "SourcePacker - [{}]",
+                                                    profile_name_clone
+                                                ),
+                                            },
+                                        );
 
                                         if let Err(e) = self.config_manager.save_last_profile_name(
                                             APP_NAME_FOR_PROFILES,
@@ -809,11 +811,28 @@ impl MyAppLogic {
                         });
                     }
                 }
+                // START: Handle new pending actions for P2.6.5 (currently stubs or no-ops here)
+                Some(PendingAction::CreatingNewProfileGetName)
+                | Some(PendingAction::CreatingNewProfileGetRoot) => {
+                    // These are handled by InputDialogCompleted and FolderPickerDialogCompleted respectively.
+                    // If FileSaveDialogCompleted is called with these pending actions, it's an unexpected state.
+                    let err_msg = format!(
+                        "Unexpected FileSaveDialogCompleted with pending action: {:?}",
+                        self.pending_action
+                    );
+                    eprintln!("AppLogic: {}", err_msg);
+                    status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        is_error: true,
+                    });
+                }
+                // END: Handle new pending actions for P2.6.5
                 None => {
                     let err_msg = "FileSaveDialogCompleted received but no pending action was set."
                         .to_string();
                     eprintln!("AppLogic: {}", err_msg);
-                    self.pending_archive_content = None;
+                    self.pending_archive_content = None; // Also clear this, just in case.
                     status_update_cmd = Some(PlatformCommand::UpdateStatusBarText {
                         window_id,
                         text: err_msg,
@@ -834,6 +853,7 @@ impl MyAppLogic {
     /// Internal helper to finalize UI setup after a profile is active.
     /// This scans the directory, applies the profile, populates the UI,
     /// updates status, and shows the window. Commands are enqueued.
+    /// This is part of P2.6.6.
     fn _activate_profile_and_show_window(
         &mut self,
         window_id: WindowId,
@@ -852,6 +872,15 @@ impl MyAppLogic {
             self.current_profile_name.as_ref().unwrap(),
             self.root_path_for_scan
         );
+
+        // P2.8: Update window title
+        if let Some(name) = &self.current_profile_name {
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::SetWindowTitle {
+                    window_id,
+                    title: format!("SourcePacker - [{}]", name),
+                });
+        }
 
         // Proceed with scanning, applying profile, populating UI
         match self
@@ -879,23 +908,24 @@ impl MyAppLogic {
                     self.root_path_for_scan, profile_to_activate.name, e
                 );
                 eprintln!("AppLogic: {}", err_msg);
-                self.file_nodes_cache.clear();
+                self.file_nodes_cache.clear(); // Clear cache on scan error
                 status_message = err_msg;
                 status_is_error = true;
             }
         }
 
-        self.update_current_archive_status();
-        self.refresh_tree_view_from_cache(window_id); // Enqueues PopulateTreeView
+        self.update_current_archive_status(); // P2.6.6 & P2.8
+        self.refresh_tree_view_from_cache(window_id); // Enqueues PopulateTreeView P2.6.6
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateStatusBarText {
+                // P2.6.6
                 window_id,
                 text: status_message,
                 is_error: status_is_error,
             });
         self.synchronous_command_queue
-            .push_back(PlatformCommand::ShowWindow { window_id });
+            .push_back(PlatformCommand::ShowWindow { window_id }); // P2.6.6
     }
 
     /*
@@ -959,38 +989,109 @@ impl MyAppLogic {
         }
     }
 
+    // START: P2.6.5 - Handle ProfileSelectionDialogCompleted
     fn handle_profile_selection_dialog_completed(
         &mut self,
         window_id: WindowId,
         chosen_profile_name: Option<String>,
         create_new_requested: bool,
-        cancelled: bool,
+        user_cancelled: bool,
     ) {
         println!(
             "AppLogic: ProfileSelectionDialogCompleted event received: window_id: {:?}, chosen: {:?}, create_new: {}, cancelled: {}",
-            window_id, chosen_profile_name, create_new_requested, cancelled
+            window_id, chosen_profile_name, create_new_requested, user_cancelled
         );
-        if cancelled {
-            println!(
-                "AppLogic: Profile selection was cancelled by user. (Currently no action taken)."
-            );
+
+        if user_cancelled {
+            println!("AppLogic: Profile selection was cancelled by user. Quitting application.");
             self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text: "Profile selection cancelled.".to_string(),
-                    is_error: false,
-                });
+                .push_back(PlatformCommand::QuitApplication);
             return;
         }
 
+        if create_new_requested {
+            println!("AppLogic: User requested to create a new profile.");
+            self.start_new_profile_creation_flow(window_id);
+        } else if let Some(profile_name) = chosen_profile_name {
+            println!(
+                "AppLogic: User chose profile '{}'. Attempting to load.",
+                profile_name
+            );
+            match self
+                .profile_manager
+                .load_profile(&profile_name, APP_NAME_FOR_PROFILES)
+            {
+                Ok(profile) => {
+                    println!(
+                        "AppLogic: Successfully loaded chosen profile '{}'.",
+                        profile.name
+                    );
+                    let profile_name_for_title = profile.name.clone();
+                    let operation_status_message = format!("Profile '{}' loaded.", profile.name);
+                    if let Err(e) = self
+                        .config_manager
+                        .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
+                    {
+                        eprintln!(
+                            "AppLogic: Failed to save last profile name '{}': {:?}",
+                            profile.name, e
+                        );
+                        // Non-fatal, proceed with activation
+                    }
+                    // P2.6.6: Activate profile and show window
+                    self._activate_profile_and_show_window(
+                        window_id,
+                        profile,
+                        operation_status_message,
+                    );
+                }
+                Err(e) => {
+                    let err_msg = format!(
+                        "Could not load profile '{}': {:?}. Please try again or create a new one.",
+                        profile_name, e
+                    );
+                    eprintln!("AppLogic: {}", err_msg);
+                    self.synchronous_command_queue.push_back(
+                        PlatformCommand::UpdateStatusBarText {
+                            window_id,
+                            text: err_msg,
+                            is_error: true,
+                        },
+                    );
+                    self.initiate_profile_selection_or_creation(window_id); // Re-show dialog
+                }
+            }
+        } else {
+            // Should not happen if not cancelled and not create_new and no profile name
+            let err_msg = "AppLogic: ProfileSelectionDialogCompleted in unexpected state (no choice, not create, not cancelled). Re-initiating.".to_string();
+            eprintln!("{}", err_msg);
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateStatusBarText {
+                    window_id,
+                    text: err_msg,
+                    is_error: true,
+                });
+            self.initiate_profile_selection_or_creation(window_id);
+        }
+    }
+    // END: P2.6.5 - Handle ProfileSelectionDialogCompleted
+
+    // START: P2.6.5 - start_new_profile_creation_flow
+    fn start_new_profile_creation_flow(&mut self, window_id: WindowId) {
+        println!("AppLogic: Starting new profile creation flow (Step 1: Get Name).");
+        self.pending_action = Some(PendingAction::CreatingNewProfileGetName);
         self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
+            .push_back(PlatformCommand::ShowInputDialog {
                 window_id,
-                text: "Profile selection dialog completed (stub handler).".to_string(),
-                is_error: false,
+                title: "New Profile (1/2): Name".to_string(),
+                prompt: "Enter a name for the new profile:".to_string(),
+                default_text: None,
+                context_tag: Some("NewProfileName".to_string()),
             });
     }
+    // END: P2.6.5 - start_new_profile_creation_flow
 
+    // START: P2.6.5 - Handle InputDialogCompleted
     fn handle_input_dialog_completed(
         &mut self,
         window_id: WindowId,
@@ -1001,14 +1102,82 @@ impl MyAppLogic {
             "AppLogic: InputDialogCompleted event received: window_id: {:?}, text: {:?}, context_tag: {:?}",
             window_id, text, context_tag
         );
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text: "Input dialog completed (stub handler).".to_string(),
-                is_error: false,
-            });
-    }
 
+        match context_tag.as_deref() {
+            Some("NewProfileName") => {
+                self.pending_action = None; // Clear pending action from GetName
+                if let Some(profile_name) = text {
+                    if profile_name.trim().is_empty()
+                        || !profile_name
+                            .chars()
+                            .all(core::profiles::is_valid_profile_name_char)
+                    {
+                        let err_msg = "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens.".to_string();
+                        eprintln!("AppLogic: {}", err_msg);
+                        self.synchronous_command_queue.push_back(
+                            PlatformCommand::UpdateStatusBarText {
+                                window_id,
+                                text: err_msg.clone(),
+                                is_error: true,
+                            },
+                        );
+                        // Re-issue ShowInputDialog for name
+                        self.pending_action = Some(PendingAction::CreatingNewProfileGetName);
+                        self.synchronous_command_queue.push_back(
+                            PlatformCommand::ShowInputDialog {
+                                window_id,
+                                title: "New Profile (1/2): Name".to_string(),
+                                prompt:
+                                    "Enter a name for the new profile (invalid previous attempt):"
+                                        .to_string(),
+                                default_text: Some(profile_name), // Pre-fill with previous attempt
+                                context_tag: Some("NewProfileName".to_string()),
+                            },
+                        );
+                        return;
+                    }
+
+                    // Name is valid, store it and proceed to get root folder
+                    println!(
+                        "AppLogic: New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
+                        profile_name
+                    );
+                    self.pending_new_profile_name = Some(profile_name);
+                    self.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
+                    self.synchronous_command_queue.push_back(
+                        PlatformCommand::ShowFolderPickerDialog {
+                            window_id,
+                            title: "New Profile (2/2): Select Root Folder".to_string(),
+                            initial_dir: None,
+                        },
+                    );
+                } else {
+                    // User cancelled the input dialog
+                    println!(
+                        "AppLogic: New profile name input cancelled by user. Returning to profile selection."
+                    );
+                    self.pending_new_profile_name = None; // Clear any pending name
+                    self.initiate_profile_selection_or_creation(window_id);
+                }
+            }
+            _ => {
+                let err_msg = format!(
+                    "AppLogic: InputDialogCompleted with unhandled context: {:?}",
+                    context_tag
+                );
+                eprintln!("{}", err_msg);
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        is_error: true,
+                    });
+            }
+        }
+    }
+    // END: P2.6.5 - Handle InputDialogCompleted
+
+    // START: P2.6.5 - Handle FolderPickerDialogCompleted
     fn handle_folder_picker_dialog_completed(
         &mut self,
         window_id: WindowId,
@@ -1018,13 +1187,85 @@ impl MyAppLogic {
             "AppLogic: FolderPickerDialogCompleted event received: window_id: {:?}, path: {:?}",
             window_id, path
         );
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text: "Folder picker dialog completed (stub handler).".to_string(),
-                is_error: false,
-            });
+        self.pending_action = None; // Clear pending action from GetRoot
+
+        if let Some(root_folder_path) = path {
+            if let Some(profile_name) = self.pending_new_profile_name.take() {
+                println!(
+                    "AppLogic: Creating new profile '{}' with root folder {:?}.",
+                    profile_name, root_folder_path
+                );
+                let new_profile = Profile::new(profile_name.clone(), root_folder_path.clone());
+
+                match self
+                    .profile_manager
+                    .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
+                {
+                    Ok(_) => {
+                        println!(
+                            "AppLogic: Successfully saved new profile '{}'.",
+                            new_profile.name
+                        );
+                        let profile_name_for_title = new_profile.name.clone();
+                        let operation_status_message =
+                            format!("New profile '{}' created and loaded.", new_profile.name);
+
+                        if let Err(e) = self
+                            .config_manager
+                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile.name)
+                        {
+                            eprintln!(
+                                "AppLogic: Failed to save last profile name '{}': {:?}",
+                                new_profile.name, e
+                            );
+                            // Non-fatal, proceed
+                        }
+                        // P2.6.6: Activate profile and show window
+                        self._activate_profile_and_show_window(
+                            window_id,
+                            new_profile,
+                            operation_status_message,
+                        );
+                    }
+                    Err(e) => {
+                        let err_msg = format!(
+                            "Failed to save new profile '{}': {:?}. Please try again.",
+                            profile_name, e
+                        );
+                        eprintln!("AppLogic: {}", err_msg);
+                        self.synchronous_command_queue.push_back(
+                            PlatformCommand::UpdateStatusBarText {
+                                window_id,
+                                text: err_msg,
+                                is_error: true,
+                            },
+                        );
+                        // Return to profile selection/creation
+                        self.initiate_profile_selection_or_creation(window_id);
+                    }
+                }
+            } else {
+                // Should not happen if flow is correct (pending_new_profile_name should be set)
+                let err_msg = "AppLogic: FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection.".to_string();
+                eprintln!("{}", err_msg);
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        is_error: true,
+                    });
+                self.initiate_profile_selection_or_creation(window_id);
+            }
+        } else {
+            // User cancelled the folder picker dialog
+            println!(
+                "AppLogic: Root folder selection cancelled by user. Returning to profile selection."
+            );
+            self.pending_new_profile_name = None; // Clear any pending name
+            self.initiate_profile_selection_or_creation(window_id);
+        }
     }
+    // END: P2.6.5 - Handle FolderPickerDialogCompleted
 }
 
 impl PlatformEventHandler for MyAppLogic {
@@ -1078,6 +1319,7 @@ impl PlatformEventHandler for MyAppLogic {
             } => {
                 self.handle_window_resized(window_id, width, height);
             }
+            // START: P2.6.5 - Wire up new event handlers
             AppEvent::ProfileSelectionDialogCompleted {
                 window_id,
                 chosen_profile_name,
@@ -1100,24 +1342,22 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::FolderPickerDialogCompleted { window_id, path } => {
                 self.handle_folder_picker_dialog_completed(window_id, path);
-            }
+            } // END: P2.6.5 - Wire up new event handlers
         }
     }
 
     fn on_quit(&mut self) {
         println!("AppLogic: on_quit called by platform. Application is exiting.");
 
-        let temp_name: Option<&str>;
-        if let Some(name_ref) = &self.current_profile_name {
-            temp_name = Some(name_ref.as_str());
-            println!("Debug: Matched Some: {}", temp_name.unwrap());
-        } else {
-            temp_name = Some("");
-            println!("Debug: Matched None, using empty string placeholder");
-        }
+        // Save the last active profile name, if one is active.
+        // If no profile is active (e.g., user quit during initial selection),
+        // save an empty string to potentially clear it.
+        let profile_name_to_save = self.current_profile_name.as_deref().unwrap_or("");
 
-        let profile_name_to_save = temp_name.unwrap_or("");
-        println!("Debug: profile_name_to_save is '{}'", profile_name_to_save);
+        println!(
+            "AppLogic: Attempting to save last profile name '{}' on exit.",
+            profile_name_to_save
+        );
 
         match self
             .config_manager
@@ -1125,7 +1365,9 @@ impl PlatformEventHandler for MyAppLogic {
         {
             Ok(_) => {
                 if profile_name_to_save.is_empty() {
-                    println!("AppLogic: Successfully cleared last profile name in config on exit.");
+                    println!(
+                        "AppLogic: Successfully cleared/unset last profile name in config on exit."
+                    );
                 } else {
                     println!(
                         "AppLogic: Successfully saved last active profile name '{}' to config on exit.",
@@ -1241,6 +1483,15 @@ impl MyAppLogic {
     pub(crate) fn test_set_pending_action(&mut self, v: PendingAction) {
         self.pending_action = Some(v);
     }
+
+    // START: Test accessors for new state field
+    pub(crate) fn test_pending_new_profile_name(&self) -> &Option<String> {
+        &self.pending_new_profile_name
+    }
+    pub(crate) fn test_set_pending_new_profile_name(&mut self, v: Option<String>) {
+        self.pending_new_profile_name = v;
+    }
+    // END: Test accessors for new state field
 
     pub(crate) fn test_config_manager(&self) -> &Arc<dyn ConfigManagerOperations> {
         &self.config_manager

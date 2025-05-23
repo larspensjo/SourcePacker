@@ -85,7 +85,7 @@ pub fn sanitize_profile_name(name: &str) -> String {
         .collect()
 }
 
-fn is_valid_profile_name_char(c: char) -> bool {
+pub fn is_valid_profile_name_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-' || c == ' '
 }
 

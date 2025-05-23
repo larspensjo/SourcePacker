@@ -40,23 +40,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 (Earlier steps already completed)
 
-### P2.6.5: `MyAppLogic` Event Handling for Profile Flow
-*   **Handle `AppEvent::ProfileSelectionDialogCompleted`:**
-    *   If `cancelled`: Issue `PlatformCommand::QuitApplication`.
-    *   If `chosen_profile_name`: Attempt to load.
-        *   On success: Set active, save as last used. Proceed to P2.6.6.
-        *   On failure: Status bar error (e.g., "Could not load profile '[X]'. May be corrupt."), then `initiate_profile_selection_or_creation(window_id)`.
-    *   If `create_new_requested`: Call `MyAppLogic::start_new_profile_creation_flow(window_id)`.
-*   **`MyAppLogic::start_new_profile_creation_flow(window_id)`:**
-    *   **Step 1 (Name):** Issue `ShowInputDialog` (title: "New Profile (1/2): Name", prompt: "Enter profile name:", context_tag: Some("NewProfileName".to_string())).
-*   **Handle `AppEvent::InputDialogCompleted` (for "NewProfileName"):**
-    *   If `text` is valid: Store name. Issue `ShowFolderPickerDialog` (title: "New Profile (2/2): Select Root Folder", initial_dir: None).
-    *   If `text` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
-    *   If `text` invalid: Status bar error ("Invalid name..."). Re-issue `ShowInputDialog` for name.
-*   **Handle `AppEvent::FolderPickerDialogCompleted`:**
-    *   If `path` is Some: Create `Profile`, save it (P1.3). Set active, save as last used. Proceed to P2.6.6.
-    *   If `path` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
-
 ### P2.6.6: Post-Profile Activation: Scan, Apply, Populate, Show
 *   This step is reached after a profile is successfully loaded or created.
 *   Perform directory scan based on active `profile.root_folder` (P1.2).
@@ -107,6 +90,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]` User-friendly error messages are key.
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
 *   Consolidate Status Messages: The on_main_window_created failure paths now push an error message, and initiate_profile_selection_or_creation also pushes its own message. Review if these should be combined or if the platform layer should only display the latest status message for a given window. The current behavior is that multiple UpdateStatusBarText commands will be processed sequentially.
+    * Idea: Add a severity flag to the error (used in UpdateStatusBarText). Any error message with a higher severity will overwrite the previous one. The "current" severity is reset after the error has been shown to the user.
 *   Profile Name in `create_profile_from_current_state`: Update `MyAppLogic.current_profile_name` only after successful save.
 *   Break out large functions in `app_logic/handler.rs`. `[TechModularityLogicalModulesV1]`
 *   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
@@ -116,6 +100,10 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   It seems to me that `handle_wm_create` is growing with hard coded functionality. Would it be better to control these through the command structure? That is, `window_common.rs` shouldn't manage the complete UI, only manage the individual components. That would be `on_main_window_created`? The question is, will this require a big refactor?
     *   **Decision:** For now, keep `handle_wm_create` for essential child controls like buttons/status bar defined at window creation. More dynamic content (like TreeView items) is already command-driven. Revisit if it becomes too unwieldy.
 *  Testing the `PlatformInterface::run()` loop: Testing the interaction between the `run()` loop and `MyAppLogic`'s command queue is more of an integration test. It might be beneficial to have some tests that simulate OS messages and verify that commands are dequeued and "executed" (perhaps via a mock `Win32ApiInternalState` for these tests).
+*   `core::profiles::is_valid_profile_name_char`: Make this function public (`pub`) so it can be directly used by `MyAppLogic` for validating profile names instead of duplicating the character check logic.
+*   Error Handling in Dialogs: The platform layer's stub dialog handlers (`_handle_show_profile_selection_dialog_impl`, etc.) currently simulate success. For more robust testing, they could be enhanced to simulate cancellation or errors, allowing tests for how `MyAppLogic` handles those scenarios from the platform.
+*   Test Isolation for `on_main_window_created`: As noted in P2.11, `on_main_window_created` tests could be more isolated if `ConfigManagerOperations::load_last_profile_name` and `ProfileManagerOperations::load_profile` were fully mocked within `handler_tests.rs` instead of relying on the `MockConfigManager` and `MockProfileManager` which still have some passthrough characteristics to the actual core implementations if not carefully configured. The current mock setup is good, but this is a point for deeper isolation if needed.
+*   Refactor `_activate_profile_and_show_window`: This function is getting quite central. Ensure its responsibilities remain clear and it doesn't grow too large. The current size and scope seem acceptable.
 
 ## P2.12: Sophisticated Status Bar Control:**
 *   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.
