@@ -186,7 +186,7 @@ impl Win32ApiInternalState {
             initial_dir,
             OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR,
             |ofn_ptr| unsafe { GetOpenFileNameW(ofn_ptr) },
-            |win_id, res_path| AppEvent::FileOpenDialogCompleted {
+            |win_id, res_path| AppEvent::FileOpenProfileDialogCompleted {
                 window_id: win_id,
                 result: res_path,
             },
@@ -335,6 +335,7 @@ impl Win32ApiInternalState {
         }
         Ok(())
     }
+
     fn _handle_show_input_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -347,7 +348,7 @@ impl Win32ApiInternalState {
             "Platform (STUB): Showing Input Dialog. Title: '{}', Prompt: '{}', Default: {:?}, Tag: {:?}",
             title, prompt, default_text, context_tag
         );
-        let event = AppEvent::InputDialogCompleted {
+        let event = AppEvent::GenericInputDialogCompleted {
             window_id,
             text: Some("TestProfileNameFromStub".to_string()),
             context_tag,

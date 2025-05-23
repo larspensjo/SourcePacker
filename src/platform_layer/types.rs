@@ -58,9 +58,7 @@ pub struct TreeItemDescriptor {
 /// sends them to the application logic layer for handling.
 #[derive(Debug)]
 pub enum AppEvent {
-    /// Signals that the user has requested to close a window (e.g., clicked the 'X' button).
-    /// The application logic should decide whether to allow the close.
-    WindowCloseRequested {
+    WindowCloseRequestedByUser {
         window_id: WindowId,
     },
     /// Signals that a window has been resized.
@@ -74,8 +72,7 @@ pub enum AppEvent {
     WindowDestroyed {
         window_id: WindowId,
     },
-    /// Signals that a tree view item's check state has been changed by user interaction.
-    TreeViewItemToggled {
+    TreeViewItemToggledByUser {
         window_id: WindowId,
         item_id: TreeItemId,
         new_state: CheckState,
@@ -92,25 +89,21 @@ pub enum AppEvent {
     },
     MenuLoadProfileClicked,
     MenuSaveProfileAsClicked,
-    FileOpenDialogCompleted {
-        // Specifically for loading profiles
+    FileOpenProfileDialogCompleted {
         window_id: WindowId,
         result: Option<PathBuf>,
     },
-    /// Result of the profile selection dialog shown at startup or when switching profiles.
     ProfileSelectionDialogCompleted {
         window_id: WindowId,
         chosen_profile_name: Option<String>,
         create_new_requested: bool,
         user_cancelled: bool,
     },
-    /// Result of a generic input dialog.
-    InputDialogCompleted {
+    GenericInputDialogCompleted {
         window_id: WindowId,
         text: Option<String>,
         context_tag: Option<String>,
     },
-    /// Result of a folder picker dialog.
     FolderPickerDialogCompleted {
         window_id: WindowId,
         path: Option<PathBuf>,

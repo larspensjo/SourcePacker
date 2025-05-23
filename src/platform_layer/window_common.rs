@@ -278,7 +278,7 @@ impl Win32ApiInternalState {
             WM_CLOSE => {
                 // WM_CLOSE is special: it first asks AppLogic if it's okay to close.
                 // AppLogic responds by enqueuing PlatformCommand::CloseWindow if okay.
-                event_to_send = Some(AppEvent::WindowCloseRequested { window_id });
+                event_to_send = Some(AppEvent::WindowCloseRequestedByUser { window_id });
                 // We don't destroy the window here directly.
                 // AppLogic handles the AppEvent::WindowCloseRequested.
                 // If it decides to close, it enqueues PlatformCommand::CloseWindow.
@@ -467,7 +467,7 @@ impl Win32ApiInternalState {
             }
         }
 
-        Some(AppEvent::TreeViewItemToggled {
+        Some(AppEvent::TreeViewItemToggledByUser {
             window_id,
             item_id: app_item_id,
             new_state: new_check_state,

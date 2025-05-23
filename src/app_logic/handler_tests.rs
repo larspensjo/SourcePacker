@@ -892,7 +892,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
 
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
-    let event = AppEvent::FileOpenDialogCompleted {
+    let event = AppEvent::FileOpenProfileDialogCompleted {
         window_id: WindowId(1),
         result: Some(profile_json_path_from_dialog.clone()),
     };
@@ -1236,7 +1236,7 @@ fn test_handle_treeview_item_toggled_updates_archive_status_via_mock_archiver() 
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::OutdatedRequiresUpdate);
 
-    logic.handle_event(AppEvent::TreeViewItemToggled {
+    logic.handle_event(AppEvent::TreeViewItemToggledByUser {
         window_id: WindowId(1),
         item_id: tree_item_id_for_foo,
         new_state: CheckState::Checked,
@@ -1297,7 +1297,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
 
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
-    let event = AppEvent::FileOpenDialogCompleted {
+    let event = AppEvent::FileOpenProfileDialogCompleted {
         window_id: WindowId(1),
         result: Some(profile_json_path_from_dialog.clone()),
     };
@@ -1333,7 +1333,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.handle_event(AppEvent::WindowCloseRequested {
+    logic.handle_event(AppEvent::WindowCloseRequestedByUser {
         window_id: WindowId(1),
     });
     let cmds = logic.test_drain_commands();

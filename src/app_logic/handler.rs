@@ -1040,13 +1040,13 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn handle_event(&mut self, event: AppEvent) {
         match event {
-            AppEvent::WindowCloseRequested { window_id } => {
+            AppEvent::WindowCloseRequestedByUser { window_id } => {
                 self.handle_window_close_requested(window_id);
             }
             AppEvent::WindowDestroyed { window_id } => {
                 self.handle_window_destroyed(window_id);
             }
-            AppEvent::TreeViewItemToggled {
+            AppEvent::TreeViewItemToggledByUser {
                 window_id,
                 item_id,
                 new_state,
@@ -1062,7 +1062,7 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::MenuLoadProfileClicked => {
                 self.handle_menu_load_profile_clicked();
             }
-            AppEvent::FileOpenDialogCompleted { window_id, result } => {
+            AppEvent::FileOpenProfileDialogCompleted { window_id, result } => {
                 self.handle_file_open_dialog_completed(window_id, result);
             }
             AppEvent::MenuSaveProfileAsClicked => {
@@ -1091,7 +1091,7 @@ impl PlatformEventHandler for MyAppLogic {
                     user_cancelled,
                 );
             }
-            AppEvent::InputDialogCompleted {
+            AppEvent::GenericInputDialogCompleted {
                 window_id,
                 text,
                 context_tag,
