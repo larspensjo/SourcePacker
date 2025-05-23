@@ -63,8 +63,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
 ## P1.3: Profile Management (Module: `profiles`)
 *   Implement `fn save_profile(profile: &Profile, app_name: &str) -> Result<(), Error>`. `[ProfileStoreJsonFilesV1]`, `[ProfileStoreAppdataLocationV1]`
 *   Implement `fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile, Error>`.
-*   Implement `fn list_profiles(app_name: &str) -> Result<Vec<String>, Error>`.
-*   Implement `fn get_profile_dir(app_name: &str) -> PathBuf`.
+*   Implement `fn list_profiles(app_name: &str) -> Result<Vec<String>, Error>`. (Critical for P2.6.2)
+*   Implement `fn get_profile_dir_path(app_name: &str) -> Option<PathBuf>`. (Used to be `get_profile_dir`)
 *   **Unit Tests:** Test saving, loading, listing.
 
 ## P1.4: State Application (Module: `state_manager`)
@@ -83,24 +83,23 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 ## P1.6: Timestamp & Archive Status Utilities (Module: `file_system` or `archive_utils`)
 *   Implement `fn get_file_timestamp(path: &Path) -> Result<SystemTime, Error>`. `[ArchiveSyncTimestampV1]`
-*   Define `enum ArchiveStatus { UpToDate, OutdatedRequiresUpdate, NotYetGenerated, ArchiveFileMissing, ErrorChecking }`.
+*   Define `enum ArchiveStatus { UpToDate, OutdatedRequiresUpdate, NotYetGenerated, ArchiveFileMissing, NoFilesSelected, ErrorChecking }`.
 *   Implement `fn check_archive_status(profile: &Profile, selected_file_nodes: &[FileNode]) -> ArchiveStatus`. `[ArchiveSyncTimestampV1]`, `[ArchiveSyncNotifyUserV1]`
     *   Checks if `profile.archive_path` exists.
     *   If archive exists, compares its timestamp with the newest timestamp among `selected_file_nodes`.
     *   If selected files are newer, or `profile.archive_path` is None, or archive file is missing, return appropriate status.
+    *   If no files are selected, return `NoFilesSelected`.
 *   **Unit Tests:** Test with mock files, timestamps, and profile states.
 
 # Phase 2: Basic UI & Interaction - Post Sync
-*(This section now describes the target state AFTER Phase 0' is complete)*
+*(This section now describes the target state AFTER Phase 0' is complete and incorporates the "Always Active Profile" flow)*
 
 ## P2.1: TreeView Population
 *   Add a `TreeView` control to the main window. `[UiTreeViewDisplayStructureV2]`
-*   Populate the `TreeView` from a `FileNode` tree (from P1.2).
-*   Initially, no selection interaction, just display.
+*   Populate the `TreeView` from a `FileNode` tree (from P1.2) *after a profile is active*.
 
 ## P2.2: Basic Selection Visualization
 *   Use standard checkboxes in the `TreeView`. `[UiTreeViewVisualSelectionStateV1]`
-*   Implement tristate checkbox logic if `windows-rs` and `TreeView` support it directly, or simulate with custom drawing/icons if necessary (aim for simple first).
 *   Link `TreeView` checkbox changes to update the `FileState` in the internal `FileNode` tree and vice-versa.
 
 ## P2.3: Folder Selection Propagation
@@ -110,21 +109,86 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Add a button. `[UiMenuGenerateArchiveV1]`
 *   On click, call `create_archive_content` (P1.5) with the current state of selected files. `[ArchiveGenSingleTxtFileV1]`
 *   Initially, prompt user to save the resulting string to a `.txt` file each time. (This will be enhanced in P2.7).
+*   **Usability:**
+    *   Provide feedback during generation (busy cursor, status bar text: "Generating archive...").
+    *   Provide confirmation on save: "Archive 'X' saved." or error message.
 
-## P2.5: Profile Loading/Saving UI
-*   Add basic menu items: "Load Profile", "Save Profile As". `[UiMenuProfileManagementV1]`
-*   "Load Profile": Show a dialog to pick a profile (from `list_profiles`), load it (P1.3), rescan directory (P1.2), apply profile (P1.4), update TreeView. `[ProfileOpLoadSwitchV1]`
-    *   After loading and scanning, perform initial `check_archive_status` (P1.6) and update UI (e.g., status bar placeholder for now). `[ArchiveSyncUserAcknowledgeV1]`
-*   "Save Profile As": Prompt for profile name, create `Profile` object from current state (root dir, selection, current `archive_path` if any from loaded profile), save it (P1.3). `[ProfileOpSaveNewOverwriteV3]`
+## P2.5: Profile Management UI (Post-Startup)
+*   Add menu items: "Switch Profile..." (replaces "Load Profile"), "Save Profile As". `[UiMenuProfileManagementV1]`
+*   "Switch Profile...":
+    *   Re-uses the `ShowProfileSelectionDialog` (from P2.6.2.1) but without quitting on cancel.
+    *   On successful selection: Load profile (P1.3), update `current_profile` in `MyAppLogic`, rescan directory (P1.2), apply profile (P1.4), update TreeView. `[ProfileOpLoadSwitchV1]`
+    *   Update window title and status bar.
+    *   Perform `check_archive_status` (P1.6) and update UI. `[ArchiveSyncUserAcknowledgeV1]`
+*   "Save Profile As": Prompt for profile name, create `Profile` object from current state (root dir, selection, current `archive_path` if any), save it (P1.3). Update `current_profile` and window title. `[ProfileOpSaveNewOverwriteV3]`
 
 ---
-*(Development continues from P2.6 as previously defined, now assuming the no-whitelist baseline)*
----
+## P2.6: **Always Active Profile: Startup Sequence**
+**Goal:** Ensure an active profile before the main UI is fully operational. The main window remains hidden or minimally shown until profile activation.
 
-## P2.6: Initial Profile Load on Startup
-*   Implement logic to store/retrieve the last used profile name (e.g., in a simple config file or registry). `[ProfileDefaultLoadRecentV1]`
-*   On startup, attempt to load this profile. `[ProfileDefaultNoPreviousBlankV1]`
-*   After successful load, perform initial scan, apply profile state, then `check_archive_status` (P1.6) and update relevant UI (e.g. status bar). `[ArchiveSyncUserAcknowledgeV1]`
+### P2.6.1: `MyAppLogic::on_main_window_created` Refactor
+*   Attempt to load the last used profile name (`config_manager.load_last_profile_name`) and then the profile itself (`profile_manager.load_profile`).
+*   **If successful:**
+    *   Set profile as active (`current_profile_cache`, `current_profile_name`).
+    *   Update window title to "SourcePacker - [ProfileName]".
+    *   Proceed to P2.6.5 (Scan, Apply, Populate, Show).
+*   **If loading fails (or no last profile):**
+    *   Main window remains hidden.
+    *   Call new internal method `MyAppLogic::initiate_profile_selection_or_creation(window_id)`.
+
+### P2.6.2: `MyAppLogic::initiate_profile_selection_or_creation(window_id)`
+*   Get `available_profiles` using `profile_manager.list_profiles()` (P1.3).
+*   **Determine Dialog Texts:**
+    *   If `available_profiles` is empty: Title "Welcome!", Prompt "No profiles found. Please create a new profile to get started." Emphasize "Create New".
+    *   Else: Title "Select or Create Profile", Prompt "Please select a profile to continue, or create a new one."
+*   Issue `PlatformCommand::ShowProfileSelectionDialog` (New Command) with `window_id`, `available_profiles`, determined texts, and `emphasize_create_new` flag.
+
+### P2.6.3: Implement New Platform Commands and Events
+*   **Platform Commands:**
+    *   `ShowProfileSelectionDialog { window_id, available_profiles, title, prompt, emphasize_create_new }`
+    *   `ShowInputDialog { window_id, title, prompt, default_text, context_tag }`
+    *   `ShowFolderPickerDialog { window_id, title, initial_dir }`
+    *   `QuitApplication`
+    *   `SetWindowBusyCursor { window_id, is_busy }` (Optional)
+*   **AppEvents:**
+    *   `ProfileSelectionDialogCompleted { window_id, chosen_profile_name: Option<String>, create_new_requested: bool, cancelled: bool }`
+    *   `InputDialogCompleted { window_id, text: Option<String>, context_tag: Option<String> }`
+    *   `FolderPickerDialogCompleted { window_id, path: Option<PathBuf> }`
+*   **Platform Layer Implementation:**
+    *   Implement native dialogs for these commands, sending back the corresponding `AppEvent`.
+    *   `ShowProfileSelectionDialog`: Modal, list box, "Select", "Create New", "Quit Application" buttons.
+    *   `ShowInputDialog`: Modal, text input, "OK", "Cancel".
+    *   `ShowFolderPickerDialog`: Native folder browser, use `initial_dir` (e.g., Documents, last valid path).
+    *   `QuitApplication`: Posts `WM_QUIT`.
+    *   `SetWindowBusyCursor`: Changes mouse cursor.
+
+### P2.6.4: `MyAppLogic` Event Handling for Profile Flow
+*   **Handle `AppEvent::ProfileSelectionDialogCompleted`:**
+    *   If `cancelled`: Issue `PlatformCommand::QuitApplication`.
+    *   If `chosen_profile_name`: Attempt to load.
+        *   On success: Set active, save as last used. Proceed to P2.6.5.
+        *   On failure: Status bar error (e.g., "Could not load profile '[X]'. May be corrupt."), then `initiate_profile_selection_or_creation(window_id)`.
+    *   If `create_new_requested`: Call `MyAppLogic::start_new_profile_creation_flow(window_id)`.
+*   **`MyAppLogic::start_new_profile_creation_flow(window_id)`:**
+    *   **Step 1 (Name):** Issue `ShowInputDialog` (title: "New Profile (1/2): Name", prompt: "Enter profile name:", context: "NewProfileName").
+*   **Handle `AppEvent::InputDialogCompleted` (for "NewProfileName"):**
+    *   If `text` is valid: Store name. Issue `ShowFolderPickerDialog` (title: "New Profile (2/2): Select Root Folder").
+    *   If `text` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
+    *   If `text` invalid: Status bar error ("Invalid name..."). Re-issue `ShowInputDialog` for name.
+*   **Handle `AppEvent::FolderPickerDialogCompleted`:**
+    *   If `path` is Some: Create `Profile`, save it (P1.3). Set active, save as last used. Proceed to P2.6.5.
+    *   If `path` is None (cancelled): Call `initiate_profile_selection_or_creation(window_id)`.
+
+### P2.6.5: Post-Profile Activation: Scan, Apply, Populate, Show
+*   This step is reached after a profile is successfully loaded or created.
+*   Perform directory scan based on active `profile.root_folder` (P1.2).
+*   Apply profile to the scanned tree (P1.4).
+*   Populate TreeView (P2.1).
+*   Perform initial `check_archive_status` (P1.6) and update UI (P2.8). `[ArchiveSyncUserAcknowledgeV1]`
+*   Status bar confirmation: "Profile '[ProfileName]' loaded." or "New profile '[ProfileName]' created and loaded."
+*   Issue `PlatformCommand::ShowWindow { window_id }`.
+
+---
 
 ## P2.7: "Generate Archive" Button & Action - Enhanced
 *   On button click: `[UiMenuGenerateArchiveV1]`, `[ArchiveSyncUserAcknowledgeV1]`
@@ -135,12 +199,16 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   If `profile.archive_path` is `Some(path)` (or was just set):
         *   Call `create_archive_content` (P1.5) with the current selected files.
         *   Save the resulting string to `profile.archive_path`.
-        *   After successful save, update internal archive status to `UpToDate` via `check_archive_status` (P1.6).
-        *   Update UI (e.g., status bar).
+    *   **Usability:**
+        *   On success: Update status to `UpToDate` via `check_archive_status` (P1.6), status bar "Archive saved to '[path]}'".
+        *   On error: Status bar error "Failed to save archive: [details]".
+        *   Reset busy cursor.
 
 ## P2.8: UI for Archive Status (Initial)
 *   Integrate basic archive status display into the Status Bar (P3.1 conceptually). `[UiNotificationOutdatedArchiveV1]`
-*   Update this status display whenever `check_archive_status` is performed (profile load, selection change, refresh, archive generation). `[UiStatusBarProfileNameV1]` (profile name influences archive context)
+    *   Possible messages: "Archive: Up-to-date", "Archive: Needs Update", "Archive: Not Generated", "Archive: File Missing", "Archive: No Files Selected", "Archive: Error Checking".
+*   Update this status display whenever `check_archive_status` is performed (profile load/creation, selection change, refresh, archive generation).
+*   The window title should show "SourcePacker - [ProfileName]". `[UiStatusBarProfileNameV1]` (This is a window title, but closely related to profile context).
 
 ## P2.9: Refresh File List Action
 *   Add a "Refresh" button or menu item. `[UiMenuTriggerScanV1]`
@@ -156,20 +224,19 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
 ## P2.11: General Cleanup and Refinements
-*   There is one _get_app_config_dir and one _get_profile_storage_dir. They have duplicate functionality. Consider consolidating them.
-*   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component)
-*   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]`
+*   There is one `_get_app_config_dir` and one `_get_profile_storage_dir`. They have duplicate functionality. Consider consolidating them.
+*   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component).
+*   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]` User-friendly error messages are key.
 *   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
 *   Profile Name in `create_profile_from_current_state`: Update `MyAppLogic.current_profile_name` only after successful save.
 *   Review `Win32ApiInternalState::process_commands_from_event_handler` vs `PlatformInterface::execute_command`.
 *   Break out large functions in `app_logic/handler.rs`. `[TechModularityLogicalModulesV1]`
 *   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
-*   If loading the last profile fails silently (as it does now, by logging to console and falling back), the user might not know why a specific profile didn't load. Consider a non-modal notification or status bar message if the last profile load attempt fails (e.g., "Could not load last profile 'X', starting fresh.").
-*   The status bar (P3.1) should clearly indicate which profile is loaded, which will inherently show if the startup load was successful.
-*   The current last_profile_name.txt is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for app_settings.json might be beneficial. The core::config module can be expanded for this.
-*   The current tests for on_main_window_created in handler_tests.rs rely on the actual file system operations of core::load_last_profile_name and core::load_profile. For more isolated unit tests of MyAppLogic, these core functions could be mocked (e.g., by introducing traits and dependency injection for these specific core functionalities, or by using conditional compilation for test-specific implementations). This is a more advanced testing setup.
-*   handler.rs and handler_tests.rs are big. Is it possible to separate them into smaller modules or files for easier maintenance and testing? If so, the tests should be moved back into the same file, removing the need for pub(crate)= declarations.
-*   It seems to me that handle_wm_create is growing with hard coded functionality. Would it be better to control these through the command structure? That is, the window_common.rs shouldn't manage the complete UI, only manage the individual components. That would be on_main_window_created? The question is, will this require a big refactor?
+*   The current `last_profile_name.txt` is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for `app_settings.json` might be beneficial. The `core::config` module can be expanded for this.
+*   The current tests for `on_main_window_created` in `handler_tests.rs` rely on the actual file system operations of `core::load_last_profile_name` and `core::load_profile`. For more isolated unit tests of `MyAppLogic`, these core functions could be mocked.
+*   `handler.rs` and `handler_tests.rs` are big. Is it possible to separate them into smaller modules or files for easier maintenance and testing? If so, the tests should be moved back into the same file, removing the need for `pub(crate)` declarations.
+*   It seems to me that `handle_wm_create` is growing with hard coded functionality. Would it be better to control these through the command structure? That is, `window_common.rs` shouldn't manage the complete UI, only manage the individual components. That would be `on_main_window_created`? The question is, will this require a big refactor?
+    *   **Decision:** For now, keep `handle_wm_create` for essential child controls like buttons/status bar defined at window creation. More dynamic content (like TreeView items) is already command-driven. Revisit if it becomes too unwieldy.
 
 ## P2.12: Sophisticated Status Bar Control:**
 *   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.
@@ -179,14 +246,15 @@ This plan breaks down the development of SourcePacker into small, incremental st
 # Phase 3: Enhancements & UX Improvements
 
 ## P3.0: Blocking folders
-*   It shall be possible to mark a folder as blocked (Deselected). That would typically be used for temporary folders.
-*   .gitignore shall automatically be used as a blacklist. These shall be hidden from the user.
+*   It shall be possible to mark a folder as blocked (Deselected). That would typically be used for temporary folders. (Covered by P1.4 `update_folder_selection`).
+*   `.gitignore` shall automatically be used as a blacklist. These shall be hidden from the user. (This is new, requires parsing .gitignore and modifying `scan_directory` or filtering its results).
 
 ## P3.1: Status Bar Finalization
-*   Display current profile name. `[UiStatusBarProfileNameV1]`
+*   Display current profile name (covered by P2.8, window title).
 *   Display number of selected files. `[UiStatusBarSelectedFileCountV1]`
 *   Display total size of selected files (optional). `[UiStatusBarSelectedFileSizeV1]`
-*   Clearly display archive status (e.g., "Archive: Up-to-date", "Archive: Needs Update", "Archive: Not Generated"). Color-coding or icons could be considered. `[UiNotificationOutdatedArchiveV1]`
+*   Clearly display archive status (e.g., "Archive: Up-to-date", "Archive: Needs Update", "Archive: Not Generated"). Color-coding or icons could be considered. `[UiNotificationOutdatedArchiveV1]` (Refinement of P2.8).
+*   **Usability:** Ensure status bar updates are immediate and clear.
 
 ## P3.2: Token Count (Module: `tokenizer_utils`)
 *   Integrate a token counting library (e.g., `tiktoken-rs` or a simple word/space counter initially). `[TokenCountEstimateSelectedV1]`
@@ -205,17 +273,15 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   Files found on disk BUT not in `profile.selected_paths` or `profile.deselected_paths`: These are new/unclassified. They appear in the tree with `FileState::Unknown` (and corresponding checkbox state). `[FileStateNewUnknownV2]`, `[UiTreeViewVisualFileStatusV1]`
 
 ## P3.6: Full Profile Management UI
+*   **Usability:** "File -> Manage Profiles..." opens a dedicated dialog.
 *   Dialog to list profiles (P1.3). `[UiMenuProfileManagementV1]`
-*   Buttons for "New", "Duplicate", "Delete" profile.
-*   "New Profile" dialog: `[ProfileOpCreateNewV2]`
-    *   Input for profile name, root folder.
-    *   Input/Selector for associated archive file path (can be initially empty; "Generate Archive" will prompt). `[ProfileDefAssociatedArchiveV1]`
-*   "Edit Profile" (if implemented as a distinct feature):
-    *   Allow changing name, root folder, and `archive_path`. `[UiMenuSetRootFolderV1]`
+*   Buttons for "Create New" (uses flow from P2.6.4), "Duplicate", "Delete" profile.
+*   "Edit Profile" (if implemented as a distinct feature or part of manage dialog):
+    *   Allow changing name (with sanitization and check for conflicts), root folder (triggers rescan), and `archive_path`. `[UiMenuSetRootFolderV1]`
 *   "Duplicate Profile" dialog: `[ProfileOpDuplicateExistingV1]`
-    *   Prompt for new profile name.
-    *   Prompt for new archive file path for the duplicated profile (or it starts as `None`).
-*   "Delete Profile": Remove profile file. `[ProfileOpDeleteExistingV1]`
+    *   Prompt for new profile name. Copies settings from selected profile.
+    *   `archive_path` for duplicated profile starts as `None` or user is prompted.
+*   "Delete Profile": Remove profile file, confirm with user. If deleting active profile, trigger P2.6.2. `[ProfileOpDeleteExistingV1]`
 
 # Phase 4: Advanced Features (Optional / Future)
 
