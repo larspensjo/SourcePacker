@@ -50,7 +50,7 @@ pub struct MyAppLogic {
     file_system_scanner: Arc<dyn FileSystemScannerOperations>,
     archiver: Arc<dyn ArchiverOperations>,
     state_manager: Arc<dyn StateManagerOperations>,
-    command_queue: VecDeque<PlatformCommand>,
+    synchronous_command_queue: VecDeque<PlatformCommand>,
 }
 
 impl MyAppLogic {
@@ -84,7 +84,7 @@ impl MyAppLogic {
             file_system_scanner,
             archiver,
             state_manager,
-            command_queue: VecDeque::new(),
+            synchronous_command_queue: VecDeque::new(),
         }
     }
 
@@ -166,7 +166,7 @@ impl MyAppLogic {
                         let operation_status_message =
                             format!("Profile '{}' loaded.", profile.name);
 
-                        self.command_queue
+                        self.synchronous_command_queue
                             .push_back(PlatformCommand::SetWindowTitle {
                                 window_id,
                                 title: format!("SourcePacker - [{}]", profile_name_for_title),
@@ -184,12 +184,13 @@ impl MyAppLogic {
                         );
                         eprintln!("AppLogic: {}", err_msg);
                         self.initiate_profile_selection_or_creation(window_id);
-                        self.command_queue
-                            .push_back(PlatformCommand::UpdateStatusBarText {
+                        self.synchronous_command_queue.push_back(
+                            PlatformCommand::UpdateStatusBarText {
                                 window_id,
                                 text: err_msg,
                                 is_error: true,
-                            });
+                            },
+                        );
                     }
                 }
             }
@@ -204,7 +205,7 @@ impl MyAppLogic {
                 );
                 eprintln!("AppLogic: {}", err_msg);
                 self.initiate_profile_selection_or_creation(window_id);
-                self.command_queue
+                self.synchronous_command_queue
                     .push_back(PlatformCommand::UpdateStatusBarText {
                         window_id,
                         text: err_msg,
@@ -269,7 +270,7 @@ impl MyAppLogic {
             &mut self.path_to_tree_item_id,
             &mut self.next_tree_item_id_counter,
         );
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::PopulateTreeView {
                 window_id,
                 items: descriptors,
@@ -354,7 +355,7 @@ impl MyAppLogic {
     fn handle_window_close_requested(&mut self, window_id: WindowId) {
         if self.main_window_id == Some(window_id) {
             println!("AppLogic: Main window close requested. Commanding platform to close.");
-            self.command_queue
+            self.synchronous_command_queue
                 .push_back(PlatformCommand::CloseWindow { window_id });
         }
     }
@@ -423,12 +424,13 @@ impl MyAppLogic {
                     visual_updates_list.len()
                 );
                 for (id_to_update_ui, state_for_ui) in visual_updates_list {
-                    self.command_queue
-                        .push_back(PlatformCommand::UpdateTreeItemVisualState {
+                    self.synchronous_command_queue.push_back(
+                        PlatformCommand::UpdateTreeItemVisualState {
                             window_id,
                             item_id: id_to_update_ui,
                             new_state: state_for_ui,
-                        });
+                        },
+                    );
                 }
             } else {
                 eprintln!(
@@ -483,7 +485,7 @@ impl MyAppLogic {
                         })
                         .or_else(|| Some(self.root_path_for_scan.clone()));
 
-                    self.command_queue
+                    self.synchronous_command_queue
                         .push_back(PlatformCommand::ShowSaveFileDialog {
                             window_id,
                             title: "Save Archive As".to_string(),
@@ -496,12 +498,13 @@ impl MyAppLogic {
                 Err(e) => {
                     let err_msg = format!("Failed to create archive content: {}", e);
                     eprintln!("AppLogic: {}", err_msg);
-                    self.command_queue
-                        .push_back(PlatformCommand::UpdateStatusBarText {
+                    self.synchronous_command_queue.push_back(
+                        PlatformCommand::UpdateStatusBarText {
                             window_id,
                             text: err_msg,
                             is_error: true,
-                        });
+                        },
+                    );
                 }
             }
         }
@@ -513,7 +516,7 @@ impl MyAppLogic {
             let profile_dir_opt = self
                 .profile_manager
                 .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-            self.command_queue
+            self.synchronous_command_queue
                 .push_back(PlatformCommand::ShowOpenFileDialog {
                     window_id: main_id,
                     title: "Load Profile".to_string(),
@@ -617,7 +620,7 @@ impl MyAppLogic {
             }
         }
         if let Some(cmd) = status_update_cmd {
-            self.command_queue.push_back(cmd);
+            self.synchronous_command_queue.push_back(cmd);
         }
     }
 
@@ -635,7 +638,7 @@ impl MyAppLogic {
             let default_filename = format!("{}.json", sanitized_current_name);
 
             self.pending_action = Some(PendingAction::SavingProfile);
-            self.command_queue
+            self.synchronous_command_queue
                 .push_back(PlatformCommand::ShowSaveFileDialog {
                     window_id: main_id,
                     title: "Save Profile As".to_string(),
@@ -820,7 +823,7 @@ impl MyAppLogic {
             }
         }
         if let Some(cmd) = status_update_cmd {
-            self.command_queue.push_back(cmd);
+            self.synchronous_command_queue.push_back(cmd);
         }
     }
 
@@ -885,13 +888,13 @@ impl MyAppLogic {
         self.update_current_archive_status();
         self.refresh_tree_view_from_cache(window_id); // Enqueues PopulateTreeView
 
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateStatusBarText {
                 window_id,
                 text: status_message,
                 is_error: status_is_error,
             });
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
 
@@ -928,14 +931,15 @@ impl MyAppLogic {
                     prompt
                 );
 
-                self.command_queue
-                    .push_back(PlatformCommand::ShowProfileSelectionDialog {
+                self.synchronous_command_queue.push_back(
+                    PlatformCommand::ShowProfileSelectionDialog {
                         window_id,
                         available_profiles,
                         title,
                         prompt,
                         emphasize_create_new,
-                    });
+                    },
+                );
             }
             Err(e) => {
                 let err_msg = format!(
@@ -945,7 +949,7 @@ impl MyAppLogic {
                 eprintln!("AppLogic: {}", err_msg);
                 // This is a critical error. For now, update status bar.
                 // A more robust solution might involve a fatal error dialog or attempting to quit.
-                self.command_queue
+                self.synchronous_command_queue
                     .push_back(PlatformCommand::UpdateStatusBarText {
                         window_id,
                         text: err_msg,
@@ -970,7 +974,7 @@ impl MyAppLogic {
             println!(
                 "AppLogic: Profile selection was cancelled by user. (Currently no action taken)."
             );
-            self.command_queue
+            self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateStatusBarText {
                     window_id,
                     text: "Profile selection cancelled.".to_string(),
@@ -979,7 +983,7 @@ impl MyAppLogic {
             return;
         }
 
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateStatusBarText {
                 window_id,
                 text: "Profile selection dialog completed (stub handler).".to_string(),
@@ -997,7 +1001,7 @@ impl MyAppLogic {
             "AppLogic: InputDialogCompleted event received: window_id: {:?}, text: {:?}, context_tag: {:?}",
             window_id, text, context_tag
         );
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateStatusBarText {
                 window_id,
                 text: "Input dialog completed (stub handler).".to_string(),
@@ -1014,7 +1018,7 @@ impl MyAppLogic {
             "AppLogic: FolderPickerDialogCompleted event received: window_id: {:?}, path: {:?}",
             window_id, path
         );
-        self.command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateStatusBarText {
                 window_id,
                 text: "Folder picker dialog completed (stub handler).".to_string(),
@@ -1031,7 +1035,7 @@ impl PlatformEventHandler for MyAppLogic {
      * by the application logic.
      */
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand> {
-        self.command_queue.pop_front()
+        self.synchronous_command_queue.pop_front()
     }
 
     fn handle_event(&mut self, event: AppEvent) {
@@ -1275,6 +1279,6 @@ impl MyAppLogic {
 
     // Test helper to drain commands from the queue for verification
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
-        self.command_queue.drain(..).collect()
+        self.synchronous_command_queue.drain(..).collect()
     }
 }
