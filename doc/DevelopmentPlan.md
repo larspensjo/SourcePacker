@@ -4,93 +4,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 ---
 
-# Phase 0': Code Synchronization (Post-Whitelist Removal)
-
-**Goal:** Modify the existing codebase to remove all whitelist functionality and align it with the updated requirements for features up to the original P2.5. This phase ensures the application is in a clean state before proceeding with P2.6.
-
-## P0'.2: Modify Core Data Structures (`core/models.rs`)
-*   In `struct Profile`:
-    *   Remove the `whitelist_patterns: Vec<String>` field. `[ProfileDefWhitelistPatternsV1]` (marks removal)
-*   Adjust `Profile::new()` if it explicitly handled `whitelist_patterns` (it likely just relied on struct definition).
-*   **Note:** Existing profile JSON files will become incompatible. For this sync, assume new profiles will be created or existing ones manually edited.
-
-## P0'.3: Modify Directory Scanning Logic (`core/file_system.rs`)
-*   Change `scan_directory` function signature to:
-    `pub fn scan_directory(root_path: &Path) -> Result<Vec<FileNode>, FileSystemError>` (remove `whitelist_patterns_str` parameter). `[FileFilterWhitelistOnlyMatchesV1]` (marks removal)
-*   Remove all internal logic related to compiling glob patterns and matching files against them.
-*   The function should now list *all* files and directories found by `WalkDir` under `root_path`.
-*   Update unit tests for `scan_directory` to reflect that no filtering occurs and all files/directories are returned.
-
-## P0'.4: Update Application Logic (`app_logic/handler.rs`)
-*   In `struct MyAppLogic`:
-    *   Remove the `current_whitelist_patterns: Vec<String>` field.
-    *   Remove its initialization in `MyAppLogic::new()`.
-*   In `MyAppLogic::on_main_window_created`:
-    *   Modify the call to `core::scan_directory` to no longer pass whitelist patterns.
-*   In `MyAppLogic::create_profile_from_current_state`:
-    *   Remove the assignment of `self.current_whitelist_patterns` to the new `Profile` object.
-*   In `AppEvent::FileOpenDialogCompleted` handler (profile loading):
-    *   When a `Profile` is loaded, it will no longer contain `whitelist_patterns`. Remove any logic that attempts to read this from the loaded profile and store it in `MyAppLogic`.
-    *   Ensure the subsequent call to `core::scan_directory` (if present here or triggered by a refresh) uses the no-whitelist version.
-*   Search for any other uses of `current_whitelist_patterns` or whitelist-related logic in `MyAppLogic` and remove them.
-
-## P0'.5: Test Basic Functionality
-*   Perform a full `cargo build` and `cargo test --all-features`.
-*   Run the application:
-    *   Verify that the TreeView now displays all files and folders from the scanned directory (no filtering). `[UiTreeViewDisplayStructureV2]`
-    *   Verify that profiles can be saved and loaded correctly (they will now lack whitelist data). `[ProfileOpSaveNewOverwriteV3]`
-    *   Verify basic file/folder selection in the TreeView works. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
-    *   Verify basic archive generation still functions with selected files. `[ArchiveGenSingleTxtFileV1]`
-*   This confirms the codebase is stable and reflects the no-whitelist requirement for features analogous to the old P0.1-P2.5.
-
----
-
-# Phase 1: Core Logic (Testable Modules) - Post Sync
-*(This section now describes the target state AFTER Phase 0' is complete)*
-
-## P1.1: Data Structures
-*   Define `struct FileNode { path: PathBuf, name: String, is_dir: bool, state: FileState, children: Vec<FileNode> }`. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
-*   Define `enum FileState { Selected, Deselected, Unknown }`.
-*   Define `struct Profile { name: String, root_folder: PathBuf, selected_paths: HashSet<PathBuf>, deselected_paths: HashSet<PathBuf>, archive_path: Option<PathBuf> }`. `[ProfileDefRootFolderV1]`, `[ProfileDefSelectionStateV1]`, `[ProfileDefAssociatedArchiveV1]`
-
-## P1.2: Directory Scanning (Module: `file_system`)
-*   Implement function: `scan_directory(root_path: &Path) -> Result<Vec<FileNode>, Error>`. `[FileSystemMonitorTreeViewV1]`
-    *   Uses `walkdir` to traverse directories.
-    *   Builds the `FileNode` tree for all files and directories.
-    *   Initial `FileState` for all nodes will be `Unknown`. `[FileStateNewUnknownV2]`
-*   **Unit Tests:** Test with various directory structures.
-
-## P1.3: Profile Management (Module: `profiles`)
-*   Implement `fn save_profile(profile: &Profile, app_name: &str) -> Result<(), Error>`. `[ProfileStoreJsonFilesV1]`, `[ProfileStoreAppdataLocationV1]`
-*   Implement `fn load_profile(profile_name: &str, app_name: &str) -> Result<Profile, Error>`.
-*   Implement `fn list_profiles(app_name: &str) -> Result<Vec<String>, Error>`. (Critical for P2.6.2)
-*   Implement `fn get_profile_dir_path(app_name: &str) -> Option<PathBuf>`. (Used to be `get_profile_dir`)
-*   **Unit Tests:** Test saving, loading, listing.
-
-## P1.4: State Application (Module: `state_manager`)
-*   Implement `fn apply_profile_to_tree(tree: &mut Vec<FileNode>, profile: &Profile)`. `[FileSelStateSelectedV1]`, `[FileSelStateDeselectedV1]`, `[FileSelStateUnknownV1]`
-    *   Iterates through `tree`, setting `FileState` based on `profile.selected_paths` and `profile.deselected_paths`.
-    *   Files not in either set but present in the scanned tree become `FileState::Unknown`. `[FileStateNewUnknownV2]`
-*   Implement `fn update_folder_selection(node: &mut FileNode, new_state: FileState)`. `[FileSelFolderRecursiveStateV1]`
-    *   Recursively sets state of all children.
-*   **Unit Tests:** Test application of states to various tree structures.
-
-## P1.5: Archiving Logic (Module: `archiver`)
-*   Implement `fn create_archive_content(root_node: &FileNode) -> String` (or takes a list of selected `FileNode`s). `[ArchiveGenSingleTxtFileV1]`, `[ArchiveGenConcatenateContentV1]`
-    *   Traverses the `FileNode` tree.
-    *   For `Selected` files, reads content (UTF-8) and prepends/appends headers. `[ArchiveGenFileHeaderFooterV1]`, `[TextFileFocusUTF8V1]`
-*   **Unit Tests:** Test with mock file content and tree structures.
-
-## P1.6: Timestamp & Archive Status Utilities (Module: `file_system` or `archive_utils`)
-*   Implement `fn get_file_timestamp(path: &Path) -> Result<SystemTime, Error>`. `[ArchiveSyncTimestampV1]`
-*   Define `enum ArchiveStatus { UpToDate, OutdatedRequiresUpdate, NotYetGenerated, ArchiveFileMissing, NoFilesSelected, ErrorChecking }`.
-*   Implement `fn check_archive_status(profile: &Profile, selected_file_nodes: &[FileNode]) -> ArchiveStatus`. `[ArchiveSyncTimestampV1]`, `[ArchiveSyncNotifyUserV1]`
-    *   Checks if `profile.archive_path` exists.
-    *   If archive exists, compares its timestamp with the newest timestamp among `selected_file_nodes`.
-    *   If selected files are newer, or `profile.archive_path` is None, or archive file is missing, return appropriate status.
-    *   If no files are selected, return `NoFilesSelected`.
-*   **Unit Tests:** Test with mock files, timestamps, and profile states.
-
 # Phase 2: Basic UI & Interaction - Post Sync
 *(This section now describes the target state AFTER Phase 0' is complete and incorporates the "Always Active Profile" flow)*
 
@@ -110,7 +23,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   On click, call `create_archive_content` (P1.5) with the current state of selected files. `[ArchiveGenSingleTxtFileV1]`
 *   Initially, prompt user to save the resulting string to a `.txt` file each time. (This will be enhanced in P2.7).
 *   **Usability:**
-    *   Provide feedback during generation (busy cursor, status bar text: "Generating archive...").
     *   Provide confirmation on save: "Archive 'X' saved." or error message.
 
 ## P2.5: Profile Management UI (Post-Startup)
