@@ -40,46 +40,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 (Earlier steps already completed)
 
-### P2.6.3: Implement New Platform Commands and Events
-*   **Platform Commands:**
-    *   `ShowProfileSelectionDialog { window_id, available_profiles, title, prompt, emphasize_create_new }`
-    *   `ShowInputDialog { window_id, title, prompt, default_text, context_tag }`
-    *   `ShowFolderPickerDialog { window_id, title, initial_dir }`
-    *   `QuitApplication`
-    *   `SetWindowBusyCursor { window_id, is_busy }` (Optional)
-*   **AppEvents:**
-    *   `ProfileSelectionDialogCompleted { window_id, chosen_profile_name: Option<String>, create_new_requested: bool, cancelled: bool }`
-    *   `InputDialogCompleted { window_id, text: Option<String>, context_tag: Option<String> }`
-    *   `FolderPickerDialogCompleted { window_id, path: Option<PathBuf> }`
-*   **Platform Layer Implementation (Stubs for Now):**
-    *   Implement STUB handlers for these commands in the platform layer. These stubs will:
-        *   Log that they were called.
-        *   Simulate a predefined user response (e.g., "Create New" for profile selection, a sample name for input, a sample path for folder picker).
-        *   Post a custom `WM_APP_...` message to the window's message queue, containing information about the simulated response.
-        *   (Actual native dialogs deferred, `SetWindowBusyCursor` deferred).
-    *   Implement handlers in `Win32ApiInternalState::handle_window_message` for these `WM_APP_...` messages. These handlers will:
-        *   Construct the appropriate `AppEvent` (e.g., `ProfileSelectionDialogCompleted`).
-        *   Send this `AppEvent` to `MyAppLogic` via the registered event handler.
-        *   Process any commands returned by `MyAppLogic` using `Win32ApiInternalState::process_commands_from_event_handler`.
-    *   Implement handling for `PlatformCommand::QuitApplication` (e.g., by calling `PostQuitMessage`).
-
-### P2.6.4: Refactor to Internal Command Queue Architecture
-*   **Goal:** Decouple `MyAppLogic` command generation from immediate platform execution, improve event flow clarity, and simplify platform stub implementations for dialogs.
-*   **`MyAppLogic` Changes:**
-    *   Add an internal `command_queue: VecDeque<PlatformCommand>`.
-    *   Modify `on_main_window_created()`, `handle_event()`, and all sub-handlers (e.g., `handle_profile_selection_dialog_completed`) to enqueue `PlatformCommand`s into this internal queue instead of returning `Vec<PlatformCommand>`. Their return types will likely change to `()`.
-    *   Add a method like `try_dequeue_command(&mut self) -> Option<PlatformCommand>` for the platform layer to retrieve commands.
-*   **`PlatformInterface` / `Win32ApiInternalState` Changes:**
-    *   The existing `PlatformInterface::execute_command()` and `Win32ApiInternalState::process_commands_from_event_handler()` methods will merge into a single command execution method within `Win32ApiInternalState` (e.g., `execute_platform_command_directly(command)`).
-    *   Modify `PlatformInterface::run()`:
-        *   The main message loop will be restructured. Before calling `GetMessageW` (or `PeekMessageW`), it will first drain `MyAppLogic`'s internal command queue, executing each command using the new `execute_platform_command_directly` method.
-        *   After processing OS messages (via `DispatchMessageW`), the loop repeats.
-*   **Platform Stub Dialog Handlers (e.g., `_handle_show_profile_selection_dialog_impl`):**
-    *   These stubs will now directly invoke `my_app_logic.handle_event(simulated_event)` after simulating a user response. (This is safe because the `event_handler` in `Win32ApiInternalState` will be registered by the time these stubs are called via the new main loop logic).
-    *   `MyAppLogic` will then enqueue any resulting commands, which the main loop will pick up. This removes the need for `PostMessageW` for the *stubs*.
-*   **`main.rs` Changes:**
-    *   The initial commands from `my_app_logic.on_main_window_created()` will no longer be executed in a separate loop in `main.rs`. They will be enqueued by `MyAppLogic` and processed by the modified `PlatformInterface::run()` loop.
-
 ### P2.6.5: `MyAppLogic` Event Handling for Profile Flow
 *   **Handle `AppEvent::ProfileSelectionDialogCompleted`:**
     *   If `cancelled`: Issue `PlatformCommand::QuitApplication`.
