@@ -1,34 +1,31 @@
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, PlatformCommand, PlatformEventHandler, WindowConfig, WindowId};
-use super::window_common; // For window creation and WndProc // For TreeView specific command handling
+use super::window_common;
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM},
-        System::{
-            Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
-            LibraryLoader::GetModuleHandleW,
+        Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, TRUE, WPARAM},
+        System::Com::{
+            CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
         },
-        UI::{
-            Controls::{
-                Dialogs::{
-                    COMMON_DLG_ERRORS, CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW,
-                    OFN_EXPLORER, OFN_EXTENSIONDIFFERENT, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
-                    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPEN_FILENAME_FLAGS, OPENFILENAMEW,
-                },
-                ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
-            },
-            WindowsAndMessaging::{
-                DispatchMessageW, GetMessageW, MSG, PostQuitMessage, TranslateMessage,
-            },
+        System::LibraryLoader::GetModuleHandleW,
+        System::SystemServices::SS_LEFTNOWORDWRAP,
+        UI::Controls::{
+            Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
         },
+        UI::Shell::{
+            FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem,
+            SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
+        },
+        UI::WindowsAndMessaging::*,
     },
-    core::{HSTRING, PCWSTR},
+    core::{HSTRING, PCWSTR, PWSTR},
 };
 
 use std::collections::HashMap;
-use std::ffi::{OsString, c_void};
+use std::ffi::{OsStr, OsString, c_void};
+use std::mem::{align_of, size_of};
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
 use std::sync::{
@@ -61,8 +58,7 @@ pub(crate) struct Win32ApiInternalState {
 impl Win32ApiInternalState {
     fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
         unsafe {
-            // Initialize COM for the current thread.
-            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let hr = CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
             if hr.is_err()
                 && hr != windows::Win32::Foundation::S_FALSE
                 && hr != windows::Win32::Foundation::RPC_E_CHANGED_MODE
@@ -73,13 +69,11 @@ impl Win32ApiInternalState {
                 )));
             }
 
-            // Initialize Common Controls (specifically for TreeView).
             let icex = INITCOMMONCONTROLSEX {
                 dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
                 dwICC: ICC_TREEVIEW_CLASSES,
             };
             if !InitCommonControlsEx(&icex).as_bool() {
-                // This is not necessarily fatal, but good to log.
                 eprintln!(
                     "Warning: InitCommonControlsEx for TreeView failed. Error: {:?}",
                     GetLastError()
@@ -110,7 +104,6 @@ impl Win32ApiInternalState {
             prev_count,
             prev_count - 1
         );
-
         if prev_count == 1 {
             println!("Platform: Last active window closed (or being destroyed), posting WM_QUIT.");
             unsafe { PostQuitMessage(0) };
@@ -125,14 +118,10 @@ impl Win32ApiInternalState {
         }
     }
 
-    /// Look up the HWND for a given WindowId, or return an error if not found.
     fn get_hwnd_owner(&self, window_id: WindowId) -> PlatformResult<HWND> {
-        // 1) Try to acquire a read-lock on the windows map
         let windows_guard = self.window_map.read().map_err(|_| {
             PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
         })?;
-
-        // 2) Find the entry, or return InvalidHandle if absent
         windows_guard
             .get(&window_id)
             .map(|data| data.hwnd)
@@ -209,7 +198,6 @@ impl Win32ApiInternalState {
         FEvent: FnOnce(WindowId, Option<PathBuf>) -> AppEvent,
     {
         let hwnd_owner = self.get_hwnd_owner(window_id)?;
-
         let mut file_buffer: Vec<u16> = vec![0; 2048];
         if let Some(fname) = default_filename {
             if !fname.is_empty() {
@@ -260,9 +248,6 @@ impl Win32ApiInternalState {
         }
 
         let event = event_constructor(window_id, path_result);
-
-        // Send the event to AppLogic. MyAppLogic will enqueue commands.
-        // The main loop in PlatformInterface::run() will pick them up.
         if let Some(handler_arc) = self
             .event_handler
             .lock()
@@ -271,14 +256,13 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event); // This now returns ()
+                handler_guard.handle_event(event);
             } else {
                 eprintln!("Platform: Failed to lock event handler after dialog completion.");
             }
         } else {
             eprintln!("Platform: Event handler not available after dialog completion.");
         }
-        // Removed: self.process_commands_from_event_handler(commands_from_dialog_completion);
         Ok(())
     }
 
@@ -295,6 +279,11 @@ impl Win32ApiInternalState {
             title, prompt, emphasize_create_new, available_profiles
         );
 
+        // STUB LOGIC:
+        // This simulates a user interaction. Replace with actual dialog display later.
+        // If profiles are available and not emphasizing create new, pick the first one.
+        // Else if emphasize_create_new or no profiles, request creation.
+        // Else, simulate cancellation.
         let (chosen_profile_name, create_new_requested, cancelled) =
             if !available_profiles.is_empty() && !emphasize_create_new {
                 (Some(available_profiles[0].clone()), false, false)
@@ -303,19 +292,16 @@ impl Win32ApiInternalState {
             } else {
                 (None, false, true)
             };
-
         println!(
             "Platform (STUB): Simulating dialog result: chosen='{:?}', create_new={}, cancelled={}",
             chosen_profile_name, create_new_requested, cancelled
         );
-
         let event = AppEvent::ProfileSelectionDialogCompleted {
             window_id,
             chosen_profile_name,
             create_new_requested,
             user_cancelled: cancelled,
         };
-
         if let Some(handler_arc) = self
             .event_handler
             .lock()
@@ -324,7 +310,7 @@ impl Win32ApiInternalState {
             .and_then(|wh| wh.upgrade())
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event); // MyAppLogic enqueues commands
+                handler_guard.handle_event(event);
             } else {
                 eprintln!(
                     "Platform: Failed to lock event handler for ProfileSelectionDialogCompleted."
@@ -344,13 +330,38 @@ impl Win32ApiInternalState {
         default_text: Option<String>,
         context_tag: Option<String>,
     ) -> PlatformResult<()> {
-        println!(
-            "Platform (STUB): Showing Input Dialog. Title: '{}', Prompt: '{}', Default: {:?}, Tag: {:?}",
-            title, prompt, default_text, context_tag
-        );
+        println!("Platform: Showing Input Dialog. Title: '{}'", title);
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
+        let mut dialog_data = InputDialogData {
+            prompt_text: prompt,
+            input_text: default_text.unwrap_or_default(),
+            context_tag: context_tag.clone(),
+            success: false,
+        };
+        let mut template_bytes = Vec::<u8>::new();
+        build_input_dialog_template(&mut template_bytes, &title, &dialog_data.prompt_text)?;
+        let dialog_result = unsafe {
+            DialogBoxIndirectParamW(
+                Some(self.h_instance),
+                template_bytes.as_ptr() as *const DLGTEMPLATE,
+                Some(hwnd_owner),
+                Some(input_dialog_proc),
+                LPARAM(&mut dialog_data as *mut _ as isize),
+            )
+        };
+        let final_text_result = if dialog_result != 0 && dialog_data.success {
+            // dialog_result.0 for isize
+            Some(dialog_data.input_text)
+        } else {
+            println!(
+                "Platform: Input dialog cancelled or failed. Result: {:?}, Success flag: {}",
+                dialog_result, dialog_data.success
+            );
+            None
+        };
         let event = AppEvent::GenericInputDialogCompleted {
             window_id,
-            text: Some("TestProfileNameFromStub".to_string()),
+            text: final_text_result,
             context_tag,
         };
         if let Some(handler_arc) = self
@@ -371,15 +382,126 @@ impl Win32ApiInternalState {
         self: &Arc<Self>,
         window_id: WindowId,
         title: String,
-        initial_dir: Option<PathBuf>,
+        _initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
         println!(
-            "Platform (STUB): Showing Folder Picker Dialog. Title: '{}', Initial Dir: {:?}",
-            title, initial_dir
+            "Platform: Showing real Folder Picker Dialog. Title: '{}'",
+            title
         );
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
+        let mut path_result: Option<PathBuf> = None;
+        let file_dialog_result: Result<IFileOpenDialog, windows::core::Error> =
+            unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER) };
+
+        if let Ok(file_dialog) = file_dialog_result {
+            unsafe {
+                match file_dialog.SetOptions(FOS_PICKFOLDERS) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!(
+                            "Platform: IFileOpenDialog::SetOptions FOS_PICKFOLDERS failed: {:?}",
+                            e
+                        );
+                    }
+                }
+                let h_title = HSTRING::from(title);
+                if let Err(e) = file_dialog.SetTitle(&h_title) {
+                    eprintln!("Platform: IFileOpenDialog::SetTitle failed: {:?}", e);
+                }
+                if let Some(dir_path) = &_initial_dir {
+                    let dir_hstring = HSTRING::from(dir_path.as_os_str());
+                    match SHCreateItemFromParsingName::<_, _, IShellItem>(&dir_hstring, None) {
+                        Ok(item) => {
+                            if let Err(e_sdf) = file_dialog.SetDefaultFolder(&item) {
+                                eprintln!(
+                                    "Platform: IFileOpenDialog::SetDefaultFolder failed: {:?}",
+                                    e_sdf
+                                );
+                            }
+                        }
+                        Err(e_csipn) => {
+                            eprintln!(
+                                "Platform: SHCreateItemFromParsingName for initial_dir {:?} failed: {:?}",
+                                dir_path, e_csipn
+                            );
+                        }
+                    }
+                }
+                match file_dialog.Show(Some(hwnd_owner)) {
+                    Ok(_) => match file_dialog.GetResult() {
+                        Ok(shell_item) => {
+                            let display_name_result: Result<PWSTR, _> =
+                                shell_item.GetDisplayName(SIGDN_FILESYSPATH);
+                            match display_name_result {
+                                Ok(pwstr_path) => {
+                                    let path_string = pwstr_path.to_string().unwrap_or_default();
+                                    CoTaskMemFree(Some(pwstr_path.as_ptr() as *const c_void));
+                                    if !path_string.is_empty() {
+                                        path_result = Some(PathBuf::from(path_string));
+                                        println!(
+                                            "Platform: Folder picked: {:?}",
+                                            path_result.as_ref().unwrap()
+                                        );
+                                    } else {
+                                        println!(
+                                            "Platform: Folder picker returned empty path string."
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "Platform: IShellItem::GetDisplayName failed: {:?}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Platform: IFileOpenDialog::GetResult failed: {:?}", e);
+                        }
+                    },
+                    Err(e_show) => {
+                        if e_show.code() == windows::Win32::Foundation::ERROR_CANCELLED.into() {
+                            println!(
+                                "Platform: Folder picker dialog cancelled by user (HRESULT match)."
+                            );
+                        } else {
+                            eprintln!(
+                                "Platform: IFileOpenDialog::Show failed with HRESULT: {:?} Error: {:?}",
+                                e_show.code(),
+                                e_show
+                            );
+                        }
+                    }
+                }
+            }
+        } else if let Err(e) = file_dialog_result {
+            let err_msg = format!(
+                "Platform: CoCreateInstance for IFileOpenDialog failed: {:?}",
+                e
+            );
+            eprintln!("{}", err_msg);
+            let event = AppEvent::FolderPickerDialogCompleted {
+                window_id,
+                path: None,
+            };
+            if let Some(handler_arc) = self
+                .event_handler
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|wh| wh.upgrade())
+            {
+                if let Ok(mut handler_guard) = handler_arc.lock() {
+                    handler_guard.handle_event(event);
+                }
+            }
+            return Err(PlatformError::OperationFailed(err_msg));
+        }
+
         let event = AppEvent::FolderPickerDialogCompleted {
             window_id,
-            path: Some(PathBuf::from("./mock_picked_folder_stub")),
+            path: path_result,
         };
         if let Some(handler_arc) = self
             .event_handler
@@ -390,7 +512,13 @@ impl Win32ApiInternalState {
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
                 handler_guard.handle_event(event);
+            } else {
+                eprintln!(
+                    "Platform: Failed to lock event handler for FolderPickerDialogCompleted."
+                );
             }
+        } else {
+            eprintln!("Platform: Event handler not available for FolderPickerDialogCompleted.");
         }
         Ok(())
     }
@@ -408,7 +536,7 @@ impl Win32ApiInternalState {
      * It's called by the main run loop after dequeuing commands from MyAppLogic.
      */
     fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
-        println!("Platform: Executing command: {:?}", command); // Basic logging
+        println!("Platform: Executing command: {:?}", command);
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
                 window_common::set_window_title(self, window_id, &title)
@@ -498,7 +626,6 @@ impl Drop for Win32ApiInternalState {
     }
 }
 
-/// The primary interface to the platform abstraction layer.
 pub struct PlatformInterface {
     internal_state: Arc<Win32ApiInternalState>,
 }
@@ -513,14 +640,13 @@ impl PlatformInterface {
 
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_window_id();
-
         let preliminary_native_data = window_common::NativeWindowData {
             hwnd: HWND(std::ptr::null_mut()),
             id: window_id,
             treeview_state: None,
             hwnd_button_generate: None,
-            hwnd_status_bar: None,      // Initialize new field
-            status_bar_is_error: false, // Initialize new field
+            hwnd_status_bar: None,
+            status_bar_is_error: false,
         };
         self.internal_state
             .window_map
@@ -531,12 +657,10 @@ impl PlatformInterface {
                 )
             })?
             .insert(window_id, preliminary_native_data);
-
         println!(
             "Platform: Inserted preliminary NativeWindowData for WindowId {:?}",
             window_id
         );
-
         let hwnd = match window_common::create_native_window(
             &self.internal_state,
             window_id,
@@ -558,12 +682,10 @@ impl PlatformInterface {
                 return Err(e);
             }
         };
-
         println!(
             "Platform: Native window created with HWND {:?} for WindowId {:?}",
             hwnd, window_id
         );
-
         match self.internal_state.window_map.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
@@ -589,7 +711,6 @@ impl PlatformInterface {
                 ));
             }
         }
-
         self.internal_state
             .active_windows_count
             .fetch_add(1, Ordering::Relaxed);
@@ -597,102 +718,7 @@ impl PlatformInterface {
     }
 
     pub fn execute_command(&self, command: PlatformCommand) -> PlatformResult<()> {
-        match command {
-            PlatformCommand::SetWindowTitle { window_id, title } => {
-                window_common::set_window_title(&self.internal_state, window_id, &title)
-            }
-            PlatformCommand::ShowWindow { window_id } => {
-                window_common::show_window(&self.internal_state, window_id, true)
-            }
-            PlatformCommand::CloseWindow { window_id } => {
-                window_common::send_close_message(&self.internal_state, window_id)
-            }
-            PlatformCommand::PopulateTreeView { window_id, items } => {
-                control_treeview::populate_treeview(&self.internal_state, window_id, items)
-            }
-            PlatformCommand::UpdateTreeItemVisualState {
-                window_id,
-                item_id,
-                new_state,
-            } => control_treeview::update_treeview_item_visual_state(
-                &self.internal_state,
-                window_id,
-                item_id,
-                new_state,
-            ),
-            PlatformCommand::ShowSaveFileDialog {
-                window_id,
-                title,
-                default_filename,
-                filter_spec,
-                initial_dir,
-            } => self.internal_state._handle_show_save_file_dialog_impl(
-                window_id,
-                title,
-                default_filename,
-                filter_spec,
-                initial_dir,
-            ),
-            PlatformCommand::ShowOpenFileDialog {
-                window_id,
-                title,
-                filter_spec,
-                initial_dir,
-            } => self.internal_state._handle_show_open_file_dialog_impl(
-                window_id,
-                title,
-                filter_spec,
-                initial_dir,
-            ),
-            PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text,
-                is_error,
-            } => window_common::update_status_bar_text(
-                &self.internal_state,
-                window_id,
-                &text,
-                is_error,
-            ),
-            PlatformCommand::ShowProfileSelectionDialog {
-                window_id,
-                available_profiles,
-                title,
-                prompt,
-                emphasize_create_new,
-            } => self
-                .internal_state
-                ._handle_show_profile_selection_dialog_impl(
-                    window_id,
-                    available_profiles,
-                    title,
-                    prompt,
-                    emphasize_create_new,
-                ),
-            PlatformCommand::ShowInputDialog {
-                window_id,
-                title,
-                prompt,
-                default_text,
-                context_tag,
-            } => self.internal_state._handle_show_input_dialog_impl(
-                window_id,
-                title,
-                prompt,
-                default_text,
-                context_tag,
-            ),
-            PlatformCommand::ShowFolderPickerDialog {
-                window_id,
-                title,
-                initial_dir,
-            } => self.internal_state._handle_show_folder_picker_dialog_impl(
-                window_id,
-                title,
-                initial_dir,
-            ),
-            PlatformCommand::QuitApplication => self.internal_state._handle_quit_application_impl(),
-        }
+        self.internal_state._execute_platform_command(command)
     }
 
     /*
@@ -704,25 +730,16 @@ impl PlatformInterface {
      */
     pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
-
-        let app_logic_ref = event_handler; // Keep a strong reference for the loop
-
+        let app_logic_ref = event_handler;
         unsafe {
             let mut msg = MSG::default();
             loop {
-                // 1. Drain MyAppLogic's command queue and execute commands
                 loop {
                     let command_opt = if let Ok(mut logic_guard) = app_logic_ref.lock() {
-                        // Downcast to access MyAppLogic specific methods
-                        // Note: This assumes event_handler always IS a Mutex<MyAppLogic>
-                        // If it could be other PlatformEventHandlers, a more robust downcast is needed
-                        // or try_dequeue_command would need to be part of the trait.
-                        // For this project structure, it's MyAppLogic.
                         if let Some(my_app_logic_concrete) = logic_guard
-                            .as_any_mut() // Requires PlatformEventHandler to have `as_any_mut`
-                            .downcast_mut::<crate::app_logic::handler::MyAppLogic>()
-                        // Fully qualified path
-                        {
+                            .as_any_mut()
+                            .downcast_mut::<crate::app_logic::handler::MyAppLogic>(
+                        ) {
                             my_app_logic_concrete.try_dequeue_command()
                         } else {
                             eprintln!(
@@ -734,7 +751,6 @@ impl PlatformInterface {
                         eprintln!("Platform: Failed to lock MyAppLogic to dequeue command.");
                         None
                     };
-
                     if let Some(command) = command_opt {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
                             eprintln!("Platform: Error executing command from queue: {:?}", e);
@@ -743,28 +759,19 @@ impl PlatformInterface {
                         break;
                     }
                 }
-
-                // 2. Process OS messages
                 let result = GetMessageW(&mut msg, None, 0, 0);
-
                 if result.0 > 0 {
-                    // Message received
                     let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg); // This will call facade_wnd_proc_router
+                    DispatchMessageW(&msg);
                 } else if result.0 == 0 {
-                    // WM_QUIT
                     println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
                     break;
                 } else {
-                    // Error
                     let last_error = GetLastError();
                     eprintln!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
-                    // If WM_QUIT was posted due to last window closing, and then GetMessageW fails,
-                    // this could lead to an error return even if shutdown was intended.
-                    // Check if quitting was intended.
                     if self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
                         && self
                             .internal_state
@@ -777,7 +784,6 @@ impl PlatformInterface {
                         );
                         break;
                     }
-
                     return Err(PlatformError::OperationFailed(format!(
                         "GetMessageW failed: {}",
                         windows::core::Error::from_win32()
@@ -785,14 +791,11 @@ impl PlatformInterface {
                 }
             }
         }
-
-        // Call on_quit on MyAppLogic
         if let Ok(mut handler_guard) = app_logic_ref.lock() {
             handler_guard.on_quit();
         } else {
             eprintln!("Platform: Failed to lock MyAppLogic for on_quit call.");
         }
-
         *self.internal_state.event_handler.lock().unwrap() = None;
         println!("Platform: Message loop exited cleanly.");
         Ok(())
@@ -807,8 +810,229 @@ impl PlatformInterface {
 /// 3. Converts that to `PathBuf`.
 pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
     let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-    let path_str = String::from_utf16_lossy(&buffer[..len]);
-    PathBuf::from(path_str)
+    let path_os_string = OsString::from_wide(&buffer[..len]); // Fixed: Added use std::ffi::OsString
+    PathBuf::from(path_os_string)
+}
+
+struct InputDialogData {
+    prompt_text: String,
+    input_text: String,
+    context_tag: Option<String>,
+    success: bool,
+}
+
+fn loword_from_wparam(wparam: WPARAM) -> u16 {
+    (wparam.0 & 0xFFFF) as u16
+}
+
+unsafe extern "system" fn input_dialog_proc(
+    hdlg: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> isize {
+    match msg {
+        WM_INITDIALOG => {
+            unsafe {
+                SetWindowLongPtrW(hdlg, GWLP_USERDATA, lparam.0);
+            }
+            let dialog_data = unsafe { &*(lparam.0 as *const InputDialogData) };
+            let h_prompt = HSTRING::from(dialog_data.prompt_text.as_str());
+            unsafe {
+                SetDlgItemTextW(
+                    hdlg,
+                    window_common::ID_DIALOG_INPUT_PROMPT_STATIC,
+                    &h_prompt,
+                )
+                .unwrap_or_default();
+            }
+            if !dialog_data.input_text.is_empty() {
+                let h_edit_text = HSTRING::from(dialog_data.input_text.as_str());
+                unsafe {
+                    SetDlgItemTextW(hdlg, window_common::ID_DIALOG_INPUT_EDIT, &h_edit_text)
+                        .unwrap_or_default();
+                }
+            }
+            match unsafe { GetDlgItem(Some(hdlg), window_common::ID_DIALOG_INPUT_EDIT) } {
+                Ok(hwnd_edit_ok) if !hwnd_edit_ok.is_invalid() => {
+                    // windows::Win32::UI::WindowsAndMessaging::SetFocus(hwnd_edit_ok);
+                    // There is no windows::Win32::UI::WindowsAndMessaging::SetFocus
+                }
+                _ => {}
+            }
+            return TRUE.0 as isize;
+        }
+        WM_COMMAND => {
+            let command_id = loword_from_wparam(wparam);
+            match command_id {
+                x if x == IDOK.0 as u16 => {
+                    // Fixed: Compare with IDOK.0 as u16
+                    let dialog_data_ptr =
+                        unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) } as *mut InputDialogData;
+                    if !dialog_data_ptr.is_null() {
+                        let dialog_data = unsafe { &mut *dialog_data_ptr };
+                        match unsafe { GetDlgItem(Some(hdlg), window_common::ID_DIALOG_INPUT_EDIT) }
+                        {
+                            // Fixed: Wrap hdlg in Some, handle Result
+                            Ok(hwnd_edit_ok) => {
+                                let mut buffer: [u16; 256] = [0; 256];
+                                let len = unsafe { GetWindowTextW(hwnd_edit_ok, &mut buffer) };
+                                if len > 0 {
+                                    dialog_data.input_text =
+                                        String::from_utf16_lossy(&buffer[0..len as usize]);
+                                } else {
+                                    dialog_data.input_text.clear();
+                                }
+                            }
+                            Err(_) => {
+                                dialog_data.input_text.clear(); /* Or other error handling */
+                            }
+                        }
+                        dialog_data.success = true;
+                    }
+                    unsafe {
+                        EndDialog(hdlg, IDOK.0 as isize).unwrap_or_default();
+                    }
+                    return TRUE.0 as isize;
+                }
+                x if x == IDCANCEL.0 as u16 => {
+                    // Fixed: Compare with IDCANCEL.0 as u16
+                    let dialog_data_ptr =
+                        unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) } as *mut InputDialogData;
+                    if !dialog_data_ptr.is_null() {
+                        let dialog_data = unsafe { &mut *dialog_data_ptr };
+                        dialog_data.success = false;
+                    }
+                    unsafe { EndDialog(hdlg, IDCANCEL.0 as isize).unwrap_or_default() };
+                    return TRUE.0 as isize;
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    FALSE.0 as isize
+}
+
+fn push_word(vec: &mut Vec<u8>, word: u16) {
+    vec.extend_from_slice(&word.to_le_bytes());
+}
+
+fn push_dword(vec: &mut Vec<u8>, dword: u32) {
+    vec.extend_from_slice(&dword.to_le_bytes());
+}
+
+fn push_str_utf16(vec: &mut Vec<u8>, s: &str) {
+    for c in s.encode_utf16() {
+        push_word(vec, c);
+    }
+    push_word(vec, 0);
+}
+
+fn align_to_dword(vec: &mut Vec<u8>) {
+    while vec.len() % align_of::<u32>() != 0 {
+        vec.push(0);
+    }
+}
+
+fn build_input_dialog_template(
+    template_bytes: &mut Vec<u8>,
+    title_str: &str,
+    _prompt_str: &str, // prompt_str is not directly used here as it's set via SetDlgItemText
+) -> PlatformResult<()> {
+    let style = DS_CENTER | DS_MODALFRAME | DS_SETFONT;
+    let dlg_template = DLGTEMPLATE {
+        // Fixed: Use DLGTEMPLATEW
+        style: style as u32 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_POPUP.0,
+        dwExtendedStyle: 0,
+        cdit: 4,
+        x: 0,
+        y: 0,
+        cx: 200,
+        cy: 80,
+    };
+    // Fixed: Use safer way to get bytes from struct
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(dlg_template) as *const [u8; size_of::<DLGTEMPLATE>()])
+    });
+
+    push_word(template_bytes, 0); // No menu
+    push_word(template_bytes, 0); // Default dialog class
+    push_str_utf16(template_bytes, title_str); // Title
+
+    push_word(template_bytes, 8); // Pointsize
+    push_str_utf16(template_bytes, "MS Shell Dlg"); // Font
+
+    align_to_dword(template_bytes);
+    let static_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | SS_LEFTNOWORDWRAP.0, // Fixed: Use .0 for styles
+        dwExtendedStyle: 0,                                     // Fixed: Added missing field
+        x: 10,
+        y: 10,
+        cx: 180,
+        cy: 10,
+        id: window_common::ID_DIALOG_INPUT_PROMPT_STATIC as u16,
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(static_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Static");
+    push_str_utf16(template_bytes, "Prompt text here");
+    push_word(template_bytes, 0);
+
+    align_to_dword(template_bytes);
+
+    let edit_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32, // Fixed: Use .0 for styles
+        dwExtendedStyle: 0, // Fixed: Added missing field
+        x: 10,
+        y: 25,
+        cx: 180,
+        cy: 12,
+        id: window_common::ID_DIALOG_INPUT_EDIT as u16,
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(edit_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Edit");
+    push_word(template_bytes, 0);
+    push_word(template_bytes, 0);
+
+    align_to_dword(template_bytes);
+    let ok_button_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | BS_DEFPUSHBUTTON as u32,
+        dwExtendedStyle: 0,
+        x: 40,
+        y: 50,
+        cx: 50,
+        cy: 14,
+        id: IDOK.0 as u16,
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(ok_button_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Button");
+    push_str_utf16(template_bytes, "OK");
+    push_word(template_bytes, 0);
+
+    align_to_dword(template_bytes);
+    let cancel_button_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | BS_PUSHBUTTON as u32,
+        dwExtendedStyle: 0,
+        x: 110,
+        y: 50,
+        cx: 50,
+        cy: 14,
+        id: IDCANCEL.0 as u16,
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(cancel_button_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Button");
+    push_str_utf16(template_bytes, "Cancel");
+    push_word(template_bytes, 0);
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -817,7 +1041,6 @@ mod app_tests {
 
     #[test]
     fn roundtrip_simple() {
-        // "C:\temp\file.txt" in UTF-16 (with trailing 0)
         let mut wide: Vec<u16> = "C:\\temp\\file.txt".encode_utf16().collect();
         wide.push(0);
         let path = pathbuf_from_buf(&wide);
@@ -826,9 +1049,8 @@ mod app_tests {
 
     #[test]
     fn no_null_terminator() {
-        // if there's no 0, we still consume the whole buffer
         let wide: Vec<u16> = "D:\\data\\incomplete".encode_utf16().collect();
         let path = pathbuf_from_buf(&wide);
-        assert_eq!(path, PathBuf::from(r"D:\data\incomplete"));
+        assert_eq!(path, PathBuf::from(r"D:\\data\\incomplete"));
     }
 }

@@ -29,6 +29,8 @@ pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
 pub(crate) const ID_MENU_FILE_LOAD_PROFILE: i32 = 2001;
 pub(crate) const ID_MENU_FILE_SAVE_PROFILE_AS: i32 = 2002;
 pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
+pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
+pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002; // For the prompt text
 
 const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 const WC_STATIC: PCWSTR = windows::core::w!("STATIC");

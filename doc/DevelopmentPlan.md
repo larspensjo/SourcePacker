@@ -5,34 +5,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 ---
 
 # Phase 2: Basic UI & Interaction - Post Sync
-*(This section now describes the target state AFTER Phase 0' is complete and incorporates the "Always Active Profile" flow)*
-
-## P2.1: TreeView Population
-*   Add a `TreeView` control to the main window. `[UiTreeViewDisplayStructureV2]`
-*   Populate the `TreeView` from a `FileNode` tree (from P1.2) *after a profile is active*.
-
-## P2.2: Basic Selection Visualization
-*   Use standard checkboxes in the `TreeView`. `[UiTreeViewVisualSelectionStateV1]`
-*   Link `TreeView` checkbox changes to update the `FileState` in the internal `FileNode` tree and vice-versa.
-
-## P2.3: Folder Selection Propagation
-*   When a folder checkbox is changed in the UI, trigger `update_folder_selection` (P1.4) on the corresponding `FileNode` and update the UI for children. `[FileSelFolderRecursiveStateV1]`
-
-## P2.4: "Generate Archive" Button & Action - Basic
-*   Add a button. `[UiMenuGenerateArchiveV1]`
-*   On click, call `create_archive_content` (P1.5) with the current state of selected files. `[ArchiveGenSingleTxtFileV1]`
-*   Initially, prompt user to save the resulting string to a `.txt` file each time. (This will be enhanced in P2.7).
-*   **Usability:**
-    *   Provide confirmation on save: "Archive 'X' saved." or error message.
-
-## P2.5: Profile Management UI (Post-Startup)
-*   Add menu items: "Switch Profile..." (replaces "Load Profile"), "Save Profile As". `[UiMenuProfileManagementV1]`
-*   "Switch Profile...":
-    *   Re-uses the `ShowProfileSelectionDialog` (from P2.6.2.1) but without quitting on cancel.
-    *   On successful selection: Load profile (P1.3), update `current_profile` in `MyAppLogic`, rescan directory (P1.2), apply profile (P1.4), update TreeView. `[ProfileOpLoadSwitchV1]`
-    *   Update window title and status bar.
-    *   Perform `check_archive_status` (P1.6) and update UI. `[ArchiveSyncUserAcknowledgeV1]`
-*   "Save Profile As": Prompt for profile name, create `Profile` object from current state (root dir, selection, current `archive_path` if any), save it (P1.3). Update `current_profile` and window title. `[ProfileOpSaveNewOverwriteV3]`
 
 ---
 ## P2.6: **Always Active Profile: Startup Sequence**
