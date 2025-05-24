@@ -26,9 +26,12 @@ use std::sync::{Arc, Mutex}; // Mutex might not be needed here unless for specif
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
+pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
+
 pub(crate) const ID_MENU_FILE_LOAD_PROFILE: i32 = 2001;
 pub(crate) const ID_MENU_FILE_SAVE_PROFILE_AS: i32 = 2002;
-pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
+pub(crate) const ID_MENU_FILE_REFRESH: i32 = 2003;
+
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
@@ -235,6 +238,13 @@ fn create_app_menu(hwnd: HWND) -> PlatformResult<()> {
             MF_STRING,
             ID_MENU_FILE_SAVE_PROFILE_AS as usize,
             &HSTRING::from("Save Profile As..."),
+        )?;
+
+        AppendMenuW(
+            h_file_popup,
+            MF_STRING,
+            ID_MENU_FILE_REFRESH as usize,
+            &HSTRING::from("Refresh File List"),
         )?;
 
         AppendMenuW(
@@ -638,6 +648,9 @@ impl Win32ApiInternalState {
                 }
                 ID_MENU_FILE_SAVE_PROFILE_AS => {
                     return Some(AppEvent::MenuSaveProfileAsClicked);
+                }
+                ID_MENU_FILE_REFRESH => {
+                    return Some(AppEvent::MenuRefreshClicked);
                 }
                 _ => {}
             }

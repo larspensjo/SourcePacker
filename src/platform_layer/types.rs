@@ -89,6 +89,7 @@ pub enum AppEvent {
     },
     MenuLoadProfileClicked,
     MenuSaveProfileAsClicked,
+    MenuRefreshClicked,
     FileOpenProfileDialogCompleted {
         window_id: WindowId,
         result: Option<PathBuf>,

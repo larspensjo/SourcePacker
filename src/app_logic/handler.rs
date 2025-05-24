@@ -911,6 +911,20 @@ impl MyAppLogic {
         // Currently does not generate commands.
     }
 
+    fn handle_menu_refresh_clicked(&mut self) {
+        if self.main_window_id.is_none() {
+            eprintln!("AppLogic: Refresh requested but no main window ID set. Ignoring.");
+            return;
+        }
+        // Placeholder: Actual refresh logic will be implemented in the next step.
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::UpdateStatusBarText {
+                window_id: self.main_window_id.unwrap(), // Safe due to check above
+                text: "Refresh clicked - TBD".to_string(),
+                severity: MessageSeverity::Information,
+            });
+    }
+
     /// Internal helper to finalize UI setup after a profile is active.
     fn _activate_profile_and_show_window(
         &mut self,
@@ -1342,6 +1356,9 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::FileSaveDialogCompleted { window_id, result } => {
                 self.handle_file_save_dialog_completed(window_id, result);
+            }
+            AppEvent::MenuRefreshClicked => {
+                self.handle_menu_refresh_clicked();
             }
             AppEvent::WindowResized {
                 window_id,
