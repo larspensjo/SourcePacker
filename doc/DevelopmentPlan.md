@@ -6,42 +6,7 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 # Phase 2: Basic UI & Interaction - Post Sync
 
----
-## P2.6: **Always Active Profile: Startup Sequence**
-**Goal:** Ensure an active profile before the main UI is fully operational. The main window remains hidden or minimally shown until profile activation.
-
 (Earlier steps already completed)
-
-### P2.6.6: Post-Profile Activation: Scan, Apply, Populate, Show
-*   This step is reached after a profile is successfully loaded or created.
-*   Perform directory scan based on active `profile.root_folder` (P1.2).
-*   Apply profile to the scanned tree (P1.4).
-*   Populate TreeView (P2.1).
-*   Perform initial `check_archive_status` (P1.6) and update UI (P2.8). `[ArchiveSyncUserAcknowledgeV1]`
-*   Status bar confirmation: "Profile '[ProfileName]' loaded." or "New profile '[ProfileName]' created and loaded."
-*   Issue `PlatformCommand::ShowWindow { window_id }`.
-
----
-
-## P2.7: "Generate Archive" Button & Action - Enhanced
-*   On button click: `[UiMenuGenerateArchiveV1]`, `[ArchiveSyncUserAcknowledgeV1]`
-    *   If current `profile.archive_path` is `None`: `[ProfileDefAssociatedArchiveV1]`
-        *   Prompt user to "Save Archive As" (standard file save dialog), specifying the output archive file.
-        *   If user provides a path, store it in the `current_profile.archive_path`.
-        *   Immediately save the updated `Profile` (so `archive_path` is persisted).
-    *   If `profile.archive_path` is `Some(path)` (or was just set):
-        *   Call `create_archive_content` (P1.5) with the current selected files.
-        *   Save the resulting string to `profile.archive_path`.
-    *   **Usability:**
-        *   On success: Update status to `UpToDate` via `check_archive_status` (P1.6), status bar "Archive saved to '[path]}'".
-        *   On error: Status bar error "Failed to save archive: [details]".
-        *   Reset busy cursor.
-
-## P2.8: UI for Archive Status (Initial)
-*   Integrate basic archive status display into the Status Bar (P3.1 conceptually). `[UiNotificationOutdatedArchiveV1]`
-    *   Possible messages: "Archive: Up-to-date", "Archive: Needs Update", "Archive: Not Generated", "Archive: File Missing", "Archive: No Files Selected", "Archive: Error Checking".
-*   Update this status display whenever `check_archive_status` is performed (profile load/creation, selection change, refresh, archive generation).
-*   The window title should show "SourcePacker - [ProfileName]". `[UiStatusBarProfileNameV1]` (This is a window title, but closely related to profile context).
 
 ## P2.9: Refresh File List Action
 *   Add a "Refresh" button or menu item. `[UiMenuTriggerScanV1]`
@@ -52,6 +17,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
     *   Re-populate the TreeView (P2.1), ensuring new "Unknown" files are visually distinct if possible, or at least correctly reflect their state. `[UiTreeViewVisualSelectionStateV1]`, `[UiTreeViewVisualFileStatusV1]`
     *   Run `check_archive_status` (P1.6). `[ArchiveSyncNotifyUserV1]`
     *   Update status bar and any other relevant UI.
+*   Integrate basic archive status display into the Status Bar (P3.1 conceptually). `[UiNotificationOutdatedArchiveV1]`
+    *   Possible messages: "Archive: Up-to-date", "Archive: Needs Update", "Archive: Not Generated", "Archive: File Missing", "Archive: No Files Selected", "Archive: Error Checking".
 
 ## P2.10: AppEvent.Execute Refactoring Discussion
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
