@@ -251,16 +251,14 @@ impl FileSystemScannerOperations for MockFileSystemScanner {
 fn clone_file_system_error(error: &FileSystemError) -> FileSystemError {
     match error {
         FileSystemError::Io(e) => FileSystemError::Io(io::Error::new(e.kind(), format!("{}", e))),
-        FileSystemError::WalkDir(original_walkdir_error) => {
-            // Constructing a new walkdir::Error is complex as it often wraps an io::Error.
-            // For mocking, we can represent it as a generic Io error.
-            let error_message = format!(
-                "Mocked WalkDir error: path {:?}, depth {}, io_error: {:?}",
-                original_walkdir_error.path(),
-                original_walkdir_error.depth(),
-                original_walkdir_error.io_error().map(|e| e.kind())
-            );
-            FileSystemError::Io(io::Error::new(io::ErrorKind::Other, error_message))
+        FileSystemError::IgnoreError(original_ignore_error) => {
+            // Constructing a new ignore::Error is complex.
+            // For mocking, we can represent it with a generic Io error wrapped in an IgnoreError.
+            // This ensures the type matches, though the details won't be identical.
+            let error_message = format!("Mocked IgnoreError: {:?}", original_ignore_error);
+            let mock_io_err = io::Error::new(io::ErrorKind::Other, error_message);
+            // Create a representative ignore::Error using the public constructor.
+            FileSystemError::IgnoreError(ignore::Error::from(mock_io_err))
         }
         FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
     }
