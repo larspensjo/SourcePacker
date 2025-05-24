@@ -10,6 +10,7 @@ use super::window_common;
 use windows::{
     Win32::{
         Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, TRUE, WPARAM},
+        Graphics::Gdi::InvalidateRect,
         System::Com::{
             CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
         },
@@ -473,6 +474,96 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
+    fn _handle_update_status_bar_text_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        text: String,
+        severity: MessageSeverity,
+    ) -> PlatformResult<()> {
+        // 1. Logging based on severity
+        match severity {
+            MessageSeverity::Error => {
+                eprintln!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
+            }
+            MessageSeverity::Warning => {
+                eprintln!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
+            }
+            MessageSeverity::Information => {
+                println!("Platform Status (WinID {:?} INFO): {}", window_id, text)
+            }
+            MessageSeverity::Debug => {
+                println!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
+            }
+            MessageSeverity::None => {
+                println!("Platform Status (WinID {:?} CLEAR)", window_id)
+            }
+        }
+
+        let hwnd_status_bar_opt: Option<HWND>;
+        let final_text_for_setwindowtext: String;
+
+        // 2. Scope for the write lock to update NativeWindowData
+        {
+            let mut windows_map_guard = self.window_map.write().map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to lock windows map for status update".into(),
+                )
+            })?;
+
+            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                if severity == MessageSeverity::None {
+                    // Clear status
+                    window_data.status_bar_current_text.clear();
+                    window_data.status_bar_current_severity = MessageSeverity::None;
+                    final_text_for_setwindowtext = "".to_string();
+                } else if severity >= window_data.status_bar_current_severity {
+                    // Update with new higher-or-equal severity message
+                    window_data.status_bar_current_text = text.clone();
+                    window_data.status_bar_current_severity = severity;
+                    final_text_for_setwindowtext = text; // text is moved here
+                } else {
+                    // Incoming message is lower severity, do not update UI, but still log it (already done above)
+                    println!(
+                        "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY): {} (Severity: {:?}, Current: {:?})",
+                        window_id, text, severity, window_data.status_bar_current_severity
+                    );
+                    return Ok(()); // Early exit, no UI update needed
+                }
+                hwnd_status_bar_opt = window_data.hwnd_status_bar; // Copy HWND
+            } else {
+                // WindowId not found
+                return Err(PlatformError::InvalidHandle(format!(
+                    "WindowId {:?} not found for status bar update",
+                    window_id
+                )));
+            }
+        } // Write lock on window_map is released here
+
+        // 3. Perform WinAPI calls without holding the lock
+        if let Some(hwnd_status) = hwnd_status_bar_opt {
+            unsafe {
+                // Set the text on the status bar control
+                if SetWindowTextW(hwnd_status, &HSTRING::from(final_text_for_setwindowtext))
+                    .is_err()
+                {
+                    return Err(PlatformError::OperationFailed(format!(
+                        "SetWindowTextW for status bar failed: {:?}",
+                        GetLastError()
+                    )));
+                }
+                // Invalidate the status bar control to force a repaint.
+                InvalidateRect(Some(hwnd_status), None, true); // true to erase background
+            }
+            Ok(())
+        } else {
+            // This case implies hwnd_status_bar was None in NativeWindowData
+            Err(PlatformError::InvalidHandle(format!(
+                "Status bar HWND not found for WindowId {:?} (after lock release)",
+                window_id
+            )))
+        }
+    }
+
     /*
      * Executes a single platform command directly.
      * This method centralizes the handling of all platform commands, whether
@@ -526,63 +617,7 @@ impl Win32ApiInternalState {
                 window_id,
                 text,
                 severity,
-            } => {
-                // Log to console
-                match severity {
-                    MessageSeverity::Error => {
-                        eprintln!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
-                    }
-                    MessageSeverity::Warning => {
-                        eprintln!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
-                    }
-                    MessageSeverity::Information => {
-                        println!("Platform Status (WinID {:?} INFO): {}", window_id, text)
-                    }
-                    MessageSeverity::Debug => {
-                        println!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
-                    }
-                    MessageSeverity::None => {
-                        println!("Platform Status (WinID {:?} CLEAR)", window_id)
-                    }
-                }
-
-                // Update internal state and UI
-                let mut windows_map_guard = self.window_map.write().map_err(|_| {
-                    PlatformError::OperationFailed(
-                        "Failed to lock windows map for status update".into(),
-                    )
-                })?;
-
-                if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    if severity == MessageSeverity::None {
-                        window_data.status_bar_current_text.clear();
-                        window_data.status_bar_current_severity = MessageSeverity::None;
-                        // Update UI to clear
-                        window_common::update_status_bar_text_impl(
-                            window_data,
-                            "",
-                            MessageSeverity::None,
-                        )?;
-                    } else if severity >= window_data.status_bar_current_severity {
-                        window_data.status_bar_current_text = text.clone();
-                        window_data.status_bar_current_severity = severity;
-                        // Update UI with new text and severity
-                        window_common::update_status_bar_text_impl(window_data, &text, severity)?;
-                    } else {
-                        // Incoming message is lower severity, do not update UI, but still log it
-                        println!(
-                            "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY): {} (Severity: {:?}, Current: {:?})",
-                            window_id, text, severity, window_data.status_bar_current_severity
-                        );
-                    }
-                    Ok(())
-                } else {
-                    Err(PlatformError::InvalidHandle(format!(
-                        "WindowId {:?} not found for status bar update",
-                        window_id
-                    )))
-                }
-            }
+            } => self._handle_update_status_bar_text_impl(window_id, text, severity), // Refactored call
             PlatformCommand::ShowProfileSelectionDialog {
                 window_id,
                 available_profiles,
