@@ -912,17 +912,74 @@ impl MyAppLogic {
     }
 
     fn handle_menu_refresh_clicked(&mut self) {
-        if self.main_window_id.is_none() {
-            eprintln!("AppLogic: Refresh requested but no main window ID set. Ignoring.");
-            return;
+        // New method for P2.9
+        println!("AppLogic: MenuRefreshClicked received.");
+        let window_id = match self.main_window_id {
+            Some(id) => id,
+            None => {
+                eprintln!("AppLogic: Refresh requested but no main window ID set. Ignoring.");
+                return;
+            }
+        };
+
+        let current_profile_clone = match self.current_profile_cache.clone() {
+            Some(profile) => profile,
+            None => {
+                println!("AppLogic: Refresh requested but no profile is active. Ignoring.");
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: "Refresh: No profile active.".to_string(),
+                        severity: MessageSeverity::Warning,
+                    });
+                return;
+            }
+        };
+
+        let root_path_to_scan = current_profile_clone.root_folder.clone();
+        println!(
+            "AppLogic: Refreshing file list for profile '{}', root: {:?}",
+            current_profile_clone.name, root_path_to_scan
+        );
+
+        match self.file_system_scanner.scan_directory(&root_path_to_scan) {
+            Ok(new_nodes) => {
+                self.file_nodes_cache = new_nodes;
+                println!(
+                    "AppLogic: Scan successful, {} top-level nodes found.",
+                    self.file_nodes_cache.len()
+                );
+
+                self.state_manager
+                    .apply_profile_to_tree(&mut self.file_nodes_cache, &current_profile_clone);
+                println!(
+                    "AppLogic: Applied profile '{}' to refreshed tree.",
+                    current_profile_clone.name
+                );
+
+                self.refresh_tree_view_from_cache(window_id);
+                self.update_current_archive_status();
+
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: format!(
+                            "File list refreshed for profile '{}'.",
+                            current_profile_clone.name
+                        ),
+                        severity: MessageSeverity::Information,
+                    });
+            }
+            Err(e) => {
+                let err_msg = format!("Failed to refresh file list: {}", e);
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id,
+                        text: err_msg,
+                        severity: MessageSeverity::Error,
+                    });
+            }
         }
-        // Placeholder: Actual refresh logic will be implemented in the next step.
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id: self.main_window_id.unwrap(), // Safe due to check above
-                text: "Refresh clicked - TBD".to_string(),
-                severity: MessageSeverity::Information,
-            });
     }
 
     /// Internal helper to finalize UI setup after a profile is active.

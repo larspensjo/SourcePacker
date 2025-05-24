@@ -1849,3 +1849,166 @@ fn test_collect_visual_updates_recursive_applogic() {
         path_map
     );
 }
+
+#[test]
+fn test_handle_menu_refresh_clicked_success() {
+    let (
+        mut logic,
+        _mock_config_manager,
+        _mock_profile_manager,
+        mock_fs_scanner,
+        mock_archiver,
+        mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    let profile_name = "TestRefreshProfile";
+    let profile_root = PathBuf::from("/refresh/root");
+    let initial_profile = Profile::new(profile_name.to_string(), profile_root.clone());
+    logic.test_set_current_profile_cache(Some(initial_profile.clone()));
+    logic.test_set_file_nodes_cache(vec![FileNode::new(
+        profile_root.join("old_file.txt"),
+        "old_file.txt".into(),
+        false,
+    )]);
+
+    let new_scan_result = vec![
+        FileNode::new(
+            profile_root.join("new_file.txt"),
+            "new_file.txt".into(),
+            false,
+        ),
+        FileNode::new(
+            profile_root.join("another_file.txt"),
+            "another_file.txt".into(),
+            false,
+        ),
+    ];
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(new_scan_result.clone()));
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::OutdatedRequiresUpdate);
+
+    logic.handle_event(AppEvent::MenuRefreshClicked);
+    let cmds = logic.test_drain_commands();
+
+    // Verify file_nodes_cache is updated
+    let cached_nodes = logic.test_file_nodes_cache();
+    assert_eq!(cached_nodes.len(), 2);
+    assert_eq!(cached_nodes[0].name, "new_file.txt");
+    assert_eq!(cached_nodes[1].name, "another_file.txt");
+
+    // Verify apply_profile_to_tree was called
+    let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
+    assert_eq!(apply_calls.len(), 1);
+    assert_eq!(apply_calls[0].0.len(), 2); // new nodes
+    assert_eq!(apply_calls[0].1.name, profile_name); // existing profile
+
+    // Verify check_archive_status was called
+    assert_eq!(mock_archiver.get_check_archive_status_calls().len(), 1);
+
+    // Verify commands
+    assert!(
+        cmds.iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })),
+        "Expected PopulateTreeView command"
+    );
+    assert!(
+        cmds.iter().any(
+            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+        if severity == &MessageSeverity::Information && text.contains("File list refreshed"))
+        ),
+        "Expected refresh success status update"
+    );
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+        if severity == &MessageSeverity::Information && text.contains("Archive: OutdatedRequiresUpdate"))), "Expected archive status update");
+
+    // PopulateTreeView, Status (refreshed), Status (archive)
+    assert_eq!(cmds.len(), 3, "Expected 3 commands. Got: {:?}", cmds);
+}
+
+#[test]
+fn test_handle_menu_refresh_clicked_no_profile_active() {
+    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_current_profile_cache(None); // No active profile
+
+    logic.handle_event(AppEvent::MenuRefreshClicked);
+    let cmds = logic.test_drain_commands();
+
+    assert_eq!(cmds.len(), 1);
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText { text, severity, .. } => {
+            assert_eq!(*severity, MessageSeverity::Warning);
+            assert!(text.contains("Refresh: No profile active"));
+        }
+        _ => panic!(
+            "Expected UpdateStatusBarText for no active profile. Got: {:?}",
+            cmds[0]
+        ),
+    }
+    assert!(logic.test_file_nodes_cache().is_empty()); // Assuming it was empty or should remain unchanged
+}
+
+#[test]
+fn test_handle_menu_refresh_clicked_scan_fails() {
+    let (
+        mut logic,
+        _mock_config_manager,
+        _mock_profile_manager,
+        mock_fs_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    let profile_name = "TestRefreshFailProfile";
+    let profile_root = PathBuf::from("/refresh/fail/root");
+    let initial_profile = Profile::new(profile_name.to_string(), profile_root.clone());
+    logic.test_set_current_profile_cache(Some(initial_profile.clone()));
+
+    // Keep an old node in cache to verify it's not cleared on scan failure
+    let old_node = FileNode::new(
+        profile_root.join("persisted_file.txt"),
+        "persisted_file.txt".into(),
+        false,
+    );
+    logic.test_set_file_nodes_cache(vec![old_node.clone()]);
+
+    let scan_error = FileSystemError::Io(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "scan failed",
+    ));
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Err(scan_error));
+
+    logic.handle_event(AppEvent::MenuRefreshClicked);
+    let cmds = logic.test_drain_commands();
+
+    // Verify file_nodes_cache remains unchanged
+    let cached_nodes = logic.test_file_nodes_cache();
+    assert_eq!(cached_nodes.len(), 1);
+    assert_eq!(cached_nodes[0].path, old_node.path);
+
+    assert_eq!(cmds.len(), 1);
+    match &cmds[0] {
+        PlatformCommand::UpdateStatusBarText { text, severity, .. } => {
+            assert_eq!(*severity, MessageSeverity::Error);
+            assert!(text.contains("Failed to refresh file list"));
+            assert!(text.contains("scan failed"));
+        }
+        _ => panic!(
+            "Expected UpdateStatusBarText for scan failure. Got: {:?}",
+            cmds[0]
+        ),
+    }
+
+    // Ensure no PopulateTreeView was called
+    assert!(
+        !cmds
+            .iter()
+            .any(|cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. }))
+    );
+    // Ensure apply_profile_to_tree was NOT called
+    assert!(
+        mock_state_manager
+            .get_apply_profile_to_tree_calls()
+            .is_empty()
+    );
+    // Ensure check_archive_status was NOT called
+    assert!(mock_archiver.get_check_archive_status_calls().is_empty());
+}
