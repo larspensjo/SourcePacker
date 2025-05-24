@@ -30,6 +30,10 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 
 Implemented sections have been removed.
 
+### P2.11.1
+*   app_logic.on_quit is called directly from platform_layer. That is backwards, I don't likt it.
+*   The handle_window_destroyed clears most of the state. Later on, on_quit() tries to save the state that has now been cleared. The saving of the state should maybe be done before handle_window_destroyed?
+
 ### P2.11.2: Core Logic Correctness & User Experience (High Priority)
 *   **User-Friendly Error Reporting from `MyAppLogic`:** `[TechErrorHandlingGracefulV1]`
     *   **Problem:** Errors in `MyAppLogic` are logged to console (`eprintln!`) but not shown to the user in the UI.
@@ -108,9 +112,11 @@ Implemented sections have been removed.
 
 # Phase 3: Enhancements & UX Improvements
 
-## P3.0: Blocking folders
-*   It shall be possible to mark a folder as blocked (Deselected). That would typically be used for temporary folders. (Covered by P1.4 `update_folder_selection`).
-*   `.gitignore` shall automatically be used as a blacklist. These shall be hidden from the user. (This is new, requires parsing .gitignore and modifying `scan_directory` or filtering its results).
+## P3.0: Deselected files and folders
+*   It shall be possible to mark a file as deselected. It should have a visual indicator for this. Typically, when there are new files after a refresh, they will be initiated as neither selected nor deselected.
+*   Suggest a way to show this state. Maybe set the checkbox to disabled (not possible to change state). Another idea is to have a combox for each file and folder, with three states.
+*   If a checkbox will be used, a mechanism is needed to change it do "deselected". Maybe a separate button can be used to toggle the state of the currently selected file.
+*   gitignore should be used to initialize settings to deselected, instead of hiding them completely.
 
 ## P3.1: Status Bar Finalization
 *   Display current profile name (covered by P2.8, window title).
