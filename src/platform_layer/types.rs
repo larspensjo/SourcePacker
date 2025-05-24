@@ -110,7 +110,16 @@ pub enum AppEvent {
     },
 }
 
-// --- Commands from App Logic to Platform ---
+/// Defines the severity of a message to be displayed, e.g., in the status bar.
+/// Ordered from least to most severe for comparison. `None` clears, `Debug` is for dev info.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MessageSeverity {
+    None,        // Clears the status, or lowest priority if not explicitly clearing
+    Debug,       // For debug-level information, potentially hidden in release
+    Information, // Neutral information
+    Warning,     // A warning to the user
+    Error,       // An error has occurred
+}
 
 /// Represents platform-agnostic commands sent from the application logic to the platform layer.
 ///
@@ -153,7 +162,7 @@ pub enum PlatformCommand {
     UpdateStatusBarText {
         window_id: WindowId,
         text: String,
-        is_error: bool,
+        severity: MessageSeverity,
     },
     ShowProfileSelectionDialog {
         window_id: WindowId,
@@ -187,7 +196,7 @@ pub trait PlatformEventHandler: Send + Sync + 'static {
     /// Called by the platform layer when a native UI event has been processed.
     /// The implementor should handle the event and enqueue `PlatformCommand`s
     /// for the platform layer to execute.
-    fn handle_event(&mut self, event: AppEvent); // Return type changed to ()
+    fn handle_event(&mut self, event: AppEvent);
 
     /// Called by the platform layer when the application is about to exit its main loop.
     /// This allows the application logic to perform any necessary cleanup.

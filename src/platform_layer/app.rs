@@ -1,6 +1,10 @@
+// ===== File: C:\Users\larsp\src\source_packer\src\platform_layer\app.rs =====
+
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, PlatformCommand, PlatformEventHandler, WindowConfig, WindowId};
+use super::types::{
+    AppEvent, MessageSeverity, PlatformCommand, PlatformEventHandler, WindowConfig, WindowId,
+};
 use super::window_common;
 
 use windows::{
@@ -134,9 +138,6 @@ impl Win32ApiInternalState {
     }
 
     /// Centralized logic for showing the save file dialog.
-    /// This method is called by both PlatformInterface::execute_command and by
-    /// Win32ApiInternalState::process_commands_from_event_handler.
-    /// It takes `&Arc<Self>` because `process_commands_from_event_handler` might be called recursively.
     fn _handle_show_save_file_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -266,7 +267,7 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
-    fn _handle_show_profile_selection_dialog_impl(
+    fn _handle_show_profile_selection_dialog_stub_impl(
         self: &Arc<Self>,
         window_id: WindowId,
         available_profiles: Vec<String>,
@@ -279,11 +280,6 @@ impl Win32ApiInternalState {
             title, prompt, emphasize_create_new, available_profiles
         );
 
-        // STUB LOGIC:
-        // This simulates a user interaction. Replace with actual dialog display later.
-        // If profiles are available and not emphasizing create new, pick the first one.
-        // Else if emphasize_create_new or no profiles, request creation.
-        // Else, simulate cancellation.
         let (chosen_profile_name, create_new_requested, cancelled) =
             if !available_profiles.is_empty() && !emphasize_create_new {
                 (Some(available_profiles[0].clone()), false, false)
@@ -350,7 +346,6 @@ impl Win32ApiInternalState {
             )
         };
         let final_text_result = if dialog_result != 0 && dialog_data.success {
-            // dialog_result.0 for isize
             Some(dialog_data.input_text)
         } else {
             println!(
@@ -382,7 +377,7 @@ impl Win32ApiInternalState {
         self: &Arc<Self>,
         window_id: WindowId,
         title: String,
-        _initial_dir: Option<PathBuf>,
+        _initial_dir: Option<PathBuf>, // _initial_dir is not used in this impl yet
     ) -> PlatformResult<()> {
         println!(
             "Platform: Showing real Folder Picker Dialog. Title: '{}'",
@@ -395,19 +390,9 @@ impl Win32ApiInternalState {
 
         if let Ok(file_dialog) = file_dialog_result {
             unsafe {
-                match file_dialog.SetOptions(FOS_PICKFOLDERS) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!(
-                            "Platform: IFileOpenDialog::SetOptions FOS_PICKFOLDERS failed: {:?}",
-                            e
-                        );
-                    }
-                }
+                let _ = file_dialog.SetOptions(FOS_PICKFOLDERS);
                 let h_title = HSTRING::from(title);
-                if let Err(e) = file_dialog.SetTitle(&h_title) {
-                    eprintln!("Platform: IFileOpenDialog::SetTitle failed: {:?}", e);
-                }
+                let _ = file_dialog.SetTitle(&h_title);
                 if let Some(dir_path) = &_initial_dir {
                     let dir_hstring = HSTRING::from(dir_path.as_os_str());
                     match SHCreateItemFromParsingName::<_, _, IShellItem>(&dir_hstring, None) {
@@ -427,50 +412,14 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
-                match file_dialog.Show(Some(hwnd_owner)) {
-                    Ok(_) => match file_dialog.GetResult() {
-                        Ok(shell_item) => {
-                            let display_name_result: Result<PWSTR, _> =
-                                shell_item.GetDisplayName(SIGDN_FILESYSPATH);
-                            match display_name_result {
-                                Ok(pwstr_path) => {
-                                    let path_string = pwstr_path.to_string().unwrap_or_default();
-                                    CoTaskMemFree(Some(pwstr_path.as_ptr() as *const c_void));
-                                    if !path_string.is_empty() {
-                                        path_result = Some(PathBuf::from(path_string));
-                                        println!(
-                                            "Platform: Folder picked: {:?}",
-                                            path_result.as_ref().unwrap()
-                                        );
-                                    } else {
-                                        println!(
-                                            "Platform: Folder picker returned empty path string."
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    eprintln!(
-                                        "Platform: IShellItem::GetDisplayName failed: {:?}",
-                                        e
-                                    );
-                                }
+                if file_dialog.Show(Some(hwnd_owner)).is_ok() {
+                    if let Ok(shell_item) = file_dialog.GetResult() {
+                        if let Ok(pwstr_path) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
+                            let path_string = pwstr_path.to_string().unwrap_or_default();
+                            CoTaskMemFree(Some(pwstr_path.as_ptr() as *const c_void));
+                            if !path_string.is_empty() {
+                                path_result = Some(PathBuf::from(path_string));
                             }
-                        }
-                        Err(e) => {
-                            eprintln!("Platform: IFileOpenDialog::GetResult failed: {:?}", e);
-                        }
-                    },
-                    Err(e_show) => {
-                        if e_show.code() == windows::Win32::Foundation::ERROR_CANCELLED.into() {
-                            println!(
-                                "Platform: Folder picker dialog cancelled by user (HRESULT match)."
-                            );
-                        } else {
-                            eprintln!(
-                                "Platform: IFileOpenDialog::Show failed with HRESULT: {:?} Error: {:?}",
-                                e_show.code(),
-                                e_show
-                            );
                         }
                     }
                 }
@@ -481,6 +430,7 @@ impl Win32ApiInternalState {
                 e
             );
             eprintln!("{}", err_msg);
+            // Send completion event even on creation failure so AppLogic isn't stuck
             let event = AppEvent::FolderPickerDialogCompleted {
                 window_id,
                 path: None,
@@ -512,13 +462,7 @@ impl Win32ApiInternalState {
         {
             if let Ok(mut handler_guard) = handler_arc.lock() {
                 handler_guard.handle_event(event);
-            } else {
-                eprintln!(
-                    "Platform: Failed to lock event handler for FolderPickerDialogCompleted."
-                );
             }
-        } else {
-            eprintln!("Platform: Event handler not available for FolderPickerDialogCompleted.");
         }
         Ok(())
     }
@@ -581,15 +525,71 @@ impl Win32ApiInternalState {
             PlatformCommand::UpdateStatusBarText {
                 window_id,
                 text,
-                is_error,
-            } => window_common::update_status_bar_text(self, window_id, &text, is_error),
+                severity,
+            } => {
+                // Log to console
+                match severity {
+                    MessageSeverity::Error => {
+                        eprintln!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
+                    }
+                    MessageSeverity::Warning => {
+                        eprintln!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
+                    }
+                    MessageSeverity::Information => {
+                        println!("Platform Status (WinID {:?} INFO): {}", window_id, text)
+                    }
+                    MessageSeverity::Debug => {
+                        println!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
+                    }
+                    MessageSeverity::None => {
+                        println!("Platform Status (WinID {:?} CLEAR)", window_id)
+                    }
+                }
+
+                // Update internal state and UI
+                let mut windows_map_guard = self.window_map.write().map_err(|_| {
+                    PlatformError::OperationFailed(
+                        "Failed to lock windows map for status update".into(),
+                    )
+                })?;
+
+                if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                    if severity == MessageSeverity::None {
+                        window_data.status_bar_current_text.clear();
+                        window_data.status_bar_current_severity = MessageSeverity::None;
+                        // Update UI to clear
+                        window_common::update_status_bar_text_impl(
+                            window_data,
+                            "",
+                            MessageSeverity::None,
+                        )?;
+                    } else if severity >= window_data.status_bar_current_severity {
+                        window_data.status_bar_current_text = text.clone();
+                        window_data.status_bar_current_severity = severity;
+                        // Update UI with new text and severity
+                        window_common::update_status_bar_text_impl(window_data, &text, severity)?;
+                    } else {
+                        // Incoming message is lower severity, do not update UI, but still log it
+                        println!(
+                            "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY): {} (Severity: {:?}, Current: {:?})",
+                            window_id, text, severity, window_data.status_bar_current_severity
+                        );
+                    }
+                    Ok(())
+                } else {
+                    Err(PlatformError::InvalidHandle(format!(
+                        "WindowId {:?} not found for status bar update",
+                        window_id
+                    )))
+                }
+            }
             PlatformCommand::ShowProfileSelectionDialog {
                 window_id,
                 available_profiles,
                 title,
                 prompt,
                 emphasize_create_new,
-            } => self._handle_show_profile_selection_dialog_impl(
+            } => self._handle_show_profile_selection_dialog_stub_impl(
                 window_id,
                 available_profiles,
                 title,
@@ -641,12 +641,13 @@ impl PlatformInterface {
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_window_id();
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: HWND(std::ptr::null_mut()),
+            hwnd: HWND(std::ptr::null_mut()), // Will be set after successful creation
             id: window_id,
             treeview_state: None,
             hwnd_button_generate: None,
             hwnd_status_bar: None,
-            status_bar_is_error: false,
+            status_bar_current_text: String::new(), // Initialize
+            status_bar_current_severity: MessageSeverity::None, // Initialize
         };
         self.internal_state
             .window_map
@@ -689,7 +690,8 @@ impl PlatformInterface {
         match self.internal_state.window_map.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    window_data.hwnd = hwnd;
+                    window_data.hwnd = hwnd; // Set the actual HWND
+                    // Button and status bar HWNDs are set in WM_CREATE of window_common
                     println!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}, Status HWND is {:?}.",
                         window_id, window_data.hwnd_button_generate, window_data.hwnd_status_bar
@@ -734,44 +736,56 @@ impl PlatformInterface {
         unsafe {
             let mut msg = MSG::default();
             loop {
+                // Reset current highest severity for windows before processing new commands/events
+                // This ensures that a new highest severity for the current "cycle" can be determined.
+                if let Ok(mut windows_map_guard) = self.internal_state.window_map.write() {
+                    for (_id, window_data) in windows_map_guard.iter_mut() {
+                        // Reset to a baseline that allows new info messages to show,
+                        // but errors/warnings would still take precedence.
+                        // If MessageSeverity::None, then only higher severity messages will appear
+                        // until explicitly cleared. If MessageSeverity::Information, then new Info
+                        // messages will replace old ones.
+                        window_data.status_bar_current_severity = MessageSeverity::Information;
+                        if window_data.status_bar_current_text.is_empty() {
+                            // If it was cleared, set to None
+                            window_data.status_bar_current_severity = MessageSeverity::None;
+                        }
+                    }
+                }
+
                 loop {
                     let command_opt = if let Ok(mut logic_guard) = app_logic_ref.lock() {
-                        if let Some(my_app_logic_concrete) = logic_guard
-                            .as_any_mut()
-                            .downcast_mut::<crate::app_logic::handler::MyAppLogic>(
-                        ) {
-                            my_app_logic_concrete.try_dequeue_command()
-                        } else {
-                            eprintln!(
-                                "Platform: Failed to downcast event_handler to MyAppLogic for dequeuing."
-                            );
-                            None
-                        }
+                        logic_guard.try_dequeue_command()
                     } else {
                         eprintln!("Platform: Failed to lock MyAppLogic to dequeue command.");
                         None
                     };
+
                     if let Some(command) = command_opt {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
                             eprintln!("Platform: Error executing command from queue: {:?}", e);
                         }
                     } else {
-                        break;
+                        break; // No more commands from app logic queue
                     }
                 }
+
+                // Process Windows messages. This will block until a message is received.
                 let result = GetMessageW(&mut msg, None, 0, 0);
                 if result.0 > 0 {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 } else if result.0 == 0 {
                     println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
-                    break;
+                    break; // WM_QUIT
                 } else {
+                    // Error
                     let last_error = GetLastError();
                     eprintln!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
+                    // Check if we are already in a quit sequence
                     if self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
                         && self
                             .internal_state
@@ -791,26 +805,22 @@ impl PlatformInterface {
                 }
             }
         }
+        // Application quit
         if let Ok(mut handler_guard) = app_logic_ref.lock() {
             handler_guard.on_quit();
         } else {
             eprintln!("Platform: Failed to lock MyAppLogic for on_quit call.");
         }
-        *self.internal_state.event_handler.lock().unwrap() = None;
+        *self.internal_state.event_handler.lock().unwrap() = None; // Clear handler ref
         println!("Platform: Message loop exited cleanly.");
         Ok(())
     }
 }
 
 /// Given a slice of UTF-16 code units (with a trailing 0), produce a PathBuf.
-///
-/// It:
-/// 1. Finds the first 0 (or uses the full buffer if none),
-/// 2. Constructs an OsString via `from_wide`,
-/// 3. Converts that to `PathBuf`.
 pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
     let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
-    let path_os_string = OsString::from_wide(&buffer[..len]); // Fixed: Added use std::ffi::OsString
+    let path_os_string = OsString::from_wide(&buffer[..len]);
     PathBuf::from(path_os_string)
 }
 
@@ -853,40 +863,27 @@ unsafe extern "system" fn input_dialog_proc(
                         .unwrap_or_default();
                 }
             }
-            match unsafe { GetDlgItem(Some(hdlg), window_common::ID_DIALOG_INPUT_EDIT) } {
-                Ok(hwnd_edit_ok) if !hwnd_edit_ok.is_invalid() => {
-                    // windows::Win32::UI::WindowsAndMessaging::SetFocus(hwnd_edit_ok);
-                    // There is no windows::Win32::UI::WindowsAndMessaging::SetFocus
-                }
-                _ => {}
-            }
-            return TRUE.0 as isize;
+            // SetFocus logic if needed
+            TRUE.0 as isize
         }
         WM_COMMAND => {
             let command_id = loword_from_wparam(wparam);
             match command_id {
                 x if x == IDOK.0 as u16 => {
-                    // Fixed: Compare with IDOK.0 as u16
                     let dialog_data_ptr =
                         unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) } as *mut InputDialogData;
                     if !dialog_data_ptr.is_null() {
                         let dialog_data = unsafe { &mut *dialog_data_ptr };
-                        match unsafe { GetDlgItem(Some(hdlg), window_common::ID_DIALOG_INPUT_EDIT) }
+                        if let Ok(hwnd_edit_ok) =
+                            unsafe { GetDlgItem(Some(hdlg), window_common::ID_DIALOG_INPUT_EDIT) }
                         {
-                            // Fixed: Wrap hdlg in Some, handle Result
-                            Ok(hwnd_edit_ok) => {
-                                let mut buffer: [u16; 256] = [0; 256];
-                                let len = unsafe { GetWindowTextW(hwnd_edit_ok, &mut buffer) };
-                                if len > 0 {
-                                    dialog_data.input_text =
-                                        String::from_utf16_lossy(&buffer[0..len as usize]);
-                                } else {
-                                    dialog_data.input_text.clear();
-                                }
-                            }
-                            Err(_) => {
-                                dialog_data.input_text.clear(); /* Or other error handling */
-                            }
+                            let mut buffer: [u16; 256] = [0; 256];
+                            let len = unsafe { GetWindowTextW(hwnd_edit_ok, &mut buffer) };
+                            dialog_data.input_text = if len > 0 {
+                                String::from_utf16_lossy(&buffer[0..len as usize])
+                            } else {
+                                String::new()
+                            };
                         }
                         dialog_data.success = true;
                     }
@@ -896,22 +893,19 @@ unsafe extern "system" fn input_dialog_proc(
                     return TRUE.0 as isize;
                 }
                 x if x == IDCANCEL.0 as u16 => {
-                    // Fixed: Compare with IDCANCEL.0 as u16
                     let dialog_data_ptr =
                         unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) } as *mut InputDialogData;
                     if !dialog_data_ptr.is_null() {
-                        let dialog_data = unsafe { &mut *dialog_data_ptr };
-                        dialog_data.success = false;
+                        unsafe { (&mut *dialog_data_ptr).success = false };
                     }
                     unsafe { EndDialog(hdlg, IDCANCEL.0 as isize).unwrap_or_default() };
                     return TRUE.0 as isize;
                 }
-                _ => {}
+                _ => FALSE.0 as isize,
             }
         }
-        _ => {}
+        _ => FALSE.0 as isize,
     }
-    FALSE.0 as isize
 }
 
 fn push_word(vec: &mut Vec<u8>, word: u16) {
@@ -938,11 +932,10 @@ fn align_to_dword(vec: &mut Vec<u8>) {
 fn build_input_dialog_template(
     template_bytes: &mut Vec<u8>,
     title_str: &str,
-    _prompt_str: &str, // prompt_str is not directly used here as it's set via SetDlgItemText
+    _prompt_str: &str,
 ) -> PlatformResult<()> {
     let style = DS_CENTER | DS_MODALFRAME | DS_SETFONT;
     let dlg_template = DLGTEMPLATE {
-        // Fixed: Use DLGTEMPLATEW
         style: style as u32 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_POPUP.0,
         dwExtendedStyle: 0,
         cdit: 4,
@@ -951,7 +944,6 @@ fn build_input_dialog_template(
         cx: 200,
         cy: 80,
     };
-    // Fixed: Use safer way to get bytes from struct
     template_bytes.extend_from_slice(unsafe {
         &*(std::ptr::addr_of!(dlg_template) as *const [u8; size_of::<DLGTEMPLATE>()])
     });
@@ -965,8 +957,8 @@ fn build_input_dialog_template(
 
     align_to_dword(template_bytes);
     let static_item = DLGITEMTEMPLATE {
-        style: WS_CHILD.0 | WS_VISIBLE.0 | SS_LEFTNOWORDWRAP.0, // Fixed: Use .0 for styles
-        dwExtendedStyle: 0,                                     // Fixed: Added missing field
+        style: WS_CHILD.0 | WS_VISIBLE.0 | SS_LEFTNOWORDWRAP.0,
+        dwExtendedStyle: 0,
         x: 10,
         y: 10,
         cx: 180,
@@ -977,14 +969,13 @@ fn build_input_dialog_template(
         &*(std::ptr::addr_of!(static_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
     });
     push_str_utf16(template_bytes, "Static");
-    push_str_utf16(template_bytes, "Prompt text here");
-    push_word(template_bytes, 0);
+    push_str_utf16(template_bytes, "Prompt text here"); // Placeholder text set via SetDlgItemText
+    push_word(template_bytes, 0); // No creation data
 
     align_to_dword(template_bytes);
-
     let edit_item = DLGITEMTEMPLATE {
-        style: WS_CHILD.0 | WS_VISIBLE.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32, // Fixed: Use .0 for styles
-        dwExtendedStyle: 0, // Fixed: Added missing field
+        style: WS_CHILD.0 | WS_VISIBLE.0 | WS_BORDER.0 | ES_AUTOHSCROLL as u32,
+        dwExtendedStyle: 0,
         x: 10,
         y: 25,
         cx: 180,
@@ -995,8 +986,8 @@ fn build_input_dialog_template(
         &*(std::ptr::addr_of!(edit_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
     });
     push_str_utf16(template_bytes, "Edit");
-    push_word(template_bytes, 0);
-    push_word(template_bytes, 0);
+    push_word(template_bytes, 0); // No text here (set via SetDlgItemText)
+    push_word(template_bytes, 0); // No creation data
 
     align_to_dword(template_bytes);
     let ok_button_item = DLGITEMTEMPLATE {
@@ -1013,7 +1004,7 @@ fn build_input_dialog_template(
     });
     push_str_utf16(template_bytes, "Button");
     push_str_utf16(template_bytes, "OK");
-    push_word(template_bytes, 0);
+    push_word(template_bytes, 0); // No creation data
 
     align_to_dword(template_bytes);
     let cancel_button_item = DLGITEMTEMPLATE {
@@ -1030,7 +1021,7 @@ fn build_input_dialog_template(
     });
     push_str_utf16(template_bytes, "Button");
     push_str_utf16(template_bytes, "Cancel");
-    push_word(template_bytes, 0);
+    push_word(template_bytes, 0); // No creation data
 
     Ok(())
 }

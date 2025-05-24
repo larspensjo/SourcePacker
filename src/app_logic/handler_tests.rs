@@ -6,8 +6,8 @@ use crate::core::{
     Profile, ProfileError, ProfileManagerOperations, StateManagerOperations,
 };
 use crate::platform_layer::{
-    AppEvent, CheckState, PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId,
-    WindowId,
+    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
+    TreeItemDescriptor, TreeItemId, WindowId,
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -186,8 +186,6 @@ fn clone_profile_error(error: &ProfileError) -> ProfileError {
     match error {
         ProfileError::Io(e) => ProfileError::Io(io::Error::new(e.kind(), format!("{}", e))),
         ProfileError::Serde(_e) => {
-            // To avoid a direct dependency on a specific serde_json error structure if _e is private
-            // we create a representative error.
             let representative_json_error = serde_json::from_reader::<_, serde_json::Value>(
                 std::io::Cursor::new(b"invalid json {"),
             )
@@ -243,7 +241,7 @@ impl FileSystemScannerOperations for MockFileSystemScanner {
         match map.get(root_path) {
             Some(Ok(nodes)) => Ok(nodes.clone()),
             Some(Err(e)) => Err(clone_file_system_error(e)),
-            None => Ok(Vec::new()), // Default to empty success if no specific result is set for path
+            None => Ok(Vec::new()),
         }
     }
 }
@@ -252,12 +250,8 @@ fn clone_file_system_error(error: &FileSystemError) -> FileSystemError {
     match error {
         FileSystemError::Io(e) => FileSystemError::Io(io::Error::new(e.kind(), format!("{}", e))),
         FileSystemError::IgnoreError(original_ignore_error) => {
-            // Constructing a new ignore::Error is complex.
-            // For mocking, we can represent it with a generic Io error wrapped in an IgnoreError.
-            // This ensures the type matches, though the details won't be identical.
             let error_message = format!("Mocked IgnoreError: {:?}", original_ignore_error);
             let mock_io_err = io::Error::new(io::ErrorKind::Other, error_message);
-            // Create a representative ignore::Error using the public constructor.
             FileSystemError::IgnoreError(ignore::Error::from(mock_io_err))
         }
         FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
@@ -577,11 +571,11 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         cmds
     );
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: false, .. } if text.contains(last_profile_name_to_load))),
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains(last_profile_name_to_load))),
         "Expected UpdateStatusBarText command with success message. Got: {:?}", cmds
     );
     assert!( // P2.8: Check for archive status update text
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: false, .. } if text.contains("Archive: NotYetGenerated"))),
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: NotYetGenerated"))),
         "Expected UpdateStatusBarText command with archive status. Got: {:?}", cmds
     );
     assert!(
@@ -741,7 +735,7 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
         cmds.iter().any(|cmd| match cmd {
             PlatformCommand::UpdateStatusBarText {
                 text,
-                is_error: true,
+                severity: MessageSeverity::Error,
                 ..
             } => text.contains("Error loading last profile name"),
             _ => false,
@@ -804,7 +798,7 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
         cmds.iter().any(|cmd| match cmd {
             PlatformCommand::UpdateStatusBarText {
                 text,
-                is_error: true,
+                severity: MessageSeverity::Error,
                 ..
             } => text.contains("Failed to load last profile") && text.contains(last_profile_name),
             _ => false,
@@ -887,8 +881,8 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. }))
     );
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains(profile_name) && text.contains("loaded"))));
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Archive: NoFilesSelected"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains(profile_name) && text.contains("loaded"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: NoFilesSelected"))));
     assert!(
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
@@ -916,7 +910,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
 
     assert!(logic.test_current_profile_name().is_none());
     assert_eq!(cmds.len(), 2); // UpdateStatusBarText (error), ShowProfileSelectionDialog
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: true, .. } if text.contains("Could not load profile"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Could not load profile"))));
     assert!(
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::ShowProfileSelectionDialog { .. }))
@@ -999,7 +993,7 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
 
     assert!(logic.test_pending_new_profile_name().is_none());
     assert_eq!(cmds.len(), 2); // UpdateStatusBarText (error), ShowInputDialog (retry)
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: true, .. } if text.contains("Invalid profile name"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Invalid profile name"))));
     match cmds
         .iter()
         .find(|cmd| matches!(cmd, PlatformCommand::ShowInputDialog { .. }))
@@ -1102,8 +1096,8 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. }))
     );
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains(profile_name) && text.contains("created and loaded"))));
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Archive: NoFilesSelected"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains(profile_name) && text.contains("created and loaded"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: NoFilesSelected"))));
     assert!(
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
@@ -1165,7 +1159,7 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
     match &cmds[0] {
         PlatformCommand::UpdateStatusBarText {
             text,
-            is_error: true,
+            severity: MessageSeverity::Error,
             ..
         } => {
             assert!(text.contains("Failed to list profiles"));
@@ -1272,13 +1266,13 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
         mut logic,
         mock_config_manager,
         mock_profile_manager,
-        mock_file_system_scanner, // Added
+        mock_file_system_scanner,
         mock_archiver,
-        mock_state_manager, // Added
+        _mock_state_manager,
     ) = setup_logic_with_mocks();
 
     let mock_profile_root = PathBuf::from("/mock/profile/root");
-    logic.test_set_root_path_for_scan(mock_profile_root.clone()); // Set the root path used by create_profile_from_current_state
+    logic.test_set_root_path_for_scan(mock_profile_root.clone());
 
     let profile_to_save_name = "MyNewlySavedProfileViaManager";
     let profile_save_path_from_dialog = PathBuf::from(format!(
@@ -1288,7 +1282,6 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
 
     logic.test_set_pending_action(PendingAction::SavingProfile);
 
-    // For _activate_profile_and_show_window or just update_current_archive_status
     mock_file_system_scanner.set_scan_directory_result(&mock_profile_root, Ok(vec![]));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
@@ -1315,7 +1308,7 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
             .as_ref()
             .unwrap()
             .root_folder,
-        mock_profile_root // Ensure root folder is correctly set from test_set_root_path_for_scan
+        mock_profile_root
     );
 
     let save_calls = mock_profile_manager.get_save_profile_calls();
@@ -1330,10 +1323,10 @@ fn test_file_save_dialog_completed_for_profile_saves_profile_via_manager() {
         *logic.test_current_archive_status(),
         Some(ArchiveStatus::NotYetGenerated)
     );
-    // Check for commands from saving profile success
+
     assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle {title, ..} if title.contains(profile_to_save_name))));
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Profile") && text.contains("saved."))));
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Archive: NotYetGenerated"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Profile") && text.contains("saved."))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: NotYetGenerated"))));
     assert_eq!(cmds.len(), 3); // SetTitle, Status(saved), Status(archive)
 }
 
@@ -1376,7 +1369,7 @@ fn test_handle_button_click_generate_archive_with_profile_context() {
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_path.clone()),
     }));
-    logic.test_set_root_path_for_scan(temp_root_path.clone()); // Also set this
+    logic.test_set_root_path_for_scan(temp_root_path.clone());
 
     mock_archiver.set_create_archive_content_result(Ok("content".to_string()));
 
@@ -1436,9 +1429,9 @@ fn test_handle_file_save_dialog_completed_for_archive_updates_profile_via_mock_a
     });
     let cmds = logic.test_drain_commands();
 
-    assert_eq!(cmds.len(), 2); // Status(saved archive), Status(archive status UpToDate)
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: false, .. } if text.contains("Archive saved to"))));
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, is_error: false, .. } if text.contains("Archive: UpToDate"))));
+    assert_eq!(cmds.len(), 2);
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive saved to"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: UpToDate"))));
 
     assert_eq!(*logic.test_pending_archive_content(), None);
 
@@ -1490,11 +1483,11 @@ fn test_handle_file_save_dialog_cancelled_for_archive() {
         PlatformCommand::UpdateStatusBarText {
             window_id: cmd_win_id,
             text,
-            is_error,
+            severity,
         } => {
             assert_eq!(*cmd_win_id, main_window_id);
             assert_eq!(*text, "Save archive cancelled.");
-            assert_eq!(*is_error, false);
+            assert_eq!(*severity, MessageSeverity::Information);
         }
         _ => panic!("Expected UpdateStatusBarText command, got {:?}", cmds[0]),
     }
@@ -1525,11 +1518,11 @@ fn test_handle_file_save_dialog_cancelled_for_profile() {
         PlatformCommand::UpdateStatusBarText {
             window_id: cmd_win_id,
             text,
-            is_error,
+            severity,
         } => {
             assert_eq!(*cmd_win_id, main_window_id);
             assert_eq!(*text, "Save profile cancelled.");
-            assert_eq!(*is_error, false);
+            assert_eq!(*severity, MessageSeverity::Information);
         }
         _ => panic!("Expected UpdateStatusBarText command, got {:?}", cmds[0]),
     }
@@ -1561,7 +1554,7 @@ fn test_handle_treeview_item_toggled_updates_archive_status_via_mock_archiver() 
     }));
 
     logic.test_path_to_tree_item_id_clear();
-    let _descriptors = logic.build_tree_item_descriptors_recursive(); // Populates path_to_tree_item_id
+    let _descriptors = logic.build_tree_item_descriptors_recursive();
     let tree_item_id_for_foo = *logic
         .test_path_to_tree_item_id()
         .get(&foo_full_path)
@@ -1582,12 +1575,12 @@ fn test_handle_treeview_item_toggled_updates_archive_status_via_mock_archiver() 
     assert_eq!(update_calls[0].1, FileState::Selected);
 
     assert_eq!(logic.test_file_nodes_cache()[0].state, FileState::Selected);
-    assert_eq!(cmds.len(), 2); // UpdateTreeItemVisualState, UpdateStatusBarText (archive status)
+    assert_eq!(cmds.len(), 2);
     assert!(
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::UpdateTreeItemVisualState { .. }))
     );
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Archive: OutdatedRequiresUpdate"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Archive: OutdatedRequiresUpdate"))));
 
     assert_eq!(
         *logic.test_current_archive_status(),
@@ -1633,7 +1626,11 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     mock_file_system_scanner_arc
         .set_scan_directory_result(&root_folder_for_profile, Ok(scanned_file_nodes.clone()));
 
-    mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+    // For ArchiveStatus::ErrorChecking, the severity should be Error.
+    // For other statuses, it's Information.
+    mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::ErrorChecking(Some(
+        io::ErrorKind::NotFound,
+    )));
 
     let event = AppEvent::FileOpenProfileDialogCompleted {
         window_id: WindowId(1),
@@ -1644,7 +1641,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
 
     let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
     assert_eq!(apply_calls.len(), 1);
-    assert_eq!(apply_calls[0].1.name, mock_profile_to_load.name); // Check correct profile applied
+    assert_eq!(apply_calls[0].1.name, mock_profile_to_load.name);
 
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
@@ -1652,7 +1649,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     );
     assert_eq!(
         *logic.test_current_archive_status(),
-        Some(ArchiveStatus::NoFilesSelected)
+        Some(ArchiveStatus::ErrorChecking(Some(io::ErrorKind::NotFound)))
     );
     assert_eq!(mock_archiver_arc.get_check_archive_status_calls().len(), 1);
     let (profile_call_arg, nodes_call_arg) = &mock_archiver_arc.get_check_archive_status_calls()[0];
@@ -1660,25 +1657,19 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     assert_eq!(nodes_call_arg.len(), scanned_file_nodes.len());
     if !nodes_call_arg.is_empty() {
         assert_eq!(nodes_call_arg[0].name, scanned_file_nodes[0].name);
-        // This check depends on when apply_profile_to_tree is called relative to check_archive_status.
-        // If apply_profile_to_tree happens before check_archive_status (which is typical for load),
-        // then the state might not be Unknown.
-        // In _activate_profile_and_show_window: scan -> apply_profile -> update_archive_status.
-        // So, the nodes passed to check_archive_status will have their state set by apply_profile.
-        // If profile has no selected/deselected, they remain Unknown.
         assert_eq!(
             nodes_call_arg[0].state,
-            FileState::Unknown, // Assuming the loaded profile doesn't select/deselect this file.
+            FileState::Unknown,
             "Node state passed to check_archive_status should reflect profile application."
         );
     }
-    // Check for commands from _activate_profile_and_show_window
-    assert_eq!(cmds.len(), 5); // SetTitle, Populate, Status(loaded), Status(archive), ShowWindow
+
+    assert_eq!(cmds.len(), 5);
     assert!(
         cmds.iter()
             .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
     );
-    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, .. } if text.contains("Archive: NoFilesSelected"))));
+    assert!(cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Archive: ErrorChecking"))));
 }
 
 #[test]
@@ -1696,7 +1687,7 @@ fn test_handle_window_close_requested_generates_close_command() {
 #[test]
 fn test_handle_window_destroyed_clears_main_window_id_and_state() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1))); // Set main window ID
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.test_set_current_profile_name(Some("Test".to_string()));
     logic.test_set_current_profile_cache(Some(Profile::new("Test".into(), PathBuf::from("."))));
     logic.test_set_current_archive_status(Some(ArchiveStatus::UpToDate));
@@ -1728,7 +1719,7 @@ fn test_on_quit_executes_without_panic_and_saves_profile_name() {
     logic.test_set_current_profile_name(Some(profile_name.to_string()));
 
     logic.on_quit();
-    // No commands are expected from on_quit. It directly calls config_manager.
+
     assert!(logic.test_drain_commands().is_empty());
 
     let saved_info = mock_config_manager.get_saved_profile_name();
@@ -1740,7 +1731,7 @@ fn test_on_quit_executes_without_panic_and_saves_profile_name() {
 #[test]
 fn test_on_quit_with_no_active_profile_saves_empty_string() {
     let (mut logic, mock_config_manager, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_current_profile_name(None); // No active profile
+    logic.test_set_current_profile_name(None);
 
     logic.on_quit();
     assert!(logic.test_drain_commands().is_empty());
@@ -1748,7 +1739,7 @@ fn test_on_quit_with_no_active_profile_saves_empty_string() {
     let saved_info = mock_config_manager.get_saved_profile_name();
     assert!(saved_info.is_some());
     assert_eq!(saved_info.as_ref().unwrap().0, APP_NAME_FOR_PROFILES);
-    assert_eq!(saved_info.unwrap().1, ""); // Should save empty string
+    assert_eq!(saved_info.unwrap().1, "");
 }
 
 fn make_test_tree_for_applogic() -> Vec<FileNode> {
@@ -1769,8 +1760,8 @@ fn make_test_tree_for_applogic() -> Vec<FileNode> {
 fn test_build_tree_item_descriptors_recursive_applogic() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
-    logic.test_path_to_tree_item_id_clear(); // Clears counter and map
-    let descriptors = logic.build_tree_item_descriptors_recursive(); // Uses internal method
+    logic.test_path_to_tree_item_id_clear();
+    let descriptors = logic.build_tree_item_descriptors_recursive();
     assert_eq!(descriptors.len(), 2);
     assert_eq!(descriptors[0].text, "file1.txt");
     assert!(!descriptors[0].is_folder);
@@ -1802,18 +1793,16 @@ fn test_find_filenode_mut_and_ref_applogic() {
     logic.test_set_file_nodes_cache(make_test_tree_for_applogic());
     let path_to_find = PathBuf::from("/root/sub/file2.txt");
 
-    // Test find_filenode_ref (static method, but we can use it on the cache)
     let found_ref = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &path_to_find);
     assert!(found_ref.is_some());
     assert_eq!(found_ref.unwrap().name, "file2.txt");
 
-    // Test test_find_filenode_mut (instance method via test helper)
     let found_mut_opt = logic.test_find_filenode_mut(&path_to_find);
     assert!(found_mut_opt.is_some());
     if let Some(node) = found_mut_opt {
         node.state = FileState::Selected;
     }
-    // Verify the change using find_filenode_ref again on the modified cache
+
     let ref_after_mut = MyAppLogic::find_filenode_ref(logic.test_file_nodes_cache(), &path_to_find);
     assert_eq!(ref_after_mut.unwrap().state, FileState::Selected);
 }
@@ -1822,34 +1811,30 @@ fn test_find_filenode_mut_and_ref_applogic() {
 fn test_collect_visual_updates_recursive_applogic() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let mut test_tree = make_test_tree_for_applogic();
-    // file1.txt -> Selected
+
     test_tree[0].state = FileState::Selected;
-    // sub/file2.txt -> Deselected
     test_tree[1].children[0].state = FileState::Deselected;
-    // dir1 (sub) remains Unknown
 
     logic.test_set_file_nodes_cache(test_tree);
-    logic.test_path_to_tree_item_id_clear(); // Reset map and counter
-    let _descriptors = logic.build_tree_item_descriptors_recursive(); // Populate map
+    logic.test_path_to_tree_item_id_clear();
+    let _descriptors = logic.build_tree_item_descriptors_recursive();
 
     let mut updates = Vec::new();
-    // Need to iterate over a clone if nodes are directly from logic's cache that might be borrowed by path_map
-    // Or iterate over the original file_nodes_cache structure.
+
     for node_ref in logic.test_file_nodes_cache().clone().iter() {
-        // Clone here to avoid borrow issues
         logic.collect_visual_updates_recursive(node_ref, &mut updates);
     }
-    assert_eq!(updates.len(), 3); // One for each node (file1, sub, file2)
+    assert_eq!(updates.len(), 3);
 
     let path_map = logic.test_path_to_tree_item_id();
 
     let file1_id = path_map.get(&PathBuf::from("/root/file1.txt")).unwrap();
-    let sub_id = path_map.get(&PathBuf::from("/root/sub")).unwrap(); // dir1
+    let sub_id = path_map.get(&PathBuf::from("/root/sub")).unwrap();
     let file2_id = path_map.get(&PathBuf::from("/root/sub/file2.txt")).unwrap();
 
     assert!(updates.contains(&(*file1_id, CheckState::Checked)));
-    assert!(updates.contains(&(*sub_id, CheckState::Unchecked))); // dir1 itself is Unknown -> Unchecked
-    assert!(updates.contains(&(*file2_id, CheckState::Unchecked))); // file2.txt is Deselected -> Unchecked
+    assert!(updates.contains(&(*sub_id, CheckState::Unchecked)));
+    assert!(updates.contains(&(*file2_id, CheckState::Unchecked)));
 
     assert_eq!(
         updates.len(),

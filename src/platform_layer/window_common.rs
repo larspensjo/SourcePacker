@@ -1,7 +1,7 @@
-use super::app::Win32ApiInternalState; // The shared internal state
-use super::control_treeview; // For TreeView specific data and event handling
+use super::app::Win32ApiInternalState;
+use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, CheckState, PlatformCommand, TreeItemId, WindowId};
+use super::types::{AppEvent, CheckState, MessageSeverity, PlatformCommand, TreeItemId, WindowId};
 
 use windows::{
     Win32::{
@@ -11,8 +11,8 @@ use windows::{
         },
         Graphics::Gdi::{
             BeginPaint, COLOR_WINDOW, COLOR_WINDOWTEXT, EndPaint, FillRect, GetSysColor,
-            GetSysColorBrush, HBRUSH, HDC, PAINTSTRUCT, ScreenToClient, SetBkMode, SetTextColor,
-            TRANSPARENT,
+            GetSysColorBrush, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT, ScreenToClient, SetBkMode,
+            SetTextColor, TRANSPARENT,
         },
         System::SystemServices::{IMAGE_DOS_HEADER, SS_LEFT},
         UI::Controls::*,
@@ -22,7 +22,7 @@ use windows::{
 };
 
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex}; // Mutex might not be needed here unless for specific shared state within this file
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
@@ -30,7 +30,7 @@ pub(crate) const ID_MENU_FILE_LOAD_PROFILE: i32 = 2001;
 pub(crate) const ID_MENU_FILE_SAVE_PROFILE_AS: i32 = 2002;
 pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
-pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002; // For the prompt text
+pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
@@ -53,7 +53,8 @@ pub(crate) struct NativeWindowData {
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
     pub(crate) hwnd_button_generate: Option<HWND>,
     pub(crate) hwnd_status_bar: Option<HWND>,
-    pub(crate) status_bar_is_error: bool,
+    pub(crate) status_bar_current_text: String,
+    pub(crate) status_bar_current_severity: MessageSeverity,
 }
 
 /// Context passed to `CreateWindowExW` via `lpCreateParams`.
@@ -82,6 +83,11 @@ pub(crate) fn register_window_class(
         )
         .is_ok()
         {
+            // Class already registered
+            println!(
+                "Platform: Window class '{}' already registered.",
+                internal_state.app_name_for_class
+            );
             return Ok(());
         }
 
@@ -107,6 +113,10 @@ pub(crate) fn register_window_class(
                 error
             )))
         } else {
+            println!(
+                "Platform: Window class '{}' registered successfully.",
+                internal_state.app_name_for_class
+            );
             Ok(())
         }
     }
@@ -139,10 +149,10 @@ pub(crate) fn create_native_window(
             CW_USEDEFAULT,
             width,
             height,
-            None,
-            None,
+            None, // No parent for a top-level window
+            None, // No menu for now (will be added in WM_CREATE)
             Some(internal_state_arc.h_instance),
-            Some(Box::into_raw(creation_context) as *mut c_void),
+            Some(Box::into_raw(creation_context) as *mut c_void), // Pass context
         )?;
 
         Ok(hwnd)
@@ -178,6 +188,7 @@ unsafe extern "system" fn facade_wnd_proc_router(
     let internal_state_arc = &context.internal_state_arc;
     let window_id = context.window_id;
 
+    // Delegate to the instance method on Win32ApiInternalState
     let result = internal_state_arc.handle_window_message(hwnd, msg, wparam, lparam, window_id);
 
     if msg == WM_NCDESTROY {
@@ -327,7 +338,8 @@ impl Win32ApiInternalState {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         if Some(hwnd_static_ctrl) == window_data.hwnd_status_bar {
                             unsafe {
-                                if window_data.status_bar_is_error {
+                                if window_data.status_bar_current_severity == MessageSeverity::Error
+                                {
                                     SetTextColor(hdc_static_ctrl, COLORREF(0x000000FF));
                                 } else {
                                     SetTextColor(
@@ -943,13 +955,11 @@ pub(crate) fn send_close_message(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    // This function is called when AppLogic explicitly wants to close the window via PlatformCommand::CloseWindow.
-    // It should bypass further AppLogic checks and directly proceed to destroy.
     println!(
         "Platform: send_close_message received for WindowId {:?}, proceeding to destroy.",
         window_id
     );
-    destroy_native_window(internal_state, window_id) // Directly call destroy
+    destroy_native_window(internal_state, window_id)
 }
 
 pub(crate) fn destroy_native_window(
@@ -971,51 +981,52 @@ pub(crate) fn destroy_native_window(
                 if DestroyWindow(hwnd).is_err() {
                     let err = GetLastError();
                     if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
+                        // Only log if not already invalid
                         eprintln!("DestroyWindow failed: {:?}", err);
                     }
                 }
             }
         }
     }
+    // Note: Removing from window_map and decrementing active_windows_count is now handled
+    // by the WM_DESTROY handler in Win32ApiInternalState.
     Ok(())
 }
 
-/// Updates the text and color of the status bar.
-pub(crate) fn update_status_bar_text(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
+/// Updates the text of the status bar control. The actual color change is triggered
+/// by invalidating the control, which then leads to WM_CTLCOLORSTATIC being handled
+/// in app.rs using the `status_bar_current_severity` stored in `NativeWindowData`.
+/// This function is now the direct implementation called by _execute_platform_command.
+pub(crate) fn update_status_bar_text_impl(
+    window_data: &mut NativeWindowData, // Takes NativeWindowData directly
     text: &str,
-    is_error: bool,
+    severity: MessageSeverity, // Severity is used by caller to update window_data.status_bar_current_severity
 ) -> PlatformResult<()> {
-    let mut windows_guard = internal_state.window_map.write().map_err(|_| {
-        PlatformError::OperationFailed("Failed to acquire write lock for status bar update".into())
-    })?;
+    // The caller (_execute_platform_command in app.rs) is responsible for:
+    // 1. Comparing severities.
+    // 2. Updating window_data.status_bar_current_text and window_data.status_bar_current_severity.
+    // This function just performs the WinAPI calls.
 
-    if let Some(window_data) = windows_guard.get_mut(&window_id) {
-        if let Some(hwnd_status) = window_data.hwnd_status_bar {
-            window_data.status_bar_is_error = is_error;
-            unsafe {
-                if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
-                    return Err(PlatformError::OperationFailed(format!(
-                        "SetWindowTextW for status bar failed: {:?}",
-                        GetLastError()
-                    )));
-                }
-                // Invalidate the status bar control to force a repaint with the new color
-                // The BOOL parameter for bErase is true or false.
-                windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd_status), None, true);
+    if let Some(hwnd_status) = window_data.hwnd_status_bar {
+        // The `window_data.status_bar_current_severity` would have been updated by the caller
+        // before this function is called if the severity condition was met.
+        // This function now just sets the text and invalidates.
+        unsafe {
+            if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
+                return Err(PlatformError::OperationFailed(format!(
+                    "SetWindowTextW for status bar failed: {:?}",
+                    GetLastError()
+                )));
             }
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "Status bar HWND not found for WindowId {:?}",
-                window_id
-            )))
+            // Invalidate the status bar control to force a repaint.
+            // WM_CTLCOLORSTATIC will then use the (already updated) severity for color.
+            InvalidateRect(Some(hwnd_status), None, true); // true to erase background
         }
+        Ok(())
     } else {
         Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for status bar update",
-            window_id
+            "Status bar HWND not found for WindowId {:?}",
+            window_data.id // Use id from window_data
         )))
     }
 }

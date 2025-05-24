@@ -57,6 +57,8 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
 ## P2.11: General Cleanup and Refinements
+*   Can a new macro be created, which would be similar to println!, but it would take an extra severity argument and then use PlatformCommand::UpdateStatusBarText?
+*   The PlatformCommand::UpdateStatusBarText handling in _execute_platform_command should be moved to a separate _handle function.
 *   There is one `_get_app_config_dir` and one `_get_profile_storage_dir`. They have duplicate functionality. Consider consolidating them.
 *   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component).
 *   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]` User-friendly error messages are key.
