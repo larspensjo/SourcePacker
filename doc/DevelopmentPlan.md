@@ -57,27 +57,82 @@ This plan breaks down the development of SourcePacker into small, incremental st
 *   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
 
 ## P2.11: General Cleanup and Refinements
-*   Can a new macro be created, which would be similar to println!, but it would take an extra severity argument and then use PlatformCommand::UpdateStatusBarText?
-*   The PlatformCommand::UpdateStatusBarText handling in _execute_platform_command should be moved to a separate _handle function.
-*   There is one `_get_app_config_dir` and one `_get_profile_storage_dir`. They have duplicate functionality. Consider consolidating them.
-*   Use AppData\Local instead of AppData\Roaming. `[ProfileStoreAppdataLocationV1]` (verify correct path component).
-*   Replace `eprintln!` in `MyAppLogic` error paths with `PlatformCommands` to show error messages in a status field or dialog. `[TechErrorHandlingGracefulV1]` User-friendly error messages are key.
-*   Break out large message handlers in `Win32ApiInternalState::handle_window_message`.
-*   Consolidate Status Messages: The on_main_window_created failure paths now push an error message, and initiate_profile_selection_or_creation also pushes its own message. Review if these should be combined or if the platform layer should only display the latest status message for a given window. The current behavior is that multiple UpdateStatusBarText commands will be processed sequentially.
-    * Idea: Add a severity flag to the error (used in UpdateStatusBarText). Any error message with a higher severity will overwrite the previous one. The "current" severity is reset after the error has been shown to the user.
-*   Profile Name in `create_profile_from_current_state`: Update `MyAppLogic.current_profile_name` only after successful save.
-*   Break out large functions in `app_logic/handler.rs`. `[TechModularityLogicalModulesV1]`
-*   Refactor access to `Win32ApiInternalState.window_map` through helper methods if beneficial.
-*   The current `last_profile_name.txt` is very simple. If more startup configurations are needed (e.g., window size/position, other UI preferences), migrating to a structured format like JSON for `app_settings.json` might be beneficial. The `core::config` module can be expanded for this.
-*   The current tests for `on_main_window_created` in `handler_tests.rs` rely on the actual file system operations of `core::load_last_profile_name` and `core::load_profile`. For more isolated unit tests of `MyAppLogic`, these core functions could be mocked.
-*   `handler.rs` and `handler_tests.rs` are big. Is it possible to separate them into smaller modules or files for easier maintenance and testing? If so, the tests should be moved back into the same file, removing the need for `pub(crate)` declarations.
-*   It seems to me that `handle_wm_create` is growing with hard coded functionality. Would it be better to control these through the command structure? That is, `window_common.rs` shouldn't manage the complete UI, only manage the individual components. That would be `on_main_window_created`? The question is, will this require a big refactor?
-    *   **Decision:** For now, keep `handle_wm_create` for essential child controls like buttons/status bar defined at window creation. More dynamic content (like TreeView items) is already command-driven. Revisit if it becomes too unwieldy.
-*  Testing the `PlatformInterface::run()` loop: Testing the interaction between the `run()` loop and `MyAppLogic`'s command queue is more of an integration test. It might be beneficial to have some tests that simulate OS messages and verify that commands are dequeued and "executed" (perhaps via a mock `Win32ApiInternalState` for these tests).
-*   `core::profiles::is_valid_profile_name_char`: Make this function public (`pub`) so it can be directly used by `MyAppLogic` for validating profile names instead of duplicating the character check logic.
-*   Error Handling in Dialogs: The platform layer's stub dialog handlers (`_handle_show_profile_selection_dialog_impl`, etc.) currently simulate success. For more robust testing, they could be enhanced to simulate cancellation or errors, allowing tests for how `MyAppLogic` handles those scenarios from the platform.
-*   Test Isolation for `on_main_window_created`: As noted in P2.11, `on_main_window_created` tests could be more isolated if `ConfigManagerOperations::load_last_profile_name` and `ProfileManagerOperations::load_profile` were fully mocked within `handler_tests.rs` instead of relying on the `MockConfigManager` and `MockProfileManager` which still have some passthrough characteristics to the actual core implementations if not carefully configured. The current mock setup is good, but this is a point for deeper isolation if needed.
-*   Refactor `_activate_profile_and_show_window`: This function is getting quite central. Ensure its responsibilities remain clear and it doesn't grow too large. The current size and scope seem acceptable.
+
+
+This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
+
+Implemented sections have been removed.
+
+### P2.11.2: Core Logic Correctness & User Experience (High Priority)
+*   **User-Friendly Error Reporting from `MyAppLogic`:** `[TechErrorHandlingGracefulV1]`
+    *   **Problem:** Errors in `MyAppLogic` are logged to console (`eprintln!`) but not shown to the user in the UI.
+    *   **Action:** Replace `eprintln!` calls in `MyAppLogic` that represent user-facing errors or important warnings with `PlatformCommand::UpdateStatusBarText` (or a future error dialog command). Use appropriate `MessageSeverity`.
+    *   **Rationale:** Essential for user feedback and a more polished application.
+*   **Accurate Profile State Update:**
+    *   **Problem:** `MyAppLogic.current_profile_name` and `current_profile_cache` might be updated prematurely before a profile save operation is fully confirmed.
+    *   **Action:** Ensure `self.current_profile_name` and `self.current_profile_cache` in `MyAppLogic` are updated *only after* a successful save operation (e.g., after creating a new profile or saving an existing one under a new name/path).
+    *   **Rationale:** Maintains consistent internal state with persisted state, preventing discrepancies.
+*   **Correct Application Data Storage Location:** `[ProfileStoreAppdataLocationV1]`
+    *   **Problem:** Configuration data might be stored in a non-standard or less appropriate user directory (e.g., Roaming instead of Local).
+    *   **Action:** Verify and ensure `CoreConfigManager` and `CoreProfileManager` use the platform-appropriate local application data directory (e.g., `AppData\Local` on Windows via `ProjectDirs::config_local_dir()` or `data_local_dir()`).
+    *   **Code Check:** This appears to be correctly implemented.
+    *   **Rationale:** Adherence to operating system guidelines for application data storage.
+*   **Centralized Profile Name Validation:**
+    *   **Problem:** Profile name validation logic might be duplicated between `core::profiles` and `MyAppLogic`.
+    *   **Action:** Ensure `MyAppLogic` uses the public `core::profiles::is_valid_profile_name_char` function (or a similar centralized validator) for validating profile names entered by the user.
+    *   **Code Check:** This appears to be correctly implemented.
+    *   **Rationale:** Code deduplication, consistency in validation rules, and easier maintenance.
+
+### P2.11.3: Code Health & Refactoring (Medium Priority)
+*   **Modularity of `MyAppLogic` Handlers:** `[TechModularityLogicalModulesV1]`
+    *   **Problem:** Event handlers or helper functions within `app_logic/handler.rs` (like `_activate_profile_and_show_window`) might become too large and complex.
+    *   **Action:** Review large methods in `MyAppLogic`. If they exceed reasonable complexity or line count, refactor them into smaller, more focused private helper methods.
+    *   **Rationale:** Improves readability, maintainability, and unit testability of the application logic.
+*   **Modularity of Platform Message Handlers:**
+    *   **Problem:** The main window procedure in `platform_layer/window_common.rs` or `platform_layer/app.rs` (`handle_window_message`) can become a large switch/match statement.
+    *   **Action:** Continue the pattern of delegating specific `WM_` message handling to dedicated private methods within `Win32ApiInternalState`. Ensure these individual handlers also remain focused.
+    *   **Rationale:** Improves organization and maintainability of platform-specific code.
+*   **Consolidate Directory Path Logic:**
+    *   **Problem:** `CoreConfigManager::_get_app_config_dir` and `CoreProfileManager::_get_profile_storage_dir` have similar starting points for path derivation.
+    *   **Action:** Review these methods. Consider a shared private helper that returns the base application-specific local config directory. Each manager can then append its specific subfolder or filename.
+    *   **Rationale:** Minor code deduplication and improved clarity in path construction.
+*   **Ergonomic Access to `Win32ApiInternalState.window_map`:**
+    *   **Problem:** Direct locking and access to `window_map` can be verbose or potentially error-prone if locks aren't managed carefully.
+    *   **Action:** Evaluate if creating specialized helper methods on `Win32ApiInternalState` for common `window_map` access patterns (e.g., retrieving specific window data or tree view state) would improve code clarity and centralize lock management for those operations.
+    *   **Rationale:** Can enhance code readability and reduce boilerplate for accessing window-specific data.
+
+### P2.11.4: Testing Improvements (Medium Priority)
+*   **Enhance Test Isolation for `on_main_window_created`:**
+    *   **Problem:** Tests for `MyAppLogic::on_main_window_created` might not be fully isolated if mock configurations don't cover all interaction paths with `ConfigManagerOperations` and `ProfileManagerOperations`.
+    *   **Action:** Review tests in `handler_tests.rs` for `on_main_window_created`. Ensure that `MockConfigManager` and `MockProfileManager` are always configured with specific return values for `load_last_profile_name` and `load_profile` respectively, preventing any passthrough to real file system operations during these unit tests.
+    *   **Code Check:** The setup for mocks seems robust, but a targeted review for complete isolation in these specific tests is beneficial.
+    *   **Rationale:** Ensures purer and more reliable unit tests for application startup logic.
+*   **Simulate Non-Success Paths for Dialog Stubs:**
+    *   **Problem:** Current platform layer stub implementations for dialogs (e.g., `_handle_show_profile_selection_dialog_stub_impl`) primarily simulate successful outcomes.
+    *   **Action:** Augment these stub implementations in `platform_layer/app.rs` (or introduce a test-specific mechanism) to allow simulation of user cancellations or dialog-induced errors.
+    *   **Rationale:** Enables testing `MyAppLogic`'s resilience and error handling for various dialog interaction outcomes.
+*   **Integration Testing Considerations for `PlatformInterface::run()`:**
+    *   **Problem:** The main event loop (`PlatformInterface::run()`) and its interaction with `MyAppLogic`'s command queue are complex to unit test.
+    *   **Action:** Acknowledge this as primarily an integration testing concern. Focus on comprehensive unit tests for `MyAppLogic` and individual `Win32ApiInternalState` command handlers. Defer complex `run()` loop tests unless specific, hard-to-diagnose issues arise.
+    *   **Rationale:** Balances testing effort; unit tests provide faster feedback for component logic.
+
+### P2.11.5: Future Enhancements & Nice-to-Haves (Low Priority for P2)
+*   **Convenience Macro for Status Bar Updates:**
+    *   **Problem:** Enqueuing `PlatformCommand::UpdateStatusBarText` can be verbose in `MyAppLogic`.
+    *   **Action:** Explore creating a Rust macro (e.g., `status_update!(app_logic_instance, severity, "message format {}", variable)`) that simplifies the command creation and enqueuing process.
+    *   **Rationale:** Improves developer ergonomics and reduces boilerplate code.
+*   **Structured Application Settings File:**
+    *   **Problem:** The current `last_profile_name.txt` is limited to one piece of startup information.
+    *   **Action:** If more application-wide settings are anticipated (e.g., window size/position, UI preferences), plan to migrate `core::config` to use a structured format like JSON (e.g., `app_settings.json`). This would involve expanding `ConfigManagerOperations`.
+    *   **Rationale:** Provides a scalable solution for managing a growing set of application preferences.
+*   **Modularity of `handler.rs` and `handler_tests.rs`:**
+    *   **Problem:** As features are added, `app_logic/handler.rs` and its corresponding test file can become very large.
+    *   **Action:** If these files become unwieldy, consider refactoring `MyAppLogic`'s functionality into smaller, more focused sub-modules within `app_logic` (e.g., `profile_flow_logic`, `archive_flow_logic`). Test files could then be co-located or similarly structured.
+    *   **Rationale:** Enhances long-term maintainability and navigability of the codebase.
+*   **Review UI Element Creation in `WM_CREATE`:**
+    *   **Problem:** `handle_wm_create` in `platform_layer/window_common.rs` might become a bottleneck for UI element creation if too many static elements are added there.
+    *   **Current Decision:** The existing approach of creating essential, static child controls (like buttons, status bar) in `WM_CREATE` is acceptable. More dynamic content (like TreeView items) is already command-driven. Re-evaluate if this balance becomes problematic.
+    *   **Rationale:** Balances initial UI setup efficiency with the flexibility of command-driven UI updates.
 
 ## P2.12: Sophisticated Status Bar Control:**
 *   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.
