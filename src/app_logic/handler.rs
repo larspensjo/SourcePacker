@@ -390,12 +390,9 @@ impl MyAppLogic {
         if self.main_window_id == Some(window_id) {
             println!("AppLogic: Main window destroyed notification received.");
             self.main_window_id = None;
-            self.current_profile_name = None;
-            self.current_profile_cache = None;
+            // Important: Keep current_profile_name, file_nodes_cache and current_profile_cache, they are used later to save the state.
             self.current_archive_status = None;
-            self.file_nodes_cache.clear();
             self.path_to_tree_item_id.clear();
-            // Consider clearing pending actions too if they become invalid
             self.pending_action = None;
             self.pending_new_profile_name = None;
             self.pending_archive_content = None;
@@ -1450,32 +1447,73 @@ impl PlatformEventHandler for MyAppLogic {
         }
     }
 
+    /*
+     * Called by the platform layer when the application is about to exit its main loop.
+     * This method handles saving the current state of the active profile (if any) to disk,
+     * ensuring that selections and other profile-specific data are persisted.
+     * It also saves the name of this last active profile to the application's configuration,
+     * so it can be reloaded on the next startup.
+     */
     fn on_quit(&mut self) {
         println!("AppLogic: on_quit called by platform. Application is exiting.");
 
-        // Save the last active profile name, if one is active.
-        // If no profile is active (e.g., user quit during initial selection),
-        // save an empty string to potentially clear it.
-        let profile_name_to_save = self.current_profile_name.as_deref().unwrap_or("");
+        // Save the content of the currently active profile, if any
+        if let Some(active_profile_name) = self.current_profile_name.clone() {
+            // Clone to avoid borrow issues
+            if !active_profile_name.is_empty() {
+                // We have an active profile. Construct its current state.
+                // create_profile_from_current_state uses self.file_nodes_cache for selections,
+                // self.root_path_for_scan for the root folder, and preserves archive_path
+                // from self.current_profile_cache if available.
+                let profile_to_save =
+                    self.create_profile_from_current_state(active_profile_name.clone());
+
+                println!(
+                    "AppLogic: Attempting to save content of active profile '{}' on exit.",
+                    active_profile_name
+                );
+                match self
+                    .profile_manager
+                    .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+                {
+                    Ok(_) => {
+                        println!(
+                            "AppLogic: Successfully saved content of profile '{}' to disk on exit.",
+                            active_profile_name
+                        );
+                    }
+                    Err(e) => {
+                        // At this point, UI might not be available. eprintln is appropriate.
+                        eprintln!(
+                            "AppLogic: Error saving content of profile '{}' on exit: {:?}",
+                            active_profile_name, e
+                        );
+                    }
+                }
+            }
+        }
+
+        // Save the last active profile name to config (existing behavior)
+        let profile_name_to_save_in_config = self.current_profile_name.as_deref().unwrap_or("");
 
         println!(
-            "AppLogic: Attempting to save last profile name '{}' on exit.",
-            profile_name_to_save
+            "AppLogic: Attempting to save last profile name '{}' to config on exit.",
+            profile_name_to_save_in_config
         );
 
         match self
             .config_manager
-            .save_last_profile_name(APP_NAME_FOR_PROFILES, profile_name_to_save)
+            .save_last_profile_name(APP_NAME_FOR_PROFILES, profile_name_to_save_in_config)
         {
             Ok(_) => {
-                if profile_name_to_save.is_empty() {
+                if profile_name_to_save_in_config.is_empty() {
                     println!(
                         "AppLogic: Successfully cleared/unset last profile name in config on exit."
                     );
                 } else {
                     println!(
                         "AppLogic: Successfully saved last active profile name '{}' to config on exit.",
-                        profile_name_to_save
+                        profile_name_to_save_in_config
                     );
                 }
             }
