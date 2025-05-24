@@ -1,5 +1,3 @@
-// ===== File: C:\Users\larsp\src\source_packer\src\platform_layer\app.rs =====
-
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
