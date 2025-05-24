@@ -1953,8 +1953,8 @@ fn test_handle_menu_refresh_clicked_scan_fails() {
         _mock_config_manager,
         _mock_profile_manager,
         mock_fs_scanner,
-        _mock_archiver,
-        _mock_state_manager,
+        mock_archiver,
+        mock_state_manager,
     ) = setup_logic_with_mocks();
 
     let profile_name = "TestRefreshFailProfile";
@@ -2011,4 +2011,81 @@ fn test_handle_menu_refresh_clicked_scan_fails() {
     );
     // Ensure check_archive_status was NOT called
     assert!(mock_archiver.get_check_archive_status_calls().is_empty());
+}
+
+#[test]
+fn test_on_quit_saves_modified_profile_content() {
+    let (
+        mut logic,
+        mock_config_manager,  // For saving last profile name
+        mock_profile_manager, // For saving profile content
+        _mock_fs_scanner,
+        _mock_archiver,
+        _mock_state_manager,
+    ) = setup_logic_with_mocks();
+
+    let profile_name = "ProfileToSaveOnQuit";
+    let profile_root = PathBuf::from("/quit/root");
+    let file_to_select_path = profile_root.join("selectable.txt");
+
+    // 1. Setup an active profile
+    let initial_profile = Profile::new(profile_name.to_string(), profile_root.clone());
+    logic.test_set_current_profile_name(Some(profile_name.to_string()));
+    logic.test_set_current_profile_cache(Some(initial_profile.clone()));
+    logic.test_set_root_path_for_scan(profile_root.clone());
+
+    // 2. Setup file_nodes_cache and simulate a selection
+    // (Directly modify file_nodes_cache for simplicity in this test,
+    // assuming other parts of the system correctly update this cache based on UI interactions)
+    let mut file_nodes = vec![FileNode::new(
+        file_to_select_path.clone(),
+        "selectable.txt".into(),
+        false,
+    )];
+    file_nodes[0].state = FileState::Selected; // Simulate selection
+    logic.test_set_file_nodes_cache(file_nodes);
+
+    // 3. Call on_quit
+    logic.on_quit();
+
+    // 4. Assert that ProfileManager.save_profile was called for the active profile's content
+    let save_profile_calls = mock_profile_manager.get_save_profile_calls();
+    assert_eq!(
+        save_profile_calls.len(),
+        1,
+        "Expected save_profile to be called once on quit for the active profile's content"
+    );
+
+    let (saved_profile_on_quit, app_name_call) = &save_profile_calls[0];
+    assert_eq!(
+        saved_profile_on_quit.name, profile_name,
+        "Profile name mismatch in on_quit save"
+    );
+    assert_eq!(
+        app_name_call, APP_NAME_FOR_PROFILES,
+        "App name mismatch in on_quit save"
+    );
+    assert!(
+        saved_profile_on_quit
+            .selected_paths
+            .contains(&file_to_select_path),
+        "Selected file not found in profile saved on quit"
+    );
+    assert_eq!(
+        saved_profile_on_quit.selected_paths.len(),
+        1,
+        "Incorrect number of selected paths in profile saved on quit"
+    );
+
+    // Also assert that last profile NAME was saved to config (existing behavior)
+    let saved_name_info = mock_config_manager.get_saved_profile_name();
+    assert!(
+        saved_name_info.is_some(),
+        "Last profile name should still be saved to config"
+    );
+    assert_eq!(
+        saved_name_info.as_ref().unwrap().1,
+        profile_name,
+        "Last profile name saved to config incorrectly"
+    );
 }
