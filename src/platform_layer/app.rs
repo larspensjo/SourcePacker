@@ -655,6 +655,19 @@ impl Win32ApiInternalState {
                 enabled,
             } => self._handle_set_control_enabled_impl(window_id, control_id, enabled),
             PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
+            // --- Stubs for New UI Creation Commands (Phase 0.1) ---
+            PlatformCommand::CreateMainMenu { .. } => {
+                // TODO: Implement handler for CreateMainMenu
+                todo!("Handler for CreateMainMenu not yet implemented");
+            }
+            PlatformCommand::CreateButton { .. } => {
+                // TODO: Implement handler for CreateButton
+                todo!("Handler for CreateButton not yet implemented");
+            }
+            PlatformCommand::CreateStatusBar { .. } => {
+                // TODO: Implement handler for CreateStatusBar
+                todo!("Handler for CreateStatusBar not yet implemented");
+            }
         }
     }
 
