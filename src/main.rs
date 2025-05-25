@@ -3,6 +3,7 @@
 mod app_logic;
 mod core;
 mod platform_layer;
+mod ui_description_layer;
 
 use app_logic::handler::MyAppLogic;
 use core::{
