@@ -1,0 +1,9 @@
+// app.rc
+#define RT_MANIFEST 24
+#define CREATEPROCESS_MANIFEST_RESOURCE_ID 1
+
+// This tells the resource compiler to embed app.manifest as a manifest resource.
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "app.manifest"
+
+// You can also add an application icon here if you have one:
+// IDI_APPICON ICON "path/to/your/icon.ico"

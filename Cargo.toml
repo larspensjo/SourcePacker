@@ -24,3 +24,6 @@ overflow-checks = true
 lto = false
 codegen-units = 1
 incremental = false
+
+[build-dependencies]
+embed-resource = "3.0.2"
