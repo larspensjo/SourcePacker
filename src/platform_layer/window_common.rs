@@ -31,6 +31,7 @@ pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
 pub(crate) const ID_MENU_FILE_LOAD_PROFILE: i32 = 2001;
 pub(crate) const ID_MENU_FILE_SAVE_PROFILE_AS: i32 = 2002;
 pub(crate) const ID_MENU_FILE_REFRESH: i32 = 2003;
+pub(crate) const ID_MENU_FILE_SET_ARCHIVE: i32 = 2004;
 
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
@@ -238,6 +239,19 @@ fn create_app_menu(hwnd: HWND) -> PlatformResult<()> {
             MF_STRING,
             ID_MENU_FILE_SAVE_PROFILE_AS as usize,
             &HSTRING::from("Save Profile As..."),
+        )?;
+        AppendMenuW(
+            // New menu item "Set Archive..."
+            h_file_popup,
+            MF_STRING,
+            ID_MENU_FILE_SET_ARCHIVE as usize,
+            &HSTRING::from("Set Archive Path..."),
+        )?;
+        AppendMenuW(
+            h_file_popup,
+            MF_SEPARATOR, // Optional: Add a separator
+            0,
+            PCWSTR::null(),
         )?;
 
         AppendMenuW(
@@ -513,7 +527,7 @@ impl Win32ApiInternalState {
             match CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 WC_BUTTON,
-                &HSTRING::from("Generate Archive"),
+                &HSTRING::from("Save to archive"),
                 WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
                 0,
                 0,
@@ -641,18 +655,28 @@ impl Win32ApiInternalState {
         let control_id = loword_from_wparam(wparam);
         let notification_code = highord_from_wparam(wparam);
 
+        // Check for menu commands (notification_code is 0 for menu items from main menu, 1 for accelerator)
         if notification_code == 0 || notification_code == 1 {
+            // Menu items or accelerators
             match control_id {
                 ID_MENU_FILE_LOAD_PROFILE => {
+                    println!("Platform: Menu 'Load Profile...' clicked.");
                     return Some(AppEvent::MenuLoadProfileClicked);
                 }
                 ID_MENU_FILE_SAVE_PROFILE_AS => {
+                    println!("Platform: Menu 'Save Profile As...' clicked.");
                     return Some(AppEvent::MenuSaveProfileAsClicked);
                 }
+                ID_MENU_FILE_SET_ARCHIVE => {
+                    // Handle new menu item
+                    println!("Platform: Menu 'Set Archive Path...' clicked.");
+                    return Some(AppEvent::MenuSetArchiveClicked);
+                }
                 ID_MENU_FILE_REFRESH => {
+                    println!("Platform: Menu 'Refresh File List' clicked.");
                     return Some(AppEvent::MenuRefreshClicked);
                 }
-                _ => {}
+                _ => {} // Not a menu item we handle here
             }
         }
 

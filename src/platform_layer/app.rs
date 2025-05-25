@@ -17,6 +17,7 @@ use windows::{
         UI::Controls::{
             Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
         },
+        UI::Input::KeyboardAndMouse::EnableWindow,
         UI::Shell::{
             FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem,
             SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
@@ -578,7 +579,8 @@ impl Win32ApiInternalState {
                 window_common::show_window(self, window_id, true)
             }
             PlatformCommand::CloseWindow { window_id } => {
-                window_common::destroy_native_window(self, window_id)
+                // window_common::destroy_native_window(self, window_id) // Original direct destroy
+                window_common::send_close_message(self, window_id) // Changed to send WM_CLOSE first
             }
             PlatformCommand::PopulateTreeView { window_id, items } => {
                 control_treeview::populate_treeview(self, window_id, items)
@@ -647,7 +649,49 @@ impl Win32ApiInternalState {
                 title,
                 initial_dir,
             } => self._handle_show_folder_picker_dialog_impl(window_id, title, initial_dir),
+            PlatformCommand::SetControlEnabled {
+                window_id,
+                control_id,
+                enabled,
+            } => self._handle_set_control_enabled_impl(window_id, control_id, enabled),
             PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
+        }
+    }
+
+    fn _handle_set_control_enabled_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        enabled: bool,
+    ) -> PlatformResult<()> {
+        let windows_guard = self.window_map.read().map_err(|_| {
+            PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
+        })?;
+
+        if let Some(window_data) = windows_guard.get(&window_id) {
+            let hwnd_ctrl_result = unsafe { GetDlgItem(Some(window_data.hwnd), control_id) };
+            let hwnd_ctrl = match hwnd_ctrl_result {
+                Ok(hwnd) => hwnd,
+                Err(_) => {
+                    return Err(PlatformError::InvalidHandle(format!(
+                        "Control ID {} not found in window {:?}",
+                        control_id, window_id
+                    )));
+                }
+            };
+            unsafe {
+                EnableWindow(hwnd_ctrl, enabled);
+            }
+            println!(
+                "Platform: Control ID {} in window {:?} set to enabled: {}",
+                control_id, window_id, enabled
+            );
+            Ok(())
+        } else {
+            Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for SetControlEnabled",
+                window_id
+            )))
         }
     }
 }

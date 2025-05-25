@@ -90,6 +90,7 @@ pub enum AppEvent {
     MenuLoadProfileClicked,
     MenuSaveProfileAsClicked,
     MenuRefreshClicked,
+    MenuSetArchiveClicked,
     FileOpenProfileDialogCompleted {
         window_id: WindowId,
         result: Option<PathBuf>,
@@ -183,6 +184,11 @@ pub enum PlatformCommand {
         window_id: WindowId,
         title: String,
         initial_dir: Option<PathBuf>,
+    },
+    SetControlEnabled {
+        window_id: WindowId,
+        control_id: i32,
+        enabled: bool,
     },
     QuitApplication,
 }

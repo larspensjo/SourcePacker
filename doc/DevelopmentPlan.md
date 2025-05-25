@@ -105,10 +105,14 @@ Implemented sections have been removed.
     *   **Current Decision:** The existing approach of creating essential, static child controls (like buttons, status bar) in `WM_CREATE` is acceptable. More dynamic content (like TreeView items) is already command-driven. Re-evaluate if this balance becomes problematic.
     *   **Rationale:** Balances initial UI setup efficiency with the flexibility of command-driven UI updates.
 
-## P2.12: Sophisticated Status Bar Control:**
+## P2.12: Sophisticated Status Bar Control:
 *   For features like multiple panes (e.g., profile name, file count, token count, general status), replace the `STATIC` control with a standard Windows Status Bar control (`STATUSCLASSNAME`). This control supports multiple parts and icons.
 *   Centralized Error-to-Status Mapping:
     *   Instead of formatting error strings directly in each error handling site within `MyAppLogic`, you could create helper functions or a dedicated error-handling module that converts specific `Error` types into user-friendly status messages and decides if `is_error` should be true.
+
+## P2.13: Improved Profile management
+*   The current _handle_show_profile_selection_dialog_stub_impl is a stub. Implement a proper dialog for this in the platform layer. This would involve creating a custom dialog template and procedure in platform_layer::app.rs or platform_layer::window_common.rs.
+*   Implement a more user-friendly UI for listing, selecting, creating, and deleting profiles directly within the application, rather than relying solely on file dialogs for loading/saving .json files or the initial startup dialog. This could be a separate dialog or a dedicated section in the UI.
 
 # Phase 3: Enhancements & UX Improvements
 
@@ -133,8 +137,6 @@ Implemented sections have been removed.
 ## P3.3: File Content Viewer
 *   Add a read-only text control (e.g., `EDIT` control). `[UiContentViewerPanelReadOnlyV1]`
 *   When a file is selected in the `TreeView`, load its content into the viewer.
-
-## P3.4: (REMOVED - Whitelist Pattern Editing) `[UiMenuEditWhitelistV1]` (marks removal)
 
 ## P3.5: Handling File State Discrepancies Visually
 *   When loading a profile, or after a "Refresh" (P2.9):
