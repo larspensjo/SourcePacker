@@ -55,7 +55,23 @@ fn main() -> PlatformResult<()> {
     };
     println!("Main window requested with ID: {:?}", main_window_id);
 
-    // Call on_main_window_created to enqueue initial commands
+    // Get UI structure commands from ui_description_layer and execute them.
+    // This is where we define the static UI structure before populating with data.
+    let ui_commands = ui_description_layer::describe_main_window_layout(main_window_id);
+    println!(
+        "main: Received {} UI description commands.",
+        ui_commands.len()
+    );
+    for command in ui_commands {
+        // For now, we are only expecting menu-related commands here.
+        // As more UI elements are migrated, this loop will process them too.
+        if let Err(e) = platform_interface.execute_command(command) {
+            eprintln!("Fatal: Failed to execute UI description command: {:?}", e);
+            return Err(e);
+        }
+    }
+
+    // Call on_main_window_created to enqueue initial data-related or dynamic UI commands
     my_app_logic.on_main_window_created(main_window_id);
     println!("AppLogic.on_main_window_created called; initial commands enqueued.");
 

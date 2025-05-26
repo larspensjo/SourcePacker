@@ -223,61 +223,6 @@ pub(crate) fn hiword_from_lparam(lparam: LPARAM) -> i32 {
     ((lparam.0 >> 16) & 0xFFFF) as i32
 }
 
-fn create_app_menu(hwnd: HWND) -> PlatformResult<()> {
-    unsafe {
-        let h_menu = CreateMenu()?;
-        let h_file_popup = CreatePopupMenu()?;
-
-        AppendMenuW(
-            h_file_popup,
-            MF_STRING,
-            ID_MENU_FILE_LOAD_PROFILE as usize,
-            &HSTRING::from("Load Profile..."),
-        )?;
-        AppendMenuW(
-            h_file_popup,
-            MF_STRING,
-            ID_MENU_FILE_SAVE_PROFILE_AS as usize,
-            &HSTRING::from("Save Profile As..."),
-        )?;
-        AppendMenuW(
-            // New menu item "Set Archive..."
-            h_file_popup,
-            MF_STRING,
-            ID_MENU_FILE_SET_ARCHIVE as usize,
-            &HSTRING::from("Set Archive Path..."),
-        )?;
-        AppendMenuW(
-            h_file_popup,
-            MF_SEPARATOR, // Optional: Add a separator
-            0,
-            PCWSTR::null(),
-        )?;
-
-        AppendMenuW(
-            h_file_popup,
-            MF_STRING,
-            ID_MENU_FILE_REFRESH as usize,
-            &HSTRING::from("Refresh File List"),
-        )?;
-
-        AppendMenuW(
-            h_menu,
-            MF_POPUP,
-            h_file_popup.0 as usize,
-            &HSTRING::from("&File"),
-        )?;
-
-        if SetMenu(hwnd, Some(h_menu)).is_err() {
-            return Err(PlatformError::OperationFailed(format!(
-                "SetMenu failed: {:?}",
-                GetLastError()
-            )));
-        }
-    }
-    Ok(())
-}
-
 impl Win32ApiInternalState {
     fn handle_window_message(
         self: &Arc<Self>,
@@ -300,9 +245,6 @@ impl Win32ApiInternalState {
         match msg {
             WM_CREATE => {
                 self.handle_wm_create(hwnd, wparam, lparam, window_id);
-                if create_app_menu(hwnd).is_err() {
-                    eprintln!("Platform: Failed to create application menu.");
-                }
                 // No AppEvent sent from WM_CREATE itself typically to MyAppLogic here,
                 // but MyAppLogic::on_main_window_created is called from main.rs
             }

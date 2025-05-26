@@ -6,25 +6,7 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 
 ---
 
-## Phase 1: Migrating Menu Creation
-
 Completed changes have been removed.
-
-### Step 1.3: Integrate Menu Creation via Command in `main.rs`
-
-*   **File:** `src/main.rs`
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_create`)
-*   **Action (`main.rs`):**
-    1.  After `platform_interface.create_window()` successfully returns a `main_window_id`.
-    2.  Call `ui_description_layer::describe_main_window_layout(main_window_id)`.
-    3.  Iterate through the *menu-related commands only* (for now) from the returned Vec.
-    4.  For each, call `platform_interface.execute_command()`.
-*   **Action (`window_common.rs`):**
-    1.  In `Win32ApiInternalState::handle_wm_create`, **remove** the direct call to `create_app_menu(hwnd)`.
-*   **Rationale:** Shifts menu creation from implicit `WM_CREATE` to explicit command execution driven by `main.rs` using the `ui_description_layer`.
-*   **Verification:** Application runs, and the main menu is present and functional, created via the new command flow.
-
----
 
 ## Phase 2: Migrating Button Creation
 
@@ -241,5 +223,73 @@ Completed changes have been removed.
 *   **Verification:** Application menu items are functional again, using the new semantic event flow.
 
 ---
+## Phase 8: Centralizing Initial UI Command Execution in `run()`
 
-## Phase 8: Change `platform_layer` into a separate crate
+**Goal:** Modify the application initialization flow so that initial UI structural commands (from `ui_description_layer`) are executed by the `platform_layer::run()` method, rather than directly in `main.rs`. This involves introducing a mechanism to signal `MyAppLogic` once this initial static UI setup is complete.
+
+### Step 8.1: Define New `PlatformCommand` and `AppEvent` for UI Setup Completion
+
+*   **File:** `src/platform_layer/types.rs`
+*   **Action:**
+    *   Add a new `PlatformCommand` variant:
+        ```rust
+        // In PlatformCommand enum:
+        // ...
+        SignalMainWindowUISetupComplete { window_id: WindowId },
+        ```
+    *   Add a new `AppEvent` variant:
+        ```rust
+        // In AppEvent enum:
+        // ...
+        MainWindowUISetupComplete { window_id: WindowId },
+        ```
+*   **Rationale:** Provides a dedicated command to signal the end of initial UI description processing and a corresponding event for `MyAppLogic` to react to.
+*   **Verification:** Code compiles. No functional change yet.
+
+### Step 8.2: Modify `main.rs` to Prepare and Forward Initial Commands to `run()`
+
+*   **File:** `src/main.rs`
+*   **Action:**
+    1.  After `platform_interface.create_window()`, call `ui_description_layer::describe_main_window_layout()` to get the `initial_ui_commands`.
+    2.  Append the `PlatformCommand::SignalMainWindowUISetupComplete { window_id: main_window_id }` to this list of commands.
+    3.  Modify the call to `platform_interface.run()` to pass this combined list of initial commands.
+    4.  Remove the direct loop that executes UI commands in `main.rs`.
+    5.  Remove the direct call to `my_app_logic.on_main_window_created()` from `main.rs` (this logic will be moved).
+*   **Rationale:** `main.rs` now gathers all initial setup instructions and delegates their execution to `platform_layer::run()`.
+*   **Verification:** Code compiles. Application will likely not fully initialize its UI or app logic state correctly until subsequent steps are done.
+
+### Step 8.3: Modify `PlatformInterface::run()` to Process Initial Commands
+
+*   **File:** `src/platform_layer/app.rs` (`PlatformInterface::run`)
+*   **Action:**
+    1.  Change the signature of `run()` to accept `initial_commands_to_execute: Vec<PlatformCommand>`.
+    2.  Before starting the main event loop (`GetMessageW` loop):
+        *   Iterate through `initial_commands_to_execute`.
+        *   For each command, call `self.internal_state._execute_platform_command(command)`.
+        *   Handle any errors during this initial command execution.
+*   **Rationale:** `run()` now orchestrates the execution of initial static UI setup commands before entering the main event processing loop.
+*   **Verification:** Initial UI commands (menu, button, status bar) are executed. The `SignalMainWindowUISetupComplete` command will be processed, but the event won't be handled by `MyAppLogic` yet.
+
+### Step 8.4: Implement Handler for `SignalMainWindowUISetupComplete` Command
+
+*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::_execute_platform_command`)
+*   **Action:**
+    *   Add a match arm for `PlatformCommand::SignalMainWindowUISetupComplete`.
+    *   The handler for this command will retrieve the `event_handler` (MyAppLogic) and call `handler_guard.handle_event(AppEvent::MainWindowUISetupComplete { window_id })`.
+*   **Rationale:** Enables the platform layer to translate the signal command into an application event.
+*   **Verification:** The `AppEvent::MainWindowUISetupComplete` is now generated and sent to `MyAppLogic`.
+
+### Step 8.5: Update `MyAppLogic` to Handle `MainWindowUISetupComplete` Event
+
+*   **File:** `src/app_logic/handler.rs`
+*   **Action:**
+    1.  Add a match arm in `MyAppLogic::handle_event` for `AppEvent::MainWindowUISetupComplete { window_id }`.
+    2.  Move the logic currently in `MyAppLogic::on_main_window_created()` into a new method, e.g., `on_ui_setup_complete(window_id: WindowId)`.
+    3.  Call this new method from the `MainWindowUISetupComplete` event handler.
+    4.  The original `MyAppLogic::on_main_window_created()` method can be removed or repurposed if it served any other pre-UI-setup role (unlikely in the current context).
+*   **Rationale:** `MyAppLogic` now performs its initial data loading and dynamic UI setup in response to the `MainWindowUISetupComplete` event, ensuring the static UI is ready.
+*   **Verification:** Application initializes correctly, with static UI created first, followed by `MyAppLogic`'s initialization logic (profile loading, tree population, etc.). The overall application behavior should be the same as before this phase, but the initialization flow is different.
+
+---
+
+## Phase 9: Change `platform_layer` into a separate crate
