@@ -10,18 +10,6 @@ Completed changes have been removed.
 
 ## Phase 2: Migrating Button Creation
 
-### Step 2.1: Implement `CreateButton` Command Handler in `platform_layer`
-
-*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::_execute_platform_command`)
-*   **Action:**
-    *   Add a match arm for `PlatformCommand::CreateButton`.
-    *   The handler logic will use `CreateWindowExW` with `WC_BUTTON`.
-    *   It will take `window_id`, `control_id` (logical), `text`, and potentially initial rect from the command.
-    *   Store the created button's `HWND` in `NativeWindowData` (e.g., in a `HashMap<i32, HWND>` for generic controls, or update `hwnd_button_generate` if keeping specific field).
-    *   The existing `WM_SIZE` logic will need to be adapted to find the button's HWND from `NativeWindowData` rather than assuming `hwnd_button_generate` is set.
-*   **Rationale:** Enables platform layer to create buttons via commands.
-*   **Verification:** New command handler compiles. App still uses old button creation.
-
 ### Step 2.2: Update `ui_description_layer` for Button
 
 *   **File:** `src/ui_description_layer/mod.rs`

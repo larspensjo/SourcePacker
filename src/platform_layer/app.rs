@@ -37,6 +37,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+// Class name for Button controls
+const WC_BUTTON_CLASS: PCWSTR = windows::core::w!("Button");
+
 /// Internal state for the Win32 platform layer.
 ///
 /// This struct holds all necessary Win32 handles and mappings required to manage
@@ -579,8 +582,7 @@ impl Win32ApiInternalState {
                 window_common::show_window(self, window_id, true)
             }
             PlatformCommand::CloseWindow { window_id } => {
-                // window_common::destroy_native_window(self, window_id) // Original direct destroy
-                window_common::send_close_message(self, window_id) // Changed to send WM_CLOSE first
+                window_common::send_close_message(self, window_id)
             }
             PlatformCommand::PopulateTreeView { window_id, items } => {
                 control_treeview::populate_treeview(self, window_id, items)
@@ -617,7 +619,7 @@ impl Win32ApiInternalState {
                 window_id,
                 text,
                 severity,
-            } => self._handle_update_status_bar_text_impl(window_id, text, severity), // Refactored call
+            } => self._handle_update_status_bar_text_impl(window_id, text, severity),
             PlatformCommand::ShowProfileSelectionDialog {
                 window_id,
                 available_profiles,
@@ -659,12 +661,12 @@ impl Win32ApiInternalState {
                 window_id,
                 menu_items,
             } => self._handle_create_main_menu_impl(window_id, menu_items),
-            PlatformCommand::CreateButton { .. } => {
-                // TODO: Implement handler for CreateButton
-                todo!("Handler for CreateButton not yet implemented");
-            }
+            PlatformCommand::CreateButton {
+                window_id,
+                control_id,
+                text,
+            } => self._handle_create_button_impl(window_id, control_id, text),
             PlatformCommand::CreateStatusBar { .. } => {
-                // TODO: Implement handler for CreateStatusBar
                 todo!("Handler for CreateStatusBar not yet implemented");
             }
         }
@@ -685,17 +687,13 @@ impl Win32ApiInternalState {
             }
 
             if SetMenu(hwnd_owner, Some(h_main_menu)).is_err() {
-                // Important: If SetMenu fails, Windows does NOT take ownership of h_main_menu.
-                // We must destroy it to avoid a resource leak.
-                let _ = DestroyMenu(h_main_menu); // Best effort to clean up.
+                let _ = DestroyMenu(h_main_menu);
                 return Err(PlatformError::OperationFailed(format!(
                     "SetMenu failed for main menu on WindowId {:?}: {:?}",
                     window_id,
                     GetLastError()
                 )));
             }
-            // On success, Windows takes ownership of h_main_menu and will destroy it
-            // when the window is destroyed, or if another menu is set.
         }
 
         println!(
@@ -705,14 +703,11 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
-    /// Recursively adds menu items based on `MenuItemConfig`.
-    /// Helper for `_handle_create_main_menu_impl`.
     unsafe fn add_menu_item_recursive(
         parent_menu_handle: HMENU,
         item_config: &MenuItemConfig,
     ) -> PlatformResult<()> {
         if item_config.children.is_empty() {
-            // This is a regular menu item
             unsafe {
                 AppendMenuW(
                     parent_menu_handle,
@@ -722,7 +717,6 @@ impl Win32ApiInternalState {
                 )?;
             }
         } else {
-            // This is a submenu
             let h_submenu = unsafe { CreatePopupMenu()? };
             for child_config in &item_config.children {
                 unsafe {
@@ -733,7 +727,7 @@ impl Win32ApiInternalState {
                 AppendMenuW(
                     parent_menu_handle,
                     MF_POPUP,
-                    h_submenu.0 as usize, // Cast HMENU to usize for AppendMenuW's uIDNewItem
+                    h_submenu.0 as usize,
                     &HSTRING::from(item_config.text.as_str()),
                 )?;
             }
@@ -777,6 +771,79 @@ impl Win32ApiInternalState {
             )))
         }
     }
+
+    /*
+     * Handles the `PlatformCommand::CreateButton` command.
+     * This method creates a native button control within the specified window.
+     * It uses `CreateWindowExW` with the `WC_BUTTON_CLASS` (which is "Button").
+     * The button's `HWND` is stored in `NativeWindowData.hwnd_button_generate`.
+     * The initial position and size are set to zero, as `WM_SIZE` is expected to handle layout.
+     */
+    fn _handle_create_button_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        text: String,
+    ) -> PlatformResult<()> {
+        println!(
+            "Platform: Handling CreateButton for WinID {:?}, CtrlID {}, Text '{}'",
+            window_id, control_id, text
+        );
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
+
+        let h_btn = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),                                         // dwExStyle
+                WC_BUTTON_CLASS,                                            // lpClassName
+                &HSTRING::from(text.as_str()),                              // lpWindowName
+                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32), // dwStyle
+                0,                                      // X (WM_SIZE will handle)
+                0,                                      // Y (WM_SIZE will handle)
+                0,                                      // nWidth (WM_SIZE will handle)
+                0,                                      // nHeight (WM_SIZE will handle)
+                Some(hwnd_owner),                       // hWndParent
+                Some(HMENU(control_id as *mut c_void)), // hMenu (control ID)
+                Some(self.h_instance),                  // hInstance
+                None,                                   // lpParam
+            )?
+        };
+
+        let mut windows_map_guard = self.window_map.write().map_err(|_| {
+            PlatformError::OperationFailed(
+                "Failed to lock windows map for CreateButton storage".into(),
+            )
+        })?;
+
+        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+            // For now, directly store in hwnd_button_generate.
+            // Phase 5 will generalize control storage.
+            if control_id == window_common::ID_BUTTON_GENERATE_ARCHIVE {
+                window_data.hwnd_button_generate = Some(h_btn);
+                println!(
+                    "Platform: Button (CtrlID {}) created with HWND {:?} and stored in NativeWindowData.hwnd_button_generate for WinID {:?}",
+                    control_id, h_btn, window_id
+                );
+            } else {
+                // If we eventually support other buttons via this command before Phase 5,
+                // we'd need a way to store them. For now, this example focuses on the main button.
+                // A warning or error could be logged here if control_id is unexpected.
+                eprintln!(
+                    "Platform Warning: CreateButton called for unhandled control_id {} (not ID_BUTTON_GENERATE_ARCHIVE). HWND {:?} not stored in specific field.",
+                    control_id, h_btn
+                );
+                // To prevent leaks if not stored, we might destroy it, or log and continue.
+                // For now, just log, as WM_SIZE won't know about it if not stored appropriately.
+            }
+        } else {
+            // Should not happen if get_hwnd_owner succeeded.
+            unsafe { DestroyWindow(h_btn)? }; // Clean up created button
+            return Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} disappeared after owner HWND retrieval for CreateButton",
+                window_id
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Win32ApiInternalState {
@@ -801,13 +868,13 @@ impl PlatformInterface {
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_window_id();
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: HWND(std::ptr::null_mut()), // Will be set after successful creation
+            hwnd: HWND(std::ptr::null_mut()),
             id: window_id,
             treeview_state: None,
             hwnd_button_generate: None,
             hwnd_status_bar: None,
-            status_bar_current_text: String::new(), // Initialize
-            status_bar_current_severity: MessageSeverity::None, // Initialize
+            status_bar_current_text: String::new(),
+            status_bar_current_severity: MessageSeverity::None,
         };
         self.internal_state
             .window_map
@@ -850,8 +917,7 @@ impl PlatformInterface {
         match self.internal_state.window_map.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    window_data.hwnd = hwnd; // Set the actual HWND
-                    // Button and status bar HWNDs are set in WM_CREATE of window_common
+                    window_data.hwnd = hwnd;
                     println!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}, Status HWND is {:?}.",
                         window_id, window_data.hwnd_button_generate, window_data.hwnd_status_bar
@@ -926,7 +992,7 @@ impl PlatformInterface {
                             eprintln!("Platform: Error executing command from queue: {:?}", e);
                         }
                     } else {
-                        break; // No more commands from app logic queue
+                        break;
                     }
                 }
 
@@ -939,7 +1005,6 @@ impl PlatformInterface {
                     println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
                     break; // WM_QUIT
                 } else {
-                    // Error
                     let last_error = GetLastError();
                     eprintln!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
@@ -1023,7 +1088,6 @@ unsafe extern "system" fn input_dialog_proc(
                         .unwrap_or_default();
                 }
             }
-            // SetFocus logic if needed
             TRUE.0 as isize
         }
         WM_COMMAND => {
