@@ -3,7 +3,7 @@ use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
     AppEvent, MessageSeverity, PlatformCommand, PlatformEventHandler, WindowConfig, WindowId,
 };
-use super::window_common;
+use super::{types::MenuItemConfig, window_common};
 
 use windows::{
     Win32::{
@@ -655,11 +655,10 @@ impl Win32ApiInternalState {
                 enabled,
             } => self._handle_set_control_enabled_impl(window_id, control_id, enabled),
             PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
-            // --- Stubs for New UI Creation Commands (Phase 0.1) ---
-            PlatformCommand::CreateMainMenu { .. } => {
-                // TODO: Implement handler for CreateMainMenu
-                todo!("Handler for CreateMainMenu not yet implemented");
-            }
+            PlatformCommand::CreateMainMenu {
+                window_id,
+                menu_items,
+            } => self._handle_create_main_menu_impl(window_id, menu_items),
             PlatformCommand::CreateButton { .. } => {
                 // TODO: Implement handler for CreateButton
                 todo!("Handler for CreateButton not yet implemented");
@@ -669,6 +668,77 @@ impl Win32ApiInternalState {
                 todo!("Handler for CreateStatusBar not yet implemented");
             }
         }
+    }
+
+    fn _handle_create_main_menu_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        menu_items: Vec<MenuItemConfig>,
+    ) -> PlatformResult<()> {
+        let hwnd_owner = self.get_hwnd_owner(window_id)?;
+
+        unsafe {
+            let h_main_menu = CreateMenu()?;
+
+            for item_config in menu_items {
+                Self::add_menu_item_recursive(h_main_menu, &item_config)?;
+            }
+
+            if SetMenu(hwnd_owner, Some(h_main_menu)).is_err() {
+                // Important: If SetMenu fails, Windows does NOT take ownership of h_main_menu.
+                // We must destroy it to avoid a resource leak.
+                let _ = DestroyMenu(h_main_menu); // Best effort to clean up.
+                return Err(PlatformError::OperationFailed(format!(
+                    "SetMenu failed for main menu on WindowId {:?}: {:?}",
+                    window_id,
+                    GetLastError()
+                )));
+            }
+            // On success, Windows takes ownership of h_main_menu and will destroy it
+            // when the window is destroyed, or if another menu is set.
+        }
+
+        println!(
+            "Platform: Main menu created and set for WindowId {:?}",
+            window_id
+        );
+        Ok(())
+    }
+
+    /// Recursively adds menu items based on `MenuItemConfig`.
+    /// Helper for `_handle_create_main_menu_impl`.
+    unsafe fn add_menu_item_recursive(
+        parent_menu_handle: HMENU,
+        item_config: &MenuItemConfig,
+    ) -> PlatformResult<()> {
+        if item_config.children.is_empty() {
+            // This is a regular menu item
+            unsafe {
+                AppendMenuW(
+                    parent_menu_handle,
+                    MF_STRING,
+                    item_config.id as usize,
+                    &HSTRING::from(item_config.text.as_str()),
+                )?;
+            }
+        } else {
+            // This is a submenu
+            let h_submenu = unsafe { CreatePopupMenu()? };
+            for child_config in &item_config.children {
+                unsafe {
+                    Self::add_menu_item_recursive(h_submenu, child_config)?;
+                }
+            }
+            unsafe {
+                AppendMenuW(
+                    parent_menu_handle,
+                    MF_POPUP,
+                    h_submenu.0 as usize, // Cast HMENU to usize for AppendMenuW's uIDNewItem
+                    &HSTRING::from(item_config.text.as_str()),
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn _handle_set_control_enabled_impl(
