@@ -8,24 +8,7 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 
 ## Phase 1: Migrating Menu Creation
 
-### Step 1.1: Implement `CreateMainMenu` Command Handler in `platform_layer`
-
-*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::_execute_platform_command`)
-*   **Action:**
-    *   Add a match arm for `PlatformCommand::CreateMainMenu`.
-    *   The handler logic will be similar to the current `create_app_menu` function in `window_common.rs`. It will use `CreateMenu`, `AppendMenuW`, `SetMenu`.
-    *   The `MenuItemConfig` will be used to recursively build the menu.
-    *   Store the `HMENU` in `NativeWindowData` if needed for future modifications (though less common for main menus).
-*   **Rationale:** Enables the platform layer to create menus based on commands.
-*   **Verification:** New command handler compiles. App still uses old menu creation.
-
-### Step 1.2: Modify `ui_description_layer` to Describe the Menu
-
-*   **File:** `src/ui_description_layer/mod.rs`
-*   **Action:**
-    *   Implement `describe_main_window_layout` to generate a `PlatformCommand::CreateMainMenu` command with the existing menu structure (File -> Load, Save As, Refresh). Use the existing `ID_MENU_...` constants.
-*   **Rationale:** The new layer now knows how to define the menu.
-*   **Verification:** `describe_main_window_layout` produces the correct command. App still uses old menu creation.
+Completed changes have been removed.
 
 ### Step 1.3: Integrate Menu Creation via Command in `main.rs`
 
@@ -177,4 +160,86 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 *   **Action:** Update comments in relevant modules (`platform_layer`, `ui_description_layer`, `main.rs`) to reflect the new architecture for UI creation.
 *   **Rationale:** Keeps documentation in sync with code.
 
-### Step 7: Change platform_layer into a separate crate
+---
+
+## Phase 7: Abstracting Menu Item Identifiers
+
+**Goal:** Remove the direct dependency on `i32` control IDs for menu items from the `ui_description_layer` and `app_logic`. Instead, use semantic identifiers (e.g., enums or strings) in the UI description, and have the `platform_layer` dynamically assign and manage the native `i32` IDs.
+
+### Step 7.1: Define Semantic Menu Action Identifiers
+
+*   **File:** `src/platform_layer/types.rs` (or a new shared types module if preferred)
+*   **Action:**
+    *   Define an enum, e.g., `MenuAction`, to represent logical menu actions.
+        ```rust
+        // Example in types.rs
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum MenuAction {
+            LoadProfile,
+            SaveProfileAs,
+            SetArchivePath,
+            RefreshFileList,
+            // ... any other distinct menu actions
+        }
+        ```
+    *   Alternatively, decide on a string-based convention (e.g., "file.load_profile"). Enums are generally more type-safe.
+*   **Rationale:** Establishes a platform-agnostic way to identify menu actions.
+*   **Verification:** Code compiles. No functional change yet.
+
+### Step 7.2: Update `MenuItemConfig` to Use Semantic Identifiers
+
+*   **File:** `src/platform_layer/types.rs`
+*   **Action:**
+    *   Modify `MenuItemConfig` to use the new `MenuAction` (or string identifier) instead of `id: i32`.
+        ```rust
+        // In types.rs, MenuItemConfig struct:
+        pub struct MenuItemConfig {
+            // pub id: i32, // Remove this
+            pub action: Option<MenuAction>, // Make it Option an if some menu items (like "&File") don't have actions
+            pub text: String,
+            pub children: Vec<MenuItemConfig>,
+        }
+        ```
+*   **Rationale:** `MenuItemConfig` now describes menu items semantically.
+*   **Verification:** Code compiles. `ui_description_layer` will need updates.
+
+### Step 7.3: Update `ui_description_layer` to Use Semantic Identifiers
+
+*   **File:** `src/ui_description_layer/mod.rs`
+*   **Action:**
+    *   Modify `describe_main_window_layout` to populate `MenuItemConfig` with `MenuAction` values instead of `i32` IDs.
+    *   Remove any local or imported `i32` menu ID constants.
+*   **Rationale:** `ui_description_layer` is now free of `i32` menu IDs.
+*   **Verification:** `describe_main_window_layout` produces commands with the new `MenuItemConfig`. App will break until platform layer is updated.
+
+### Step 7.4: Modify `platform_layer` to Manage `i32` ID Assignment and Mapping
+
+*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::_handle_create_main_menu_impl`, `add_menu_item_recursive`)
+*   **File:** `src/platform_layer/window_common.rs` (`NativeWindowData`)
+*   **Action:**
+    *   In `NativeWindowData`, add a `HashMap<i32, MenuAction>` to store the mapping from dynamically generated `i32` IDs to `MenuAction`s.
+    *   In `_handle_create_main_menu_impl` / `add_menu_item_recursive`:
+        *   When creating a menu item, if `MenuItemConfig.action` is `Some(action)`, generate a unique `i32` ID (e.g., from a counter).
+        *   Store this mapping (`generated_i32_id -> action`) in `NativeWindowData.menu_action_map`.
+        *   Use the `generated_i32_id` when calling `AppendMenuW`.
+*   **Rationale:** `platform_layer` now handles the translation from semantic actions to native IDs.
+*   **Verification:** Menu is created. `WM_COMMAND` handling for menus will be broken.
+
+### Step 7.5: Update `WM_COMMAND` Handling for Menus
+
+*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_command`)
+*   **Action:**
+    *   When a `WM_COMMAND` is received for a menu item:
+        *   Use the `i32` `control_id` from `wparam` to look up the `MenuAction` in `NativeWindowData.menu_action_map`.
+        *   If found, create a new `AppEvent` variant, e.g., `AppEvent::MenuActionClicked { window_id, action: MenuAction }`.
+        *   Send this new event to `app_logic`.
+*   **File:** `src/platform_layer/types.rs` (for `AppEvent`)
+*   **File:** `src/app_logic/handler.rs` (to handle the new `AppEvent`)
+*   **Action (`types.rs`):** Add `MenuActionClicked { window_id, action: MenuAction }` to `AppEvent` enum. Remove old menu-specific `AppEvent`s if they become redundant (e.g. `MenuLoadProfileClicked`).
+*   **Action (`app_logic/handler.rs`):** Update `handle_event` to match on the new `AppEvent::MenuActionClicked` and dispatch based on the `MenuAction` enum.
+*   **Rationale:** Event handling in `app_logic` is now based on semantic actions.
+*   **Verification:** Application menu items are functional again, using the new semantic event flow.
+
+---
+
+## Phase 8: Change `platform_layer` into a separate crate
