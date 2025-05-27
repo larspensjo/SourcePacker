@@ -10,30 +10,11 @@ Completed changes have been removed.
 
 ## Phase 2: Migrating Button Creation
 
+Completed.
+
 ## Phase 3: Migrating Status Bar Creation
 
-### Step 3.2: Update `ui_description_layer` for Status Bar
-
-*   **File:** `src/ui_description_layer/mod.rs`
-*   **Action:**
-    *   Modify `describe_main_window_layout` to also generate a `PlatformCommand::CreateStatusBar` using `ID_STATUS_BAR_CTRL` and "Ready" as initial text.
-*   **Rationale:** New layer describes the status bar.
-*   **Verification:** `describe_main_window_layout` produces the status bar command. App still uses old status bar creation.
-
-### Step 3.3: Integrate Status Bar Creation via Command
-
-*   **File:** `src/main.rs`
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_create`)
-*   **Action (`main.rs`):**
-    *   Process the `CreateStatusBar` command.
-*   **Action (`window_common.rs` - WM_CREATE):**
-    *   In `Win32ApiInternalState::handle_wm_create`, **remove** the direct `CreateWindowExW` call for the status bar.
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_size`)
-*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::handle_window_message` for `WM_CTLCOLORSTATIC`)
-*   **Action (`window_common.rs` / `app.rs`):**
-    *   Modify `handle_wm_size` and the `WM_CTLCOLORSTATIC` handler to get the status bar's HWND from `NativeWindowData` instead of `window_data.hwnd_status_bar` directly.
-*   **Rationale:** Shifts status bar creation to be command-driven.
-*   **Verification:** Application runs, status bar is present, correctly positioned, displays initial text, and updates colors correctly.
+Completed.
 
 ---
 
@@ -241,6 +222,10 @@ Completed changes have been removed.
 *   **Rationale:** `MyAppLogic` now performs its initial data loading and dynamic UI setup in response to the `MainWindowUISetupComplete` event, ensuring the static UI is ready.
 *   **Verification:** Application initializes correctly, with static UI created first, followed by `MyAppLogic`'s initialization logic (profile loading, tree population, etc.). The overall application behavior should be the same as before this phase, but the initialization flow is different.
 
+## Phase A: Clean-ups
+*   handle_wm_size seems to be hard coded, knowing what controls there are.
+*   There is still considerablel knowlede and dependencies in the platform layer to the UI content. The goal is to remove these, and have them managed by the ui_description_layer.
+
 ---
 
-## Phase 9: Change `platform_layer` into a separate crate
+## Phase B: Change `platform_layer` into a separate crate

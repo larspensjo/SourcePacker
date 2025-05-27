@@ -14,7 +14,6 @@ use windows::{
             GetSysColorBrush, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT, ScreenToClient, SetBkMode,
             SetTextColor, TRANSPARENT,
         },
-        System::SystemServices::{IMAGE_DOS_HEADER, SS_LEFT},
         UI::Controls::*,
         UI::WindowsAndMessaging::*,
     },
@@ -23,7 +22,7 @@ use windows::{
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex}; // Mutex might not be needed here unless for specific shared state within this file
+use std::sync::{Arc, Mutex};
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
@@ -38,7 +37,8 @@ pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
-pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
+pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC"); // Made pub(crate)
+pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32); // For basic left-aligned static text
 
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
@@ -57,12 +57,16 @@ pub(crate) struct NativeWindowData {
     pub(crate) id: WindowId,
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
     pub(crate) controls: HashMap<i32, HWND>, // Stores HWNDs for various controls by their ID
-    pub(crate) hwnd_status_bar: Option<HWND>,
+    pub(crate) hwnd_status_bar: Option<HWND>, // Will be removed in Phase 5.1
     pub(crate) status_bar_current_text: String,
     pub(crate) status_bar_current_severity: MessageSeverity,
 }
 
 impl NativeWindowData {
+    /*
+     * Retrieves the HWND of a control stored in the `controls` map.
+     * This provides a generic way to access control handles using their logical ID.
+     */
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.controls.get(&control_id).copied()
     }
@@ -161,7 +165,7 @@ pub(crate) fn create_native_window(
             width,
             height,
             None, // No parent for a top-level window
-            None, // No menu for now (will be added in WM_CREATE)
+            None, // No menu for now (will be set by CreateMainMenu command)
             Some(internal_state_arc.h_instance),
             Some(Box::into_raw(creation_context) as *mut c_void), // Pass context
         )?;
@@ -231,6 +235,12 @@ pub(crate) fn hiword_from_lparam(lparam: LPARAM) -> i32 {
 }
 
 impl Win32ApiInternalState {
+    /*
+     * Handles window messages for a specific window instance.
+     * This method is called by `facade_wnd_proc_router` and processes
+     * relevant messages, translating them into `AppEvent`s or performing
+     * direct actions. It manages the lifecycle and interaction of native UI elements.
+     */
     fn handle_window_message(
         self: &Arc<Self>,
         hwnd: HWND,
@@ -252,8 +262,9 @@ impl Win32ApiInternalState {
         match msg {
             WM_CREATE => {
                 self.handle_wm_create(hwnd, wparam, lparam, window_id);
-                // No AppEvent sent from WM_CREATE itself typically to MyAppLogic here,
-                // but MyAppLogic::on_main_window_created is called from main.rs
+                // No AppEvent sent from WM_CREATE itself typically to MyAppLogic here.
+                // AppLogic::on_main_window_created (or its successor) is called after
+                // initial UI commands are processed.
             }
             WM_SIZE => {
                 event_to_send = self.handle_wm_size(hwnd, wparam, lparam, window_id);
@@ -262,24 +273,8 @@ impl Win32ApiInternalState {
                 event_to_send = self.handle_wm_command(hwnd, wparam, lparam, window_id);
             }
             WM_CLOSE => {
-                // WM_CLOSE is special: it first asks AppLogic if it's okay to close.
-                // AppLogic responds by enqueuing PlatformCommand::CloseWindow if okay.
                 event_to_send = Some(AppEvent::WindowCloseRequestedByUser { window_id });
-                // We don't destroy the window here directly.
-                // AppLogic handles the AppEvent::WindowCloseRequested.
-                // If it decides to close, it enqueues PlatformCommand::CloseWindow.
-                // The platform run loop will pick that up and execute it,
-                // which then calls window_common::send_close_message -> DestroyWindow.
-                // DefWindowProcW for WM_CLOSE calls DestroyWindow by default.
-                // We want AppLogic to control this, so we handle the event,
-                // and then if no specific command is issued by AppLogic to actually close,
-                // we might just return 0 to indicate we handled it, or let DefWindowProc run.
-                // For now, let's assume AppLogic will always enqueue a CloseWindow command if it wants to close.
-                // If AppLogic doesn't enqueue CloseWindow, the window remains.
-                // The original logic was to intercept and only destroy if app logic confirmed.
-                // By sending the event, and AppLogic enqueuing CloseWindow, the run loop will handle it.
-                // So, we just need to send the event. The LRESULT can be 0.
-                lresult_override = Some(LRESULT(0)); // Indicate we've handled it; AppLogic decides actual close.
+                lresult_override = Some(LRESULT(0));
             }
             WM_DESTROY => {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
@@ -305,15 +300,19 @@ impl Win32ApiInternalState {
             }
             WM_CTLCOLORSTATIC => {
                 let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
-                let hwnd_static_ctrl = HWND(lparam.0 as *mut c_void);
+                let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
 
                 if let Some(windows_guard) = self.window_map.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
-                        if Some(hwnd_static_ctrl) == window_data.hwnd_status_bar {
+                        // Check if the control sending WM_CTLCOLORSTATIC is our status bar.
+                        // We now get the status bar's HWND from the generic controls map.
+                        if Some(hwnd_static_ctrl_from_msg)
+                            == window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
+                        {
                             unsafe {
                                 if window_data.status_bar_current_severity == MessageSeverity::Error
                                 {
-                                    SetTextColor(hdc_static_ctrl, COLORREF(0x000000FF));
+                                    SetTextColor(hdc_static_ctrl, COLORREF(0x000000FF)); // Red
                                 } else {
                                     SetTextColor(
                                         hdc_static_ctrl,
@@ -359,28 +358,23 @@ impl Win32ApiInternalState {
         }
     }
 
+    /*
+     * Retrieves the current state of a TreeView item after a click event
+     * on its checkbox and constructs an `AppEvent::TreeViewItemToggledByUser`.
+     * This function is called in response to `WM_APP_TREEVIEW_CHECKBOX_CLICKED`.
+     */
     fn get_tree_item_toggle_event(
         self: &Arc<Self>,
         window_id: WindowId,
-        h_item: HTREEITEM, // This h_item comes from the WPARAM of WM_APP_TREEVIEW_CHECKBOX_CLICKED
+        h_item: HTREEITEM,
     ) -> Option<AppEvent> {
-        eprintln!(
-            "Platform (get_tree_item_toggle_event): Received h_item: {:?}",
-            h_item
-        ); // ADD THIS
-
         let windows_guard = self.window_map.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
         let tv_state = window_data.treeview_state.as_ref()?;
 
-        eprintln!(
-            "Platform (get_tree_item_toggle_event): TreeView HWND: {:?}",
-            tv_state.hwnd
-        ); // ADD THIS
-
         let mut tv_item_get = TVITEMEXW {
             mask: TVIF_STATE | TVIF_PARAM,
-            hItem: h_item, // Use the h_item passed into this function
+            hItem: h_item,
             stateMask: TVIS_STATEIMAGEMASK.0,
             lParam: LPARAM(0),
             ..Default::default()
@@ -396,7 +390,6 @@ impl Win32ApiInternalState {
         };
 
         if get_item_result.0 == 0 {
-            // LRESULT is 0 on failure
             eprintln!(
                 "Platform (get_tree_item_toggle_event): TVM_GETITEMW FAILED for h_item {:?}. Error: {:?}",
                 h_item,
@@ -405,49 +398,24 @@ impl Win32ApiInternalState {
             return None;
         }
 
-        // ADD THESE LOGS:
-        eprintln!(
-            "Platform (get_tree_item_toggle_event): TVM_GETITEMW for h_item {:?} returned raw item state: {:#010X}, lParam: {}",
-            h_item, tv_item_get.state, tv_item_get.lParam.0
-        );
-
         let state_image_idx = (tv_item_get.state & TVIS_STATEIMAGEMASK.0) >> 12;
-        eprintln!(
-            "Platform (get_tree_item_toggle_event): Calculated state_image_idx: {}",
-            state_image_idx
-        );
-
         let new_check_state = if state_image_idx == 2 {
             CheckState::Checked
         } else {
             CheckState::Unchecked
         };
 
-        eprintln!(
-            "Platform (get_tree_item_toggle_event): Determined new_check_state: {:?}",
-            new_check_state
-        );
-
         let app_item_id_val = tv_item_get.lParam.0 as u64;
         let app_item_id: TreeItemId;
 
         if app_item_id_val != 0 {
             app_item_id = TreeItemId(app_item_id_val);
-            eprintln!(
-                "Platform (get_tree_item_toggle_event): AppItemId from lParam: {:?}",
-                app_item_id
-            );
         } else {
-            // Fallback to map if lParam was 0 (should ideally not happen with current add_item logic)
             if let Some(mapped_id) = tv_state.htreeitem_to_item_id.get(&(h_item.0)) {
                 app_item_id = *mapped_id;
-                eprintln!(
-                    "Platform (get_tree_item_toggle_event): AppItemId from htreeitem_to_item_id map: {:?}",
-                    app_item_id
-                );
             } else {
                 eprintln!(
-                    "Platform (get_tree_item_toggle_event): AppItemId is 0 via lParam AND h_item {:?} not found in htreeitem_to_item_id map. Cannot create AppEvent.",
+                    "Platform (get_tree_item_toggle_event): AppItemId is 0 via lParam AND h_item {:?} not found in htreeitem_to_item_id map.",
                     h_item
                 );
                 return None;
@@ -461,6 +429,12 @@ impl Win32ApiInternalState {
         })
     }
 
+    /*
+     * Handles the WM_CREATE message for a window.
+     * This is called when the window is first created. Currently, its primary
+     * responsibility is minimal, as most child control creation is being
+     * shifted to be command-driven by the `ui_description_layer`.
+     */
     fn handle_wm_create(
         self: &Arc<Self>,
         hwnd: HWND,
@@ -472,36 +446,17 @@ impl Win32ApiInternalState {
             "Platform: WM_CREATE for HWND {:?}, WindowId {:?}",
             hwnd, window_id
         );
-        unsafe {
-            // Button creation is now handled by PlatformCommand::CreateButton.
-            // The direct creation call here is removed.
-
-            match CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                WC_STATIC,
-                &HSTRING::from("Ready"),
-                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_LEFT.0), // Use SS_LEFT.0
-                0,
-                0,
-                0,
-                0,
-                Some(hwnd),
-                Some(HMENU(ID_STATUS_BAR_CTRL as *mut c_void)),
-                Some(self.h_instance),
-                None,
-            ) {
-                Ok(h_status) => {
-                    if let Some(mut windows_map_guard) = self.window_map.write().ok() {
-                        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                            window_data.hwnd_status_bar = Some(h_status);
-                        }
-                    }
-                }
-                Err(e) => eprintln!("Failed to create status bar: {:?}", e),
-            }
-        }
+        // Button creation is handled by PlatformCommand::CreateButton.
+        // Status bar creation is now handled by PlatformCommand::CreateStatusBar.
+        // The direct CreateWindowExW call for the status bar is removed from here.
     }
 
+    /*
+     * Handles the WM_SIZE message for a window.
+     * This is called when the window's size changes. It's responsible for
+     * resizing and repositioning child controls like the TreeView, buttons,
+     * and status bar to fit the new window dimensions.
+     */
     fn handle_wm_size(
         self: &Arc<Self>,
         _hwnd: HWND,
@@ -518,6 +473,7 @@ impl Win32ApiInternalState {
                 let button_area_y_pos = treeview_height;
                 let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
 
+                // Resize TreeView
                 if let Some(ref tv_state) = window_data.treeview_state {
                     if !tv_state.hwnd.is_invalid() {
                         unsafe {
@@ -533,6 +489,7 @@ impl Win32ApiInternalState {
                     }
                 }
 
+                // Resize Button (using get_control_hwnd)
                 if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE) {
                     if !hwnd_btn.is_invalid() {
                         let btn_x_pos = BUTTON_X_PADDING;
@@ -550,7 +507,8 @@ impl Win32ApiInternalState {
                     }
                 }
 
-                if let Some(hwnd_status) = window_data.hwnd_status_bar {
+                // Resize Status Bar (using get_control_hwnd)
+                if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
                     if !hwnd_status.is_invalid() {
                         unsafe {
                             let _ = MoveWindow(
@@ -563,6 +521,23 @@ impl Win32ApiInternalState {
                             );
                         }
                     }
+                } else {
+                    // This else can be removed once hwnd_status_bar field is fully removed
+                    // and we are sure the status bar is always in the controls map.
+                    if let Some(hwnd_status_legacy) = window_data.hwnd_status_bar {
+                        if !hwnd_status_legacy.is_invalid() {
+                            unsafe {
+                                MoveWindow(
+                                    hwnd_status_legacy,
+                                    0,
+                                    status_bar_y_pos,
+                                    client_width,
+                                    STATUS_BAR_HEIGHT,
+                                    true,
+                                );
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -573,6 +548,11 @@ impl Win32ApiInternalState {
         })
     }
 
+    /*
+     * Handles the WM_COMMAND message for a window.
+     * This is typically generated by menu selections or control interactions (like button clicks).
+     * It translates these native commands into `AppEvent`s for the application logic.
+     */
     fn handle_wm_command(
         self: &Arc<Self>,
         _hwnd: HWND,
@@ -585,7 +565,6 @@ impl Win32ApiInternalState {
 
         // Check for menu commands (notification_code is 0 for menu items from main menu, 1 for accelerator)
         if notification_code == 0 || notification_code == 1 {
-            // Menu items or accelerators
             match control_id {
                 ID_MENU_FILE_LOAD_PROFILE => {
                     println!("Platform: Menu 'Load Profile...' clicked.");
@@ -596,7 +575,6 @@ impl Win32ApiInternalState {
                     return Some(AppEvent::MenuSaveProfileAsClicked);
                 }
                 ID_MENU_FILE_SET_ARCHIVE => {
-                    // Handle new menu item
                     println!("Platform: Menu 'Set Archive Path...' clicked.");
                     return Some(AppEvent::MenuSetArchiveClicked);
                 }
@@ -604,22 +582,27 @@ impl Win32ApiInternalState {
                     println!("Platform: Menu 'Refresh File List' clicked.");
                     return Some(AppEvent::MenuRefreshClicked);
                 }
-                _ => {} // Not a menu item we handle here
+                _ => {}
             }
         }
 
         if notification_code as u32 == BN_CLICKED {
-            // BN_CLICKED is a WINDOW_STYLE
             if control_id == ID_BUTTON_GENERATE_ARCHIVE {
                 return Some(AppEvent::ButtonClicked {
                     window_id,
-                    control_id,
+                    control_id, // Pass the original control_id from wparam
                 });
             }
         }
         None
     }
 
+    /*
+     * Handles the WM_DESTROY message for a window.
+     * This is called when the window is being destroyed. It removes the window's
+     * data from the internal map and decrements the active window count,
+     * potentially triggering application quit if it's the last window.
+     */
     fn handle_wm_destroy(
         self: &Arc<Self>,
         _hwnd: HWND,
@@ -656,84 +639,54 @@ impl Win32ApiInternalState {
         LRESULT(0)
     }
 
+    /*
+     * Handles the WM_NOTIFY message, which is sent by common controls to their parent window.
+     * This function specifically looks for notifications from the TreeView control,
+     * such as NM_CLICK (for checkbox interactions) or TVN_ITEMCHANGEDW (for other state changes).
+     * It translates these into appropriate `AppEvent`s.
+     */
     fn handle_wm_notify(
         self: &Arc<Self>,
-        hwnd: HWND, // HWND of the window that received WM_NOTIFY (parent of the control)
+        hwnd: HWND,
         _wparam: WPARAM,
         lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
         let nmhdr_ptr = lparam.0 as *const NMHDR;
         if nmhdr_ptr.is_null() {
-            eprintln!("Platform: WM_NOTIFY - NMHDR pointer (lParam) is null.");
             return None;
         }
         let nmhdr = unsafe { &*nmhdr_ptr };
 
-        // Ensure the notification is from our TreeView control
         if nmhdr.idFrom as i32 != control_treeview::ID_TREEVIEW_CTRL {
-            return None; // Notification not from TreeView, ignore here
+            return None;
         }
 
         match nmhdr.code {
             NM_CLICK => {
-                println!("\nPlatform: NM_CLICK received for TreeView control.");
-                let hwnd_tv_from_notify = nmhdr.hwndFrom; // This is the HWND of the TreeView control itself
-
+                let hwnd_tv_from_notify = nmhdr.hwndFrom;
                 if hwnd_tv_from_notify.is_invalid() {
-                    eprintln!("Platform: NM_CLICK from invalid HWND in NMHDR (TreeView).");
                     return None;
                 }
 
-                // --- Get Cursor Screen Position using GetCursorPos ---
                 let mut screen_pt_of_click = POINT::default();
                 unsafe {
                     if GetCursorPos(&mut screen_pt_of_click).is_err() {
-                        eprintln!(
-                            "Platform: GetCursorPos FAILED for NM_CLICK. Error: {:?}",
-                            GetLastError()
-                        );
                         return None;
                     }
                 }
-                println!(
-                    "Platform: GetCursorPos reported screen coords: (x:{}, y:{})",
-                    screen_pt_of_click.x, screen_pt_of_click.y
-                );
 
-                // --- ScreenToClient Transformation ---
-                let mut client_pt_for_hittest = screen_pt_of_click; // Copy for transformation
-                println!(
-                    "Platform: Values BEFORE ScreenToClient: treeview_hwnd={:?}, point_to_convert.x={}, point_to_convert.y={}",
-                    hwnd_tv_from_notify, client_pt_for_hittest.x, client_pt_for_hittest.y
-                );
-
-                let s2c_success = unsafe {
-                    ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest).as_bool()
-                };
-
-                if !s2c_success {
-                    eprintln!(
-                        "Platform: ScreenToClient FAILED for TreeView HWND {:?}. Error: {:?}",
-                        hwnd_tv_from_notify,
-                        unsafe { GetLastError() }
-                    );
-                    return None;
+                let mut client_pt_for_hittest = screen_pt_of_click;
+                unsafe {
+                    if ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest) == BOOL(0) {
+                        return None;
+                    }
                 }
-                println!(
-                    "Platform: Values AFTER ScreenToClient (coords for HitTest): (x:{}, y:{})",
-                    client_pt_for_hittest.x, client_pt_for_hittest.y
-                );
 
-                // Proceed with hit-testing using client_pt_for_hittest
                 if let Some(windows_guard) = self.window_map.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         if let Some(ref tv_state) = window_data.treeview_state {
                             if hwnd_tv_from_notify != tv_state.hwnd {
-                                eprintln!(
-                                    "Platform: NM_CLICK (TreeView) hwndFrom ({:?}) mismatch with cached tv_state.hwnd ({:?}). Aborting.",
-                                    hwnd_tv_from_notify, tv_state.hwnd
-                                );
                                 return None;
                             }
 
@@ -742,12 +695,6 @@ impl Win32ApiInternalState {
                                 flags: TVHITTESTINFO_FLAGS(0),
                                 hItem: HTREEITEM(0),
                             };
-                            println!(
-                                "Platform: Hit testing TreeView {:?} at derived client coords (x:{}, y:{})",
-                                hwnd_tv_from_notify,
-                                client_pt_for_hittest.x,
-                                client_pt_for_hittest.y
-                            );
                             let h_item_hit = HTREEITEM(
                                 unsafe {
                                     SendMessageW(
@@ -759,83 +706,36 @@ impl Win32ApiInternalState {
                                 }
                                 .0,
                             );
-                            println!(
-                                "Platform: TVM_HITTEST on TreeView {:?} returned hItem: {:?}, flags: {:#X}",
-                                hwnd_tv_from_notify, h_item_hit, tvht_info.flags.0
-                            );
 
                             if h_item_hit.0 != 0
                                 && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0
                             {
-                                println!(
-                                    "Platform: Click on STATE ICON of hItem {:?}. Posting WM_APP_TREEVIEW_CHECKBOX_CLICKED.",
-                                    h_item_hit
-                                );
                                 unsafe {
-                                    if PostMessageW(
-                                        Some(hwnd), // Post to the main window
+                                    PostMessageW(
+                                        Some(hwnd),
                                         WM_APP_TREEVIEW_CHECKBOX_CLICKED,
                                         WPARAM(h_item_hit.0 as usize),
                                         LPARAM(0),
                                     )
-                                    .is_err()
-                                    {
-                                        eprintln!("Platform: Failed to post checkbox‐clicked.");
-                                    }
-                                }
-                            } else {
-                                // Detailed logging for non-state-icon clicks
-                                if h_item_hit.0 != 0 {
-                                    let mut flags_str = String::new();
-                                    if (tvht_info.flags.0 & TVHT_ONITEMLABEL.0) != 0 {
-                                        flags_str += "ONITEMLABEL ";
-                                    }
-                                    if (tvht_info.flags.0 & TVHT_ONITEMICON.0) != 0 {
-                                        flags_str += "ONITEMICON ";
-                                    }
-                                    // Add other TVHT_ flags as needed for debugging
-                                    println!(
-                                        "Platform: Click was NOT on state icon but on item {:?} (flags: {:#X} -> {}).",
-                                        h_item_hit,
-                                        tvht_info.flags.0,
-                                        flags_str.trim()
-                                    );
-                                } else {
-                                    println!(
-                                        "Platform: Click was NOT on state icon and NOT on any item (hItem: {:?}, flags: {:#X}).",
-                                        h_item_hit, tvht_info.flags.0
-                                    );
+                                    .unwrap_or_else(|e| {
+                                        eprintln!(
+                                            "Platform: Failed to post checkbox-clicked msg: {:?}",
+                                            e
+                                        )
+                                    });
                                 }
                             }
-                        } else {
-                            eprintln!(
-                                "Platform: NM_CLICK - No TreeViewInternalState for window_id {:?}",
-                                window_id
-                            );
                         }
-                    } else {
-                        eprintln!(
-                            "Platform: NM_CLICK - No NativeWindowData for window_id {:?}",
-                            window_id
-                        );
                     }
-                } else {
-                    eprintln!("Platform: NM_CLICK - Could not get read lock on window_map.");
                 }
-                return None; // NM_CLICK processing ends here for the TreeView
+                return None;
             }
             TVN_ITEMCHANGEDW => {
-                // Handle TVN_ITEMCHANGEDW if needed (e.g., for selection changes not related to checkboxes)
-                // For now, it just calls your existing handler.
-                print!(
-                    "Platform: TVN_ITEMCHANGEDW window id {:?} lparam: {:?}\n",
-                    window_id, lparam
-                );
                 return control_treeview::handle_treeview_itemchanged_notification(
                     self, window_id, lparam,
                 );
             }
-            _ => { /* Other notification codes for the TreeView */ }
+            _ => {}
         }
         None
     }
@@ -946,15 +846,12 @@ pub(crate) fn destroy_native_window(
                 if DestroyWindow(hwnd).is_err() {
                     let err = GetLastError();
                     if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
-                        // Only log if not already invalid
                         eprintln!("DestroyWindow failed: {:?}", err);
                     }
                 }
             }
         }
     }
-    // Note: Removing from window_map and decrementing active_windows_count is now handled
-    // by the WM_DESTROY handler in Win32ApiInternalState.
     Ok(())
 }
 
@@ -963,19 +860,20 @@ pub(crate) fn destroy_native_window(
 /// in app.rs using the `status_bar_current_severity` stored in `NativeWindowData`.
 /// This function is now the direct implementation called by _execute_platform_command.
 pub(crate) fn update_status_bar_text_impl(
-    window_data: &mut NativeWindowData, // Takes NativeWindowData directly
+    window_data: &mut NativeWindowData,
     text: &str,
-    severity: MessageSeverity, // Severity is used by caller to update window_data.status_bar_current_severity
+    _severity: MessageSeverity, // Severity is used by caller to update window_data field
 ) -> PlatformResult<()> {
     // The caller (_execute_platform_command in app.rs) is responsible for:
     // 1. Comparing severities.
     // 2. Updating window_data.status_bar_current_text and window_data.status_bar_current_severity.
-    // This function just performs the WinAPI calls.
+    // This function just performs the WinAPI calls using the HWND from controls map or fallback.
 
-    if let Some(hwnd_status) = window_data.hwnd_status_bar {
-        // The `window_data.status_bar_current_severity` would have been updated by the caller
-        // before this function is called if the severity condition was met.
-        // This function now just sets the text and invalidates.
+    let hwnd_status_opt = window_data
+        .get_control_hwnd(ID_STATUS_BAR_CTRL)
+        .or(window_data.hwnd_status_bar); // Fallback
+
+    if let Some(hwnd_status) = hwnd_status_opt {
         unsafe {
             if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
                 return Err(PlatformError::OperationFailed(format!(
@@ -983,15 +881,13 @@ pub(crate) fn update_status_bar_text_impl(
                     GetLastError()
                 )));
             }
-            // Invalidate the status bar control to force a repaint.
-            // WM_CTLCOLORSTATIC will then use the (already updated) severity for color.
-            InvalidateRect(Some(hwnd_status), None, true); // true to erase background
+            InvalidateRect(Some(hwnd_status), None, true);
         }
         Ok(())
     } else {
         Err(PlatformError::InvalidHandle(format!(
             "Status bar HWND not found for WindowId {:?}",
-            window_data.id // Use id from window_data
+            window_data.id
         )))
     }
 }

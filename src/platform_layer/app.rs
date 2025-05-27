@@ -13,7 +13,7 @@ use windows::{
             CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
         },
         System::LibraryLoader::GetModuleHandleW,
-        System::SystemServices::{SS_LEFT, SS_LEFTNOWORDWRAP},
+        System::SystemServices::SS_LEFTNOWORDWRAP,
         UI::Controls::{
             Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
         },
@@ -37,7 +37,9 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use crate::platform_layer::window_common::{ID_BUTTON_GENERATE_ARCHIVE, WC_BUTTON, WC_STATIC};
+use crate::platform_layer::window_common::{
+    ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON, WC_STATIC,
+};
 
 /// Internal state for the Win32 platform layer.
 ///
@@ -139,7 +141,6 @@ impl Win32ApiInternalState {
             })
     }
 
-    /// Centralized logic for showing the save file dialog.
     fn _handle_show_save_file_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -379,7 +380,7 @@ impl Win32ApiInternalState {
         self: &Arc<Self>,
         window_id: WindowId,
         title: String,
-        _initial_dir: Option<PathBuf>, // _initial_dir is not used in this impl yet
+        _initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
         println!(
             "Platform: Showing real Folder Picker Dialog. Title: '{}'",
@@ -432,7 +433,6 @@ impl Win32ApiInternalState {
                 e
             );
             eprintln!("{}", err_msg);
-            // Send completion event even on creation failure so AppLogic isn't stuck
             let event = AppEvent::FolderPickerDialogCompleted {
                 window_id,
                 path: None,
@@ -475,13 +475,19 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
+    /*
+     * Handles the `PlatformCommand::UpdateStatusBarText` command.
+     * It updates the stored text and severity in `NativeWindowData` and then
+     * calls the WinAPI functions to update the visual appearance of the status bar.
+     * The lock on `window_map` is released before making WinAPI calls that might
+     * trigger synchronous messages (like WM_CTLCOLORSTATIC) to prevent deadlocks.
+     */
     fn _handle_update_status_bar_text_impl(
         self: &Arc<Self>,
         window_id: WindowId,
         text: String,
         severity: MessageSeverity,
     ) -> PlatformResult<()> {
-        // 1. Logging based on severity
         match severity {
             MessageSeverity::Error => {
                 eprintln!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
@@ -500,10 +506,10 @@ impl Win32ApiInternalState {
             }
         }
 
-        let hwnd_status_bar_opt: Option<HWND>;
-        let final_text_for_setwindowtext: String;
+        let mut text_to_set_on_control: Option<String> = None;
+        let mut hwnd_status_bar_for_api_call: Option<HWND> = None;
 
-        // 2. Scope for the write lock to update NativeWindowData
+        // Scope for the write lock on window_map
         {
             let mut windows_map_guard = self.window_map.write().map_err(|_| {
                 PlatformError::OperationFailed(
@@ -512,56 +518,70 @@ impl Win32ApiInternalState {
             })?;
 
             if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                // Logic to decide if the status bar UI needs updating
                 if severity == MessageSeverity::None {
-                    // Clear status
                     window_data.status_bar_current_text.clear();
                     window_data.status_bar_current_severity = MessageSeverity::None;
-                    final_text_for_setwindowtext = "".to_string();
+                    text_to_set_on_control = Some("".to_string());
                 } else if severity >= window_data.status_bar_current_severity {
-                    // Update with new higher-or-equal severity message
-                    window_data.status_bar_current_text = text.clone();
+                    window_data.status_bar_current_text = text.clone(); // Store full text
                     window_data.status_bar_current_severity = severity;
-                    final_text_for_setwindowtext = text; // text is moved here
+                    text_to_set_on_control = Some(text.clone()); // Text to actually set on the control
                 } else {
-                    // Incoming message is lower severity, do not update UI, but still log it (already done above)
+                    // Incoming message is lower severity, do not update UI, but it was already logged.
                     println!(
-                        "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY): {} (Severity: {:?}, Current: {:?})",
-                        window_id, text, severity, window_data.status_bar_current_severity
+                        "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY_UI_UPDATE): current severity {:?}, incoming {:?})",
+                        window_id, window_data.status_bar_current_severity, severity
                     );
-                    return Ok(()); // Early exit, no UI update needed
+                    return Ok(()); // Early exit, no UI update needed for this command
                 }
-                hwnd_status_bar_opt = window_data.hwnd_status_bar; // Copy HWND
+
+                // Get the HWND for the status bar.
+                // Prefer the generic controls map, fallback to specific field during transition.
+                hwnd_status_bar_for_api_call = window_data
+                    .get_control_hwnd(ID_STATUS_BAR_CTRL)
+                    .or(window_data.hwnd_status_bar);
             } else {
-                // WindowId not found
                 return Err(PlatformError::InvalidHandle(format!(
                     "WindowId {:?} not found for status bar update",
                     window_id
                 )));
             }
-        } // Write lock on window_map is released here
+        } // Write lock on window_map (windows_map_guard) is released here.
 
-        // 3. Perform WinAPI calls without holding the lock
-        if let Some(hwnd_status) = hwnd_status_bar_opt {
-            unsafe {
-                // Set the text on the status bar control
-                if SetWindowTextW(hwnd_status, &HSTRING::from(final_text_for_setwindowtext))
-                    .is_err()
-                {
-                    return Err(PlatformError::OperationFailed(format!(
-                        "SetWindowTextW for status bar failed: {:?}",
-                        GetLastError()
-                    )));
+        // Perform WinAPI calls *after* releasing the lock.
+        if let Some(hwnd_status) = hwnd_status_bar_for_api_call {
+            if let Some(final_text) = text_to_set_on_control {
+                // This text was determined while the lock was held.
+                unsafe {
+                    if SetWindowTextW(hwnd_status, &HSTRING::from(final_text)).is_err() {
+                        return Err(PlatformError::OperationFailed(format!(
+                            "SetWindowTextW for status bar failed: {:?}",
+                            GetLastError()
+                        )));
+                    }
+                    // Invalidate the status bar control to force a repaint.
+                    // WM_CTLCOLORSTATIC will then use the (already updated) severity for color.
+                    InvalidateRect(Some(hwnd_status), None, true); // true to erase background
                 }
-                // Invalidate the status bar control to force a repaint.
-                InvalidateRect(Some(hwnd_status), None, true); // true to erase background
+                Ok(())
+            } else {
+                // This case means no UI update was needed (e.g., lower severity message)
+                Ok(())
             }
-            Ok(())
         } else {
-            // This case implies hwnd_status_bar was None in NativeWindowData
-            Err(PlatformError::InvalidHandle(format!(
-                "Status bar HWND not found for WindowId {:?} (after lock release)",
-                window_id
-            )))
+            // HWND not found even after checking map and specific field.
+            // This implies the status bar wasn't created or its HWND wasn't stored correctly.
+            println!(
+                "Platform Warning: Status bar HWND not found for WindowId {:?} during UI update (after lock release). Text was: '{}'",
+                window_id,
+                text // text here is the original input text to the function for logging
+            );
+            // It might not be an error if the status bar isn't *expected* to be there yet.
+            // However, if a command to update it comes, it implies it should be.
+            // For now, let's treat it as an Ok since the data in NativeWindowData was updated.
+            // The UI simply won't reflect it if the HWND is missing.
+            Ok(())
         }
     }
 
@@ -713,7 +733,7 @@ impl Win32ApiInternalState {
                 AppendMenuW(
                     parent_menu_handle,
                     MF_STRING,
-                    item_config.id as usize, // Use the provided ID directly
+                    item_config.id as usize,
                     &HSTRING::from(item_config.text.as_str()),
                 )?;
             }
@@ -747,17 +767,14 @@ impl Win32ApiInternalState {
         })?;
 
         if let Some(window_data) = windows_guard.get(&window_id) {
-            // Prefer getting HWND from the generic controls map
             let hwnd_ctrl_opt = window_data.get_control_hwnd(control_id);
 
             let hwnd_ctrl = match hwnd_ctrl_opt {
                 Some(hwnd) => hwnd,
                 None => {
-                    // Fallback for controls not yet in the map (e.g. if status bar is still managed by direct HWND)
-                    // This part can be simplified once all controls are in the map.
-                    if control_id == window_common::ID_STATUS_BAR_CTRL
-                        && window_data.hwnd_status_bar.is_some()
-                    {
+                    // Fallback logic for status bar if it's not yet in the 'controls' map
+                    // This specific check can be removed after Phase 5.1 when hwnd_status_bar is gone.
+                    if control_id == ID_STATUS_BAR_CTRL && window_data.hwnd_status_bar.is_some() {
                         window_data.hwnd_status_bar.unwrap()
                     } else {
                         return Err(PlatformError::InvalidHandle(format!(
@@ -811,15 +828,15 @@ impl Win32ApiInternalState {
             let hwnd_button = unsafe {
                 CreateWindowExW(
                     WINDOW_EX_STYLE(0),
-                    WC_BUTTON, // "BUTTON" class
+                    WC_BUTTON,
                     &HSTRING::from(text.as_str()),
                     WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-                    0,                                      // x (dummy, WM_SIZE will adjust)
-                    0,                                      // y (dummy, WM_SIZE will adjust)
-                    10,                                     // width (dummy, WM_SIZE will adjust)
-                    10,                                     // height (dummy, WM_SIZE will adjust)
-                    Some(window_data.hwnd),                 // Parent
-                    Some(HMENU(control_id as *mut c_void)), // Control ID
+                    0,
+                    0,
+                    10,
+                    10, // Dummies, WM_SIZE will adjust
+                    Some(window_data.hwnd),
+                    Some(HMENU(control_id as *mut c_void)),
                     Some(self.h_instance),
                     None,
                 )?
@@ -866,7 +883,6 @@ impl Win32ApiInternalState {
             if window_data.controls.contains_key(&control_id)
                 || window_data.hwnd_status_bar.is_some()
             {
-                // Check both to be safe during transition
                 return Err(PlatformError::OperationFailed(format!(
                     "Status bar with ID {} or existing status bar already present for window {:?}",
                     control_id, window_id
@@ -875,26 +891,24 @@ impl Win32ApiInternalState {
 
             let hwnd_status_bar = unsafe {
                 CreateWindowExW(
-                    WINDOW_EX_STYLE(0),                              // dwExStyle
-                    WC_STATIC,                                       // lpClassName
-                    &HSTRING::from(initial_text.as_str()),           // lpWindowName (initial text)
-                    WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_LEFT.0), // dwStyle
-                    0,                                      // X (dummy, WM_SIZE will adjust)
-                    0,                                      // Y (dummy, WM_SIZE will adjust)
-                    0,                                      // nWidth (dummy, WM_SIZE will adjust)
-                    0,                                      // nHeight (dummy, WM_SIZE will adjust)
-                    Some(window_data.hwnd),                 // hWndParent
-                    Some(HMENU(control_id as *mut c_void)), // hMenu (control ID)
-                    Some(self.h_instance),                  // hInstance
-                    None,                                   // lpParam
+                    WINDOW_EX_STYLE(0),
+                    WC_STATIC,
+                    &HSTRING::from(initial_text.as_str()),
+                    WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    0,
+                    0,
+                    0,
+                    0, // Dummies, WM_SIZE will adjust
+                    Some(window_data.hwnd),
+                    Some(HMENU(control_id as *mut c_void)),
+                    Some(self.h_instance),
+                    None,
                 )?
             };
-
-            // Store in both places as per phased plan
             window_data.controls.insert(control_id, hwnd_status_bar);
             window_data.hwnd_status_bar = Some(hwnd_status_bar);
-            window_data.status_bar_current_text = initial_text.clone(); // Keep current text in sync
-            window_data.status_bar_current_severity = MessageSeverity::Information; // Default severity
+            window_data.status_bar_current_text = initial_text.clone();
+            window_data.status_bar_current_severity = MessageSeverity::Information;
 
             println!(
                 "Platform: Created status bar (ID {}) for window {:?} with HWND {:?}, initial text: '{}'",
@@ -982,10 +996,8 @@ impl PlatformInterface {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
-                    // Control HWNDs (button, status bar) are now set by their respective Create<Control> commands
-                    // or still by WM_CREATE for status bar until Phase 3.3.
                     println!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND (if by WM_CREATE) is {:?}.",
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
                         window_id, window_data.hwnd_status_bar
                     );
                 } else {
@@ -1046,18 +1058,30 @@ impl PlatformInterface {
                 }
 
                 loop {
-                    let command_opt = if let Ok(mut logic_guard) = app_logic_ref.lock() {
-                        logic_guard.try_dequeue_command()
-                    } else {
-                        eprintln!("Platform: Failed to lock MyAppLogic to dequeue command.");
-                        None
-                    };
+                    // Step 1: Dequeue a command. The lock is held only for this operation.
+                    let command_to_execute: Option<PlatformCommand> = {
+                        // Scope for the MutexGuard
+                        match app_logic_ref.lock() {
+                            Ok(mut logic_guard) => logic_guard.try_dequeue_command(),
+                            Err(e) => {
+                                eprintln!(
+                                    "Platform: Failed to lock MyAppLogic to dequeue command: {:?}. Skipping command processing for this cycle.",
+                                    e
+                                );
+                                None // Treat as no command available this iteration
+                            }
+                        }
+                    }; // MutexGuard (logic_guard) is dropped here, releasing the lock.
 
-                    if let Some(command) = command_opt {
+                    // Step 2: Execute the command if one was dequeued. MyAppLogic is NOT locked here.
+                    if let Some(command) = command_to_execute {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
                             eprintln!("Platform: Error executing command from queue: {:?}", e);
+                            // Decide on error handling: continue, break, or return?
+                            // For now, log and continue processing other commands/messages.
                         }
                     } else {
+                        // No more commands in the queue.
                         break;
                     }
                 }
@@ -1102,13 +1126,13 @@ impl PlatformInterface {
         } else {
             eprintln!("Platform: Failed to lock MyAppLogic for on_quit call.");
         }
-        *self.internal_state.event_handler.lock().unwrap() = None; // Clear handler ref
+        *self.internal_state.event_handler.lock().unwrap() = None;
         println!("Platform: Message loop exited cleanly.");
         Ok(())
     }
 }
 
-/// Given a slice of UTF-16 code units (with a trailing 0), produce a PathBuf.
+// Given a slice of UTF-16 code units (with a trailing 0), produce a PathBuf.
 pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
     let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
     let path_os_string = OsString::from_wide(&buffer[..len]);

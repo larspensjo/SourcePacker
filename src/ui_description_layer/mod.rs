@@ -9,21 +9,21 @@ use crate::platform_layer::{
     types::{MenuItemConfig, PlatformCommand, WindowId},
     window_common::{
         ID_BUTTON_GENERATE_ARCHIVE, ID_MENU_FILE_LOAD_PROFILE, ID_MENU_FILE_REFRESH,
-        ID_MENU_FILE_SAVE_PROFILE_AS, ID_MENU_FILE_SET_ARCHIVE,
+        ID_MENU_FILE_SAVE_PROFILE_AS, ID_MENU_FILE_SET_ARCHIVE, ID_STATUS_BAR_CTRL,
     },
 };
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
- * for the main application window. This includes creating the main menu and other
- * foundational UI elements like buttons.
+ * for the main application window. This includes creating the main menu, status bar,
+ * and other foundational UI elements like buttons.
  */
 pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     println!("ui_description_layer: describe_main_window_layout called.");
 
     let mut commands = Vec::new();
 
-    // Define the "File" menu structure
+    // 1. Define the "File" menu structure
     let file_menu_items = vec![
         MenuItemConfig {
             id: ID_MENU_FILE_LOAD_PROFILE,
@@ -66,6 +66,13 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
         text: "Generate Archive".to_string(),
     });
 
+    // 3. Create Status Bar
+    commands.push(PlatformCommand::CreateStatusBar {
+        window_id: window_id,
+        control_id: ID_STATUS_BAR_CTRL,
+        initial_text: "Ready".to_string(),
+    });
+
     commands
 }
 
@@ -73,17 +80,6 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
 mod tests {
     use super::*;
     use crate::platform_layer::WindowId;
-
-    #[test]
-    fn test_describe_main_window_layout_initially_empty() {
-        let dummy_window_id = WindowId(1);
-        // Temporarily modify for this test as it's no longer empty
-        // let commands = describe_main_window_layout(dummy_window_id);
-        // assert!(
-        //     commands.is_empty(),
-        //     "describe_main_window_layout should return an empty Vec initially."
-        // );
-    }
 
     #[test]
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
@@ -135,6 +131,39 @@ mod tests {
             create_button_command.unwrap(),
             "Generate Archive",
             "CreateButton command should have the correct text"
+        );
+    }
+
+    #[test]
+    fn test_describe_main_window_layout_generates_create_status_bar_command() {
+        let dummy_window_id = WindowId(1);
+        let commands = describe_main_window_layout(dummy_window_id);
+
+        let create_status_bar_command = commands.iter().find_map(|cmd| {
+            if let PlatformCommand::CreateStatusBar {
+                window_id,
+                control_id,
+                initial_text,
+            } = cmd
+            {
+                if *window_id == dummy_window_id && *control_id == ID_STATUS_BAR_CTRL {
+                    Some(initial_text.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        assert!(
+            create_status_bar_command.is_some(),
+            "Commands should include CreateStatusBar for the status bar"
+        );
+        assert_eq!(
+            create_status_bar_command.unwrap(),
+            "Ready",
+            "CreateStatusBar command should have the correct initial text"
         );
     }
 }
