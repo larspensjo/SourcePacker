@@ -13,7 +13,7 @@ use windows::{
             CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
         },
         System::LibraryLoader::GetModuleHandleW,
-        System::SystemServices::SS_LEFTNOWORDWRAP,
+        System::SystemServices::{SS_LEFT, SS_LEFTNOWORDWRAP},
         UI::Controls::{
             Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
         },
@@ -37,13 +37,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use crate::platform_layer::window_common::{
-    ID_BUTTON_GENERATE_ARCHIVE,
-    WC_BUTTON, // Make WC_BUTTON public in window_common or re-declare
-};
-
-// Class name for Button controls
-const WC_BUTTON_CLASS: PCWSTR = windows::core::w!("Button");
+use crate::platform_layer::window_common::{ID_BUTTON_GENERATE_ARCHIVE, WC_BUTTON, WC_STATIC};
 
 /// Internal state for the Win32 platform layer.
 ///
@@ -671,9 +665,11 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => self._handle_create_button_impl(window_id, control_id, text),
-            PlatformCommand::CreateStatusBar { .. } => {
-                todo!("Handler for CreateStatusBar not yet implemented");
-            }
+            PlatformCommand::CreateStatusBar {
+                window_id,
+                control_id,
+                initial_text,
+            } => self._handle_create_status_bar_impl(window_id, control_id, initial_text),
         }
     }
 
@@ -717,7 +713,7 @@ impl Win32ApiInternalState {
                 AppendMenuW(
                     parent_menu_handle,
                     MF_STRING,
-                    item_config.id as usize,
+                    item_config.id as usize, // Use the provided ID directly
                     &HSTRING::from(item_config.text.as_str()),
                 )?;
             }
@@ -751,16 +747,27 @@ impl Win32ApiInternalState {
         })?;
 
         if let Some(window_data) = windows_guard.get(&window_id) {
-            let hwnd_ctrl_result = unsafe { GetDlgItem(Some(window_data.hwnd), control_id) };
-            let hwnd_ctrl = match hwnd_ctrl_result {
-                Ok(hwnd) => hwnd,
-                Err(_) => {
-                    return Err(PlatformError::InvalidHandle(format!(
-                        "Control ID {} not found in window {:?}",
-                        control_id, window_id
-                    )));
+            // Prefer getting HWND from the generic controls map
+            let hwnd_ctrl_opt = window_data.get_control_hwnd(control_id);
+
+            let hwnd_ctrl = match hwnd_ctrl_opt {
+                Some(hwnd) => hwnd,
+                None => {
+                    // Fallback for controls not yet in the map (e.g. if status bar is still managed by direct HWND)
+                    // This part can be simplified once all controls are in the map.
+                    if control_id == window_common::ID_STATUS_BAR_CTRL
+                        && window_data.hwnd_status_bar.is_some()
+                    {
+                        window_data.hwnd_status_bar.unwrap()
+                    } else {
+                        return Err(PlatformError::InvalidHandle(format!(
+                            "Control ID {} not found in window {:?}",
+                            control_id, window_id
+                        )));
+                    }
                 }
             };
+
             unsafe {
                 EnableWindow(hwnd_ctrl, enabled);
             }
@@ -826,6 +833,77 @@ impl Win32ApiInternalState {
         } else {
             Err(PlatformError::InvalidHandle(format!(
                 "WindowId {:?} not found for CreateButton",
+                window_id
+            )))
+        }
+    }
+
+    /*
+     * Handles the `PlatformCommand::CreateStatusBar` command.
+     * This method creates a native status bar control (using a STATIC control)
+     * within the specified window. It stores its HWND in both
+     * `NativeWindowData.controls` and `NativeWindowData.hwnd_status_bar`
+     * for compatibility during the refactoring phases.
+     * The status bar's position and size will be managed by `WM_SIZE`.
+     */
+    fn _handle_create_status_bar_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        initial_text: String,
+    ) -> PlatformResult<()> {
+        println!(
+            "Platform: Handling CreateStatusBar command for WinID {:?}, CtrlID {}, Text: '{}'",
+            window_id, control_id, initial_text
+        );
+        let mut windows_map_guard = self.window_map.write().map_err(|_| {
+            PlatformError::OperationFailed(
+                "Failed to lock windows map for status bar creation".into(),
+            )
+        })?;
+
+        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+            if window_data.controls.contains_key(&control_id)
+                || window_data.hwnd_status_bar.is_some()
+            {
+                // Check both to be safe during transition
+                return Err(PlatformError::OperationFailed(format!(
+                    "Status bar with ID {} or existing status bar already present for window {:?}",
+                    control_id, window_id
+                )));
+            }
+
+            let hwnd_status_bar = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),                              // dwExStyle
+                    WC_STATIC,                                       // lpClassName
+                    &HSTRING::from(initial_text.as_str()),           // lpWindowName (initial text)
+                    WS_CHILD | WS_VISIBLE | WINDOW_STYLE(SS_LEFT.0), // dwStyle
+                    0,                                      // X (dummy, WM_SIZE will adjust)
+                    0,                                      // Y (dummy, WM_SIZE will adjust)
+                    0,                                      // nWidth (dummy, WM_SIZE will adjust)
+                    0,                                      // nHeight (dummy, WM_SIZE will adjust)
+                    Some(window_data.hwnd),                 // hWndParent
+                    Some(HMENU(control_id as *mut c_void)), // hMenu (control ID)
+                    Some(self.h_instance),                  // hInstance
+                    None,                                   // lpParam
+                )?
+            };
+
+            // Store in both places as per phased plan
+            window_data.controls.insert(control_id, hwnd_status_bar);
+            window_data.hwnd_status_bar = Some(hwnd_status_bar);
+            window_data.status_bar_current_text = initial_text.clone(); // Keep current text in sync
+            window_data.status_bar_current_severity = MessageSeverity::Information; // Default severity
+
+            println!(
+                "Platform: Created status bar (ID {}) for window {:?} with HWND {:?}, initial text: '{}'",
+                control_id, window_id, hwnd_status_bar, initial_text
+            );
+            Ok(())
+        } else {
+            Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for CreateStatusBar",
                 window_id
             )))
         }
@@ -904,9 +982,10 @@ impl PlatformInterface {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
-                    // Button HWND now set by CreateButton command. Status HWND still by WM_CREATE.
+                    // Control HWNDs (button, status bar) are now set by their respective Create<Control> commands
+                    // or still by WM_CREATE for status bar until Phase 3.3.
                     println!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND (if by WM_CREATE) is {:?}.",
                         window_id, window_data.hwnd_status_bar
                     );
                 } else {

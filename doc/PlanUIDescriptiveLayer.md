@@ -10,36 +10,7 @@ Completed changes have been removed.
 
 ## Phase 2: Migrating Button Creation
 
-### Step 2.3: Integrate Button Creation via Command
-
-*   **File:** `src/main.rs`
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_create`)
-*   **Action (`main.rs`):**
-    *   In the loop after `create_window`, also process the `CreateButton` command.
-*   **Action (`window_common.rs`):**
-    *   In `Win32ApiInternalState::handle_wm_create`, **remove** the direct `CreateWindowExW` call for the "Generate Archive" button.
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_size`)
-*   **Action (`window_common.rs` - WM_SIZE):**
-    *   Modify `handle_wm_size` to get the button's HWND from `NativeWindowData` (e.g., `window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE)`) instead of directly from `window_data.hwnd_button_generate`. This might involve adding a small helper or changing how `hwnd_button_generate` is accessed/populated.
-*   **Rationale:** Shifts button creation to be command-driven.
-*   **Verification:** Application runs, "Generate Archive" button is present, correctly positioned by `WM_SIZE`, and functional.
-
----
-
 ## Phase 3: Migrating Status Bar Creation
-
-### Step 3.1: Implement `CreateStatusBar` Command Handler in `platform_layer`
-
-*   **File:** `src/platform_layer/app.rs` (`Win32ApiInternalState::_execute_platform_command`)
-*   **Action:**
-    *   Add a match arm for `PlatformCommand::CreateStatusBar`.
-    *   Handler uses `CreateWindowExW` with `WC_STATIC`.
-    *   Takes `window_id`, `control_id` (logical `ID_STATUS_BAR_CTRL`), `initial_text`.
-    *   Stores `HWND` in `NativeWindowData` (e.g., update `hwnd_status_bar`).
-    *   `WM_SIZE` logic will need adaptation similar to the button.
-    *   `WM_CTLCOLORSTATIC` will also need to find the status bar HWND from `NativeWindowData`.
-*   **Rationale:** Enables platform layer to create status bar via command.
-*   **Verification:** New command handler compiles. App still uses old status bar creation.
 
 ### Step 3.2: Update `ui_description_layer` for Status Bar
 

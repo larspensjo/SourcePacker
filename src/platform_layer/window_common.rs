@@ -38,7 +38,7 @@ pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
-const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
+pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
 
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
