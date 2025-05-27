@@ -7,7 +7,7 @@ use super::{types::MenuItemConfig, window_common};
 
 use windows::{
     Win32::{
-        Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, TRUE, WPARAM},
+        Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, RECT, TRUE, WPARAM},
         Graphics::Gdi::InvalidateRect,
         System::Com::{
             CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
@@ -16,6 +16,8 @@ use windows::{
         System::SystemServices::SS_LEFTNOWORDWRAP,
         UI::Controls::{
             Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+            TVS_CHECKBOXES, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS,
+            WC_TREEVIEWW,
         },
         UI::Input::KeyboardAndMouse::EnableWindow,
         UI::Shell::{
@@ -38,7 +40,8 @@ use std::sync::{
 };
 
 use crate::platform_layer::window_common::{
-    ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON, WC_STATIC,
+    BUTTON_AREA_HEIGHT, ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON,
+    WC_STATIC,
 };
 
 /// Internal state for the Win32 platform layer.
@@ -690,6 +693,10 @@ impl Win32ApiInternalState {
                 control_id,
                 initial_text,
             } => self._handle_create_status_bar_impl(window_id, control_id, initial_text),
+            PlatformCommand::CreateTreeView {
+                window_id,
+                control_id,
+            } => self._handle_create_treeview_impl(window_id, control_id),
         }
     }
 
@@ -882,6 +889,7 @@ impl Win32ApiInternalState {
         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
             if window_data.controls.contains_key(&control_id)
                 || window_data.hwnd_status_bar.is_some()
+            // Keep this check during transition
             {
                 return Err(PlatformError::OperationFailed(format!(
                     "Status bar with ID {} or existing status bar already present for window {:?}",
@@ -906,7 +914,7 @@ impl Win32ApiInternalState {
                 )?
             };
             window_data.controls.insert(control_id, hwnd_status_bar);
-            window_data.hwnd_status_bar = Some(hwnd_status_bar);
+            window_data.hwnd_status_bar = Some(hwnd_status_bar); // Keep for now
             window_data.status_bar_current_text = initial_text.clone();
             window_data.status_bar_current_severity = MessageSeverity::Information;
 
@@ -918,6 +926,99 @@ impl Win32ApiInternalState {
         } else {
             Err(PlatformError::InvalidHandle(format!(
                 "WindowId {:?} not found for CreateStatusBar",
+                window_id
+            )))
+        }
+    }
+
+    /*
+     * Handles the `PlatformCommand::CreateTreeView` command.
+     * This method creates a native TreeView control within the specified window.
+     * It stores its HWND in `NativeWindowData.controls` and initializes
+     * `NativeWindowData.treeview_state` with the `TreeViewInternalState`.
+     * The TreeView's position and size will be managed by `WM_SIZE`.
+     */
+    fn _handle_create_treeview_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+    ) -> PlatformResult<()> {
+        println!(
+            "Platform: Handling CreateTreeView command for WinID {:?}, CtrlID {}",
+            window_id, control_id
+        );
+        let mut windows_map_guard = self.window_map.write().map_err(|_| {
+            PlatformError::OperationFailed(
+                "Failed to lock windows map for TreeView creation".into(),
+            )
+        })?;
+
+        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+            if window_data.controls.contains_key(&control_id)
+                || window_data.treeview_state.is_some()
+            {
+                return Err(PlatformError::ControlCreationFailed(format!(
+                    "TreeView with ID {} or existing TreeView state already present for window {:?}",
+                    control_id, window_id
+                )));
+            }
+
+            // Get initial dimensions based on parent window's client area (dummy values if not available yet)
+            let mut client_rect = RECT::default();
+            if !window_data.hwnd.is_invalid() {
+                unsafe { GetClientRect(window_data.hwnd, &mut client_rect)? };
+            } else {
+                // Fallback if parent HWND not fully ready (should not happen if create_window is called first)
+                client_rect.right = 600; // Arbitrary default
+                client_rect.bottom = 400; // Arbitrary default
+            }
+
+            let tvs_style = WINDOW_STYLE(
+                TVS_HASLINES
+                    | TVS_LINESATROOT
+                    | TVS_HASBUTTONS
+                    | TVS_SHOWSELALWAYS
+                    | TVS_CHECKBOXES,
+            );
+            let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
+
+            // Initial size, WM_SIZE will adjust it correctly later.
+            // Subtract placeholder for button area and status bar.
+            let tv_width = client_rect.right - client_rect.left;
+            let tv_height = client_rect.bottom
+                - client_rect.top
+                - BUTTON_AREA_HEIGHT
+                - window_common::STATUS_BAR_HEIGHT;
+
+            let hwnd_tv = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    WC_TREEVIEWW,
+                    PCWSTR::null(),
+                    combined_style,
+                    0,                 // X
+                    0,                 // Y
+                    tv_width.max(10),  // nWidth, ensure non-zero
+                    tv_height.max(10), // nHeight, ensure non-zero
+                    Some(window_data.hwnd),
+                    Some(HMENU(control_id as *mut c_void)),
+                    Some(self.h_instance),
+                    None,
+                )?
+            };
+
+            window_data.controls.insert(control_id, hwnd_tv);
+            window_data.treeview_state =
+                Some(control_treeview::TreeViewInternalState::new(hwnd_tv));
+
+            println!(
+                "Platform: Created TreeView (ID {}) for window {:?} with HWND {:?}",
+                control_id, window_id, hwnd_tv
+            );
+            Ok(())
+        } else {
+            Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for CreateTreeView",
                 window_id
             )))
         }

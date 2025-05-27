@@ -1,7 +1,14 @@
+/*
+ * This module provides platform-specific (Win32) implementations for TreeView control
+ * operations. It handles the creation (now delegated), population, and manipulation
+ * of native TreeView items based on platform-agnostic commands and descriptors.
+ * It also defines the internal state (`TreeViewInternalState`) required to manage
+ * a TreeView control, such as its handle and item ID mappings.
+ */
 use super::app::Win32ApiInternalState;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId};
-use super::window_common::{BUTTON_AREA_HEIGHT, NativeWindowData};
+use super::window_common::NativeWindowData; // Removed BUTTON_AREA_HEIGHT, not needed here anymore
 
 use windows::{
     Win32::{
@@ -10,10 +17,9 @@ use windows::{
             HTREEITEM, NM_CLICK, NMHDR, NMTREEVIEWW, TVGN_CHILD, TVGN_NEXT, TVI_LAST,
             TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
             TVIS_STATEIMAGEMASK, TVITEMEXW, TVITEMEXW_CHILDREN, TVM_DELETEITEM, TVM_GETITEMW,
-            TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SETITEMW, TVN_ITEMCHANGEDW, TVS_CHECKBOXES,
-            TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, WC_TREEVIEWW,
+            TVM_GETNEXTITEM, TVM_INSERTITEMW, TVM_SETITEMW, TVN_ITEMCHANGEDW,
         },
-        UI::WindowsAndMessaging::*, // For CreateWindowExW, GetDlgItem, SendMessageW etc.
+        UI::WindowsAndMessaging::*,
     },
     core::{HSTRING, PCWSTR, PWSTR},
 };
@@ -27,7 +33,8 @@ pub(crate) const ID_TREEVIEW_CTRL: i32 = 1001;
 
 /// Holds the native state specific to a TreeView control within a window.
 /// This includes its handle (`HWND`) and mappings between application-level
-/// `TreeItemId`s and native `HTREEITEM`s.
+/// `TreeItemId`s and native `HTREEITEM`s. This state is expected to be
+/// initialized by an explicit `CreateTreeView` command.
 #[derive(Debug)]
 pub(crate) struct TreeViewInternalState {
     pub(crate) hwnd: HWND,
@@ -39,7 +46,12 @@ pub(crate) struct TreeViewInternalState {
 }
 
 impl TreeViewInternalState {
-    fn new(hwnd: HWND) -> Self {
+    /*
+     * Creates a new `TreeViewInternalState` for an existing TreeView HWND.
+     * This is typically called after the TreeView control has been created
+     * by a `PlatformCommand::CreateTreeView` handler.
+     */
+    pub(crate) fn new(hwnd: HWND) -> Self {
         Self {
             hwnd,
             item_id_to_htreeitem: HashMap::new(),
@@ -62,68 +74,58 @@ impl TreeViewInternalState {
     }
 }
 
-/// Ensures a TreeView control exists for the given window, creating it if necessary.
-/// Returns a mutable reference to the `TreeViewInternalState`.
-fn ensure_treeview_exists_and_get_state<'a>(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
-    window_data: &'a mut NativeWindowData, // Mutable access to parent window's data
+/*
+ * Retrieves a mutable reference to the `TreeViewInternalState` for a given window.
+ * This function assumes the TreeView and its state have already been created
+ * via a `PlatformCommand::CreateTreeView`. If the state is not found,
+ * it returns an error, as on-demand creation is no longer supported here.
+ */
+fn get_existing_treeview_state_mut<'a>(
+    window_data: &'a mut NativeWindowData,
 ) -> PlatformResult<&'a mut TreeViewInternalState> {
-    if window_data.treeview_state.is_none() {
-        // TreeView doesn't exist yet, create it.
-        let mut client_rect = RECT::default();
-        unsafe { GetClientRect(window_data.hwnd, &mut client_rect)? };
-
-        let tvs_style = WINDOW_STYLE(
-            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES,
-        );
-        let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
-
-        let tv_width = client_rect.right - client_rect.left;
-        let tv_height = client_rect.bottom - client_rect.top - BUTTON_AREA_HEIGHT;
-
-        let hwnd_tv = unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE(0),     // dwExStyle
-                WC_TREEVIEWW,           // lpClassName
-                PCWSTR::null(),         // lpWindowName (no title for a control)
-                combined_style,         // dwStyle
-                0,                      // X
-                0,                      // Y
-                tv_width,               // nWidth
-                tv_height,              // nHeight (adjusted for button area)
-                Some(window_data.hwnd), // hWndParent
-                Some(HMENU(ID_TREEVIEW_CTRL as *mut c_void)),
-                Some(internal_state.h_instance), // hInstance
-                None,                            // lpParam
-            )?
-        };
-        println!("Platform: TreeView created with HWND {:?}", hwnd_tv);
-        window_data.treeview_state = Some(TreeViewInternalState::new(hwnd_tv));
+    if window_data.treeview_state.is_some() {
+        // This unwrap is safe because we just checked it's Some.
+        Ok(window_data.treeview_state.as_mut().unwrap())
+    } else {
+        Err(PlatformError::InvalidHandle(format!(
+            "TreeView state not found for window ID {:?}. TreeView must be created before population.",
+            window_data.id
+        )))
     }
-    // This unwrap is safe because we just created it if it was None.
-    Ok(window_data.treeview_state.as_mut().unwrap())
 }
 
 /// Populates the TreeView control in the specified window with new items.
-/// Any existing items are cleared first.
+/// Any existing items are cleared first. This function now assumes the
+/// TreeView control has already been created by a `CreateTreeView` command.
 pub(crate) fn populate_treeview(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
+    println!(
+        "Platform: control_treeview::populate_treeview called for WinID {:?}",
+        window_id
+    );
     let mut windows_guard = internal_state.window_map.write().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire write lock for windows map".into())
     })?;
 
     if let Some(window_data) = windows_guard.get_mut(&window_id) {
-        let tv_state =
-            ensure_treeview_exists_and_get_state(internal_state, window_id, window_data)?;
+        // Get the TreeView state, assuming it already exists.
+        let tv_state = get_existing_treeview_state_mut(window_data)?;
         tv_state.clear_items();
+        println!(
+            "Platform: Cleared existing items from TreeView for WinID {:?}",
+            window_id
+        );
 
         for item_desc in items {
             add_treeview_item_recursive(tv_state, HTREEITEM(0), &item_desc)?;
         }
+        println!(
+            "Platform: Finished populating TreeView for WinID {:?}",
+            window_id
+        );
         Ok(())
     } else {
         Err(PlatformError::InvalidHandle(format!(

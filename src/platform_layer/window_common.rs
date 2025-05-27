@@ -37,8 +37,8 @@ pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
-pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC"); // Made pub(crate)
-pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32); // For basic left-aligned static text
+pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
+pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);
 
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
@@ -50,13 +50,18 @@ const BUTTON_WIDTH: i32 = 150;
 const BUTTON_HEIGHT: i32 = 30;
 
 /// Holds native data associated with a specific window managed by the platform layer.
-/// This includes the native window handle (`HWND`) and any control-specific states.
+/// This includes the native window handle (`HWND`), a map of control IDs to their
+/// `HWND`s, and any control-specific states (like for the TreeView).
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
     pub(crate) id: WindowId,
+    /// Stores the specific internal state for the TreeView control if one exists.
+    /// This is initialized by the `CreateTreeView` command handler.
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
-    pub(crate) controls: HashMap<i32, HWND>, // Stores HWNDs for various controls by their ID
+    /// Stores HWNDs for various controls (buttons, status bar, treeview, etc.)
+    /// keyed by their logical control ID.
+    pub(crate) controls: HashMap<i32, HWND>,
     pub(crate) hwnd_status_bar: Option<HWND>, // Will be removed in Phase 5.1
     pub(crate) status_bar_current_text: String,
     pub(crate) status_bar_current_severity: MessageSeverity,
@@ -262,9 +267,6 @@ impl Win32ApiInternalState {
         match msg {
             WM_CREATE => {
                 self.handle_wm_create(hwnd, wparam, lparam, window_id);
-                // No AppEvent sent from WM_CREATE itself typically to MyAppLogic here.
-                // AppLogic::on_main_window_created (or its successor) is called after
-                // initial UI commands are processed.
             }
             WM_SIZE => {
                 event_to_send = self.handle_wm_size(hwnd, wparam, lparam, window_id);
@@ -280,8 +282,6 @@ impl Win32ApiInternalState {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
             }
             WM_NCDESTROY => {
-                // This is the final stage of window destruction.
-                // The GWLP_USERDATA is cleared by the facade_wnd_proc_router here.
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
             }
             WM_PAINT => {
@@ -304,8 +304,6 @@ impl Win32ApiInternalState {
 
                 if let Some(windows_guard) = self.window_map.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
-                        // Check if the control sending WM_CTLCOLORSTATIC is our status bar.
-                        // We now get the status bar's HWND from the generic controls map.
                         if Some(hwnd_static_ctrl_from_msg)
                             == window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
                         {
@@ -326,7 +324,6 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
-                // If not handled by our status bar, let DefWindowProc handle it.
                 if lresult_override.is_none() {
                     return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
                 }
@@ -336,9 +333,6 @@ impl Win32ApiInternalState {
             }
         }
 
-        // If an AppEvent was generated, send it to MyAppLogic.
-        // MyAppLogic will enqueue any resulting PlatformCommands.
-        // The main run loop will pick those up.
         if let Some(event) = event_to_send {
             if let Some(handler_arc) = event_handler_opt {
                 if let Ok(mut handler_guard) = handler_arc.lock() {
@@ -446,16 +440,14 @@ impl Win32ApiInternalState {
             "Platform: WM_CREATE for HWND {:?}, WindowId {:?}",
             hwnd, window_id
         );
-        // Button creation is handled by PlatformCommand::CreateButton.
-        // Status bar creation is now handled by PlatformCommand::CreateStatusBar.
-        // The direct CreateWindowExW call for the status bar is removed from here.
     }
 
     /*
      * Handles the WM_SIZE message for a window.
      * This is called when the window's size changes. It's responsible for
      * resizing and repositioning child controls like the TreeView, buttons,
-     * and status bar to fit the new window dimensions.
+     * and status bar to fit the new window dimensions. It now uses the generic
+     * `get_control_hwnd` for all controls.
      */
     fn handle_wm_size(
         self: &Arc<Self>,
@@ -473,23 +465,18 @@ impl Win32ApiInternalState {
                 let button_area_y_pos = treeview_height;
                 let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
 
-                // Resize TreeView
-                if let Some(ref tv_state) = window_data.treeview_state {
-                    if !tv_state.hwnd.is_invalid() {
+                // Resize TreeView using its control ID
+                if let Some(hwnd_tv) =
+                    window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
+                {
+                    if !hwnd_tv.is_invalid() {
                         unsafe {
-                            let _ = MoveWindow(
-                                tv_state.hwnd,
-                                0,
-                                0,
-                                client_width,
-                                treeview_height,
-                                true,
-                            );
+                            let _ = MoveWindow(hwnd_tv, 0, 0, client_width, treeview_height, true);
                         }
                     }
                 }
 
-                // Resize Button (using get_control_hwnd)
+                // Resize Button
                 if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE) {
                     if !hwnd_btn.is_invalid() {
                         let btn_x_pos = BUTTON_X_PADDING;
@@ -507,7 +494,7 @@ impl Win32ApiInternalState {
                     }
                 }
 
-                // Resize Status Bar (using get_control_hwnd)
+                // Resize Status Bar
                 if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
                     if !hwnd_status.is_invalid() {
                         unsafe {
@@ -519,23 +506,6 @@ impl Win32ApiInternalState {
                                 STATUS_BAR_HEIGHT,
                                 true,
                             );
-                        }
-                    }
-                } else {
-                    // This else can be removed once hwnd_status_bar field is fully removed
-                    // and we are sure the status bar is always in the controls map.
-                    if let Some(hwnd_status_legacy) = window_data.hwnd_status_bar {
-                        if !hwnd_status_legacy.is_invalid() {
-                            unsafe {
-                                MoveWindow(
-                                    hwnd_status_legacy,
-                                    0,
-                                    status_bar_y_pos,
-                                    client_width,
-                                    STATUS_BAR_HEIGHT,
-                                    true,
-                                );
-                            }
                         }
                     }
                 }
@@ -563,7 +533,6 @@ impl Win32ApiInternalState {
         let control_id = loword_from_wparam(wparam);
         let notification_code = highord_from_wparam(wparam);
 
-        // Check for menu commands (notification_code is 0 for menu items from main menu, 1 for accelerator)
         if notification_code == 0 || notification_code == 1 {
             match control_id {
                 ID_MENU_FILE_LOAD_PROFILE => {
@@ -590,7 +559,7 @@ impl Win32ApiInternalState {
             if control_id == ID_BUTTON_GENERATE_ARCHIVE {
                 return Some(AppEvent::ButtonClicked {
                     window_id,
-                    control_id, // Pass the original control_id from wparam
+                    control_id,
                 });
             }
         }
@@ -862,16 +831,11 @@ pub(crate) fn destroy_native_window(
 pub(crate) fn update_status_bar_text_impl(
     window_data: &mut NativeWindowData,
     text: &str,
-    _severity: MessageSeverity, // Severity is used by caller to update window_data field
+    _severity: MessageSeverity,
 ) -> PlatformResult<()> {
-    // The caller (_execute_platform_command in app.rs) is responsible for:
-    // 1. Comparing severities.
-    // 2. Updating window_data.status_bar_current_text and window_data.status_bar_current_severity.
-    // This function just performs the WinAPI calls using the HWND from controls map or fallback.
-
     let hwnd_status_opt = window_data
         .get_control_hwnd(ID_STATUS_BAR_CTRL)
-        .or(window_data.hwnd_status_bar); // Fallback
+        .or(window_data.hwnd_status_bar);
 
     if let Some(hwnd_status) = hwnd_status_opt {
         unsafe {

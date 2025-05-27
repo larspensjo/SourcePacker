@@ -1,11 +1,13 @@
 /*
  * This module is responsible for defining the static structure of the UI.
  * It generates a series of `PlatformCommand`s that describe the layout
- * and initial properties of UI elements like menus, buttons, and status bars.
- * This decouples the UI definition from the platform-specific implementation.
+ * and initial properties of UI elements like menus, buttons, status bars, and tree views.
+ * This decouples the UI definition from the platform-specific implementation,
+ * facilitating a more generic platform layer.
  */
 
 use crate::platform_layer::{
+    control_treeview::ID_TREEVIEW_CTRL,
     types::{MenuItemConfig, PlatformCommand, WindowId},
     window_common::{
         ID_BUTTON_GENERATE_ARCHIVE, ID_MENU_FILE_LOAD_PROFILE, ID_MENU_FILE_REFRESH,
@@ -15,8 +17,9 @@ use crate::platform_layer::{
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
- * for the main application window. This includes creating the main menu, status bar,
- * and other foundational UI elements like buttons.
+ * for the main application window. This includes creating the main menu, TreeView,
+ * status bar, and other foundational UI elements like buttons.
+ * These commands are processed by the platform layer to construct the native UI.
  */
 pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     println!("ui_description_layer: describe_main_window_layout called.");
@@ -59,16 +62,22 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
     };
     commands.push(main_menu_command);
 
-    // 2. Create "Generate Archive" Button
+    // 2. Create TreeView
+    commands.push(PlatformCommand::CreateTreeView {
+        window_id,
+        control_id: ID_TREEVIEW_CTRL,
+    });
+
+    // 3. Create "Generate Archive" Button
     commands.push(PlatformCommand::CreateButton {
-        window_id: window_id,
+        window_id,
         control_id: ID_BUTTON_GENERATE_ARCHIVE,
         text: "Generate Archive".to_string(),
     });
 
-    // 3. Create Status Bar
+    // 4. Create Status Bar
     commands.push(PlatformCommand::CreateStatusBar {
-        window_id: window_id,
+        window_id,
         control_id: ID_STATUS_BAR_CTRL,
         initial_text: "Ready".to_string(),
     });
@@ -79,7 +88,7 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform_layer::WindowId;
+    use crate::platform_layer::{WindowId, control_treeview::ID_TREEVIEW_CTRL};
 
     #[test]
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
@@ -90,6 +99,20 @@ mod tests {
                 .iter()
                 .any(|cmd| matches!(cmd, PlatformCommand::CreateMainMenu { .. })),
             "describe_main_window_layout should generate a CreateMainMenu command."
+        );
+    }
+
+    #[test]
+    fn test_describe_main_window_layout_generates_create_treeview_command() {
+        let dummy_window_id = WindowId(1);
+        let commands = describe_main_window_layout(dummy_window_id);
+        assert!(
+            commands.iter().any(|cmd| matches!(
+                cmd,
+                PlatformCommand::CreateTreeView { window_id, control_id }
+                if *window_id == dummy_window_id && *control_id == ID_TREEVIEW_CTRL
+            )),
+            "describe_main_window_layout should generate a CreateTreeView command."
         );
     }
 

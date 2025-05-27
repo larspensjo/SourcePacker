@@ -2,7 +2,7 @@
 
 This plan outlines the steps to refactor SourcePacker so that the main UI structure is defined by a new `ui_description_layer` which generates `PlatformCommand`s. The `platform_layer` will then execute these commands to create UI elements, rather than creating them implicitly (e.g., in `WM_CREATE`).
 
-**Goal:** Decouple UI structure definition from the platform-specific implementation, improve testability, and pave the way for a more reusable `platform_layer`. The application should remain functional after each major step.
+**Goal:** Decouple UI structure definition from the platform-specific implementation, improve testability, and pave the way for a more reusable `platform_layer`. The application should remain functional after each major step. We want the platform_layer to be independent of the actual application UI. The goal is to eventually break it out into a separate library that any application can use.
 
 ---
 
@@ -20,18 +20,7 @@ Completed.
 
 ## Phase 4: TreeView Creation (Consideration)
 
-*   **Current State:** The TreeView is created on-demand by `control_treeview::ensure_treeview_exists_and_get_state` when `PlatformCommand::PopulateTreeView` is first processed. This is already somewhat command-driven.
-*   **Optional Step 4.1: Explicit `CreateTreeView` Command**
-    *   **Action:**
-        1.  Define `PlatformCommand::CreateTreeView { window_id, control_id /* ...other configs if needed */ }`.
-        2.  `ui_description_layer` generates this command.
-        3.  `main.rs` executes it *before* any `PopulateTreeView` can occur.
-        4.  The handler for `CreateTreeView` in `platform_layer` would explicitly create the TreeView (similar to `ensure_treeview_exists_and_get_state` but without the "ensure" part, just "create"). It would store its HWND and `TreeViewInternalState` in `NativeWindowData`.
-        5.  `PopulateTreeView` would then *assume* the TreeView HWND exists.
-    *   **Rationale:** Makes the creation of *all* primary UI elements explicit and command-driven from the start. Useful if you need to configure TreeView styles or other properties *before* it's populated.
-    *   **Verification:** TreeView is created and populated correctly.
-*   **Alternative:** Keep the current on-demand creation via `PopulateTreeView` if explicit pre-population configuration isn't immediately needed. The current approach is already quite decoupled.
-
+Completed
 ---
 
 ## Phase 5: Generalizing Control Storage and Access in `NativeWindowData`
@@ -222,9 +211,10 @@ Completed.
 *   **Rationale:** `MyAppLogic` now performs its initial data loading and dynamic UI setup in response to the `MainWindowUISetupComplete` event, ensuring the static UI is ready.
 *   **Verification:** Application initializes correctly, with static UI created first, followed by `MyAppLogic`'s initialization logic (profile loading, tree population, etc.). The overall application behavior should be the same as before this phase, but the initialization flow is different.
 
-## Phase A: Clean-ups
+## Phase A: Clean-ups and additional ideas
 *   handle_wm_size seems to be hard coded, knowing what controls there are.
 *   There is still considerablel knowlede and dependencies in the platform layer to the UI content. The goal is to remove these, and have them managed by the ui_description_layer.
+*   Add support for typical layout controls, based on inspiration from WPS xaml.
 
 ---
 

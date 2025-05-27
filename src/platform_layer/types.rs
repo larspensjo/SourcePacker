@@ -203,7 +203,6 @@ pub enum PlatformCommand {
     },
     QuitApplication,
 
-    // --- New Commands for UI Element Creation (Phase 0.1) ---
     CreateMainMenu {
         window_id: WindowId,
         menu_items: Vec<MenuItemConfig>,
@@ -213,13 +212,18 @@ pub enum PlatformCommand {
         control_id: i32, // The existing logical ID (e.g., ID_BUTTON_GENERATE_ARCHIVE)
         text: String,
         // Position/size can be added later if needed, relying on WM_SIZE for now.
-        // x: i32, y: i32, width: i32, height: i32,
     },
     CreateStatusBar {
         window_id: WindowId,
         control_id: i32, // The existing logical ID (e.g., ID_STATUS_BAR_CTRL)
         initial_text: String,
         // Position/size can be added later if needed.
+    },
+    CreateTreeView {
+        // New command for explicit TreeView creation
+        window_id: WindowId,
+        control_id: i32, // The logical ID for the TreeView (e.g., ID_TREEVIEW_CTRL)
+                         // Future: styles, position/size if not fully managed by WM_SIZE
     },
 }
 
