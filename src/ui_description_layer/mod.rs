@@ -43,22 +43,22 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
             text: "Set Archive Path...".to_string(),
             children: Vec::new(),
         },
-        // TODO: Add MF_SEPARATOR equivalent if MenuItemConfig supports it,
-        // or handle separators differently in platform_layer. For now, omitting.
-        MenuItemConfig {
-            id: ID_MENU_FILE_REFRESH,
-            text: "Refresh File List".to_string(),
-            children: Vec::new(),
-        },
     ];
 
     let main_menu_command = PlatformCommand::CreateMainMenu {
         window_id,
-        menu_items: vec![MenuItemConfig {
-            id: 0, // Top-level menu items like "&File" don't usually have command IDs themselves
-            text: "&File".to_string(),
-            children: file_menu_items,
-        }],
+        menu_items: vec![
+            MenuItemConfig {
+                id: 0, // Top-level menu items like "&File" that are popups don't usually have command IDs themselves
+                text: "&File".to_string(),
+                children: file_menu_items,
+            },
+            MenuItemConfig {
+                id: ID_MENU_FILE_REFRESH,
+                text: "&Refresh".to_string(),
+                children: Vec::new(),
+            },
+        ],
     };
     commands.push(main_menu_command);
 
@@ -94,11 +94,41 @@ mod tests {
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
         let dummy_window_id = WindowId(1);
         let commands = describe_main_window_layout(dummy_window_id);
+        let main_menu_cmd = commands.iter().find_map(|cmd| {
+            if let PlatformCommand::CreateMainMenu {
+                window_id: _,
+                menu_items,
+            } = cmd
+            {
+                Some(menu_items)
+            } else {
+                None
+            }
+        });
         assert!(
-            commands
+            main_menu_cmd.is_some(),
+            "Should generate CreateMainMenu command."
+        );
+
+        let menu_items = main_menu_cmd.unwrap();
+        // Check for "File" menu
+        assert!(
+            menu_items
                 .iter()
-                .any(|cmd| matches!(cmd, PlatformCommand::CreateMainMenu { .. })),
-            "describe_main_window_layout should generate a CreateMainMenu command."
+                .any(|item| item.text == "&File" && !item.children.is_empty())
+        );
+        // Check for "Refresh" menu directly
+        assert!(menu_items.iter().any(|item| item.text == "&Refresh"
+            && item.id == ID_MENU_FILE_REFRESH
+            && item.children.is_empty()));
+
+        // Check that "Refresh" is NOT under "File"
+        let file_menu = menu_items.iter().find(|item| item.text == "&File").unwrap();
+        assert!(
+            !file_menu
+                .children
+                .iter()
+                .any(|sub_item| sub_item.id == ID_MENU_FILE_REFRESH)
         );
     }
 
@@ -120,14 +150,6 @@ mod tests {
     fn test_describe_main_window_layout_generates_create_button_command() {
         let dummy_window_id = WindowId(1);
         let commands = describe_main_window_layout(dummy_window_id);
-
-        let has_create_main_menu = commands.iter().any(|cmd| {
-            matches!(cmd, PlatformCommand::CreateMainMenu { window_id, .. } if *window_id == dummy_window_id)
-        });
-        assert!(
-            has_create_main_menu,
-            "Commands should include CreateMainMenu"
-        );
 
         let create_button_command = commands.iter().find_map(|cmd| {
             if let PlatformCommand::CreateButton {

@@ -4,6 +4,8 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 
 **Goal:** Decouple UI structure definition from the platform-specific implementation, improve testability, and pave the way for a more reusable `platform_layer`. The application should remain functional after each major step. We want the platform_layer to be independent of the actual application UI. The goal is to eventually break it out into a separate library that any application can use.
 
+Whenever you want to change how your window loks like or population of controls, you should never need to change the platform_layer.
+
 ---
 
 Completed changes have been removed.
