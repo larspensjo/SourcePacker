@@ -61,3 +61,45 @@ This layer serves as a bridge between the platform-agnostic Application Logic La
     a.  It may update its internal state models.
     b.  It may decide to issue one or more `PlatformCommand`s back to the Platform Abstraction Layer to change the UI (e.g., update text, change an item's check state).
 6.  The Platform Abstraction Layer receives these `PlatformCommand`s and executes them by making the corresponding native UI toolkit calls.
+
+# Lock Analysis for SourcePacker
+
+## 1. Locks in Mock Objects (`handler_tests.rs`)
+
+*   **Type:** `std::sync::Mutex`
+*   **Data Protected:**
+    *   Internal state of various mock objects (e.g., `MockConfigManager`, `MockProfileManager`, `MockFileSystemScanner`, `MockArchiver`).
+    *   This includes fields storing pre-configured results for mock methods and logs of calls made to these methods.
+*   **Purpose:**
+    *   To ensure thread-safety for the mock objects themselves during unit testing.
+    *   Allows test setup (configuring mock results) and mock method execution to occur without data races, even if tests were run in parallel or mocks were shared.
+
+## 2. `Win32ApiInternalState::window_map`
+
+*   **Type:** `std::sync::RwLock`
+*   **Data Protected:**
+    *   The `HashMap` that maps platform-agnostic `WindowId`s to their corresponding `NativeWindowData`.
+    *   `NativeWindowData` includes the native window handle (`HWND`), TreeView state, other control `HWND`s, and current status bar text/severity.
+*   **Purpose:**
+    *   To allow safe concurrent access and modification of the window state from different parts of the Win32 platform layer.
+    *   Multiple parts of the code (e.g., `WndProc`, command execution logic) can read window data concurrently, while modifications (e.g., adding/removing windows, updating control handles) are serialized.
+
+## 3. `Win32ApiInternalState::event_handler`
+
+*   **Type:** `std::sync::Mutex`
+*   **Data Protected:**
+    *   The `Option<Weak<Mutex<dyn PlatformEventHandler>>>` field. This is a weak pointer to the main application logic (`MyAppLogic`).
+*   **Purpose:**
+    *   To allow thread-safe setting (during application startup) and retrieval (from `WndProc` or dialog completion handlers) of the reference to the application logic.
+    *   Ensures that the pointer itself is accessed and modified safely.
+
+## 4. `MyAppLogic` Instance Lock
+
+*   **Type:** `std::sync::Mutex` (This is the `Mutex` part of `Arc<Mutex<dyn PlatformEventHandler>>`)
+*   **Data Protected:**
+    *   The entire `MyAppLogic` instance and all its internal state.
+    *   This includes caches like `file_nodes_cache`, `current_profile_cache`, `current_archive_status`, pending action states (`pending_action`), and the `synchronous_command_queue`.
+*   **Purpose:**
+    *   To serialize all access to `MyAppLogic`, ensuring that only one thread of execution can modify or read its state at any given time.
+    *   Prevents race conditions on `MyAppLogic`'s internal fields when events are handled or commands are processed.
+    *   **Note:** While this lock ensures safety, it's important that operations performed while holding this lock (especially in `handle_event`) are not long-running or blocking to maintain UI responsiveness.
