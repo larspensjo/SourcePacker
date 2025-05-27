@@ -163,9 +163,10 @@ impl CoreProfileManager {
                 let profiles_path = proj_dirs.config_local_dir().join("profiles"); // Use config_local_dir
                 if !profiles_path.exists() {
                     if let Err(e) = fs::create_dir_all(&profiles_path) {
-                        eprintln!(
+                        log::error!(
                             "Failed to create profile directory {:?}: {}",
-                            profiles_path, e
+                            profiles_path,
+                            e
                         );
                         return None;
                     }
@@ -429,7 +430,7 @@ mod profile_tests {
             let app_base_config_local_dir = proj_dirs.config_local_dir();
             if app_base_config_local_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(app_base_config_local_dir) {
-                    eprintln!(
+                    log::error!(
                         "Test cleanup failed for {:?}: {}",
                         proj_dirs.config_local_dir(),
                         e

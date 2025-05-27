@@ -102,7 +102,7 @@ pub(crate) fn populate_treeview(
     window_id: WindowId,
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
-    println!(
+    log::debug!(
         "Platform: control_treeview::populate_treeview called for WinID {:?}",
         window_id
     );
@@ -114,7 +114,7 @@ pub(crate) fn populate_treeview(
         // Get the TreeView state, assuming it already exists.
         let tv_state = get_existing_treeview_state_mut(window_data)?;
         tv_state.clear_items();
-        println!(
+        log::debug!(
             "Platform: Cleared existing items from TreeView for WinID {:?}",
             window_id
         );
@@ -122,7 +122,7 @@ pub(crate) fn populate_treeview(
         for item_desc in items {
             add_treeview_item_recursive(tv_state, HTREEITEM(0), &item_desc)?;
         }
-        println!(
+        log::debug!(
             "Platform: Finished populating TreeView for WinID {:?}",
             window_id
         );

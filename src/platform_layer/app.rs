@@ -85,7 +85,7 @@ impl Win32ApiInternalState {
                 dwICC: ICC_TREEVIEW_CLASSES,
             };
             if !InitCommonControlsEx(&icex).as_bool() {
-                eprintln!(
+                log::error!(
                     "Warning: InitCommonControlsEx for TreeView failed. Error: {:?}",
                     GetLastError()
                 );
@@ -110,13 +110,15 @@ impl Win32ApiInternalState {
 
     pub(crate) fn decrement_active_windows(&self) {
         let prev_count = self.active_windows_count.fetch_sub(1, Ordering::Relaxed);
-        println!(
+        log::debug!(
             "Platform: Active window count decremented, was {}, now {}.",
             prev_count,
             prev_count - 1
         );
         if prev_count == 1 {
-            println!("Platform: Last active window closed (or being destroyed), posting WM_QUIT.");
+            log::debug!(
+                "Platform: Last active window closed (or being destroyed), posting WM_QUIT."
+            );
             unsafe { PostQuitMessage(0) };
         }
     }
@@ -124,7 +126,7 @@ impl Win32ApiInternalState {
     pub(crate) fn signal_quit_intent(&self) {
         self.is_quitting.store(1, Ordering::Relaxed);
         if self.active_windows_count.load(Ordering::Relaxed) == 0 {
-            println!("Platform: Quit signaled with no active windows, posting WM_QUIT.");
+            log::error!("Platform: Quit signaled with no active windows, posting WM_QUIT.");
             unsafe { PostQuitMessage(0) };
         }
     }
@@ -238,19 +240,19 @@ impl Win32ApiInternalState {
 
         if dialog_succeeded {
             path_result = Some(pathbuf_from_buf(&file_buffer));
-            println!(
+            log::debug!(
                 "Platform: Dialog function succeeded. Path: {:?}",
                 path_result.as_ref().unwrap()
             );
         } else {
             let error_code = unsafe { CommDlgExtendedError() };
             if error_code != COMMON_DLG_ERRORS(0) {
-                eprintln!(
+                log::error!(
                     "Platform: Dialog function failed or was cancelled with error. CommDlgExtendedError: {:?}",
                     error_code
                 );
             } else {
-                println!("Platform: Dialog cancelled by user (no error).");
+                log::debug!("Platform: Dialog cancelled by user (no error).");
             }
         }
 
@@ -265,10 +267,10 @@ impl Win32ApiInternalState {
             if let Ok(mut handler_guard) = handler_arc.lock() {
                 handler_guard.handle_event(event);
             } else {
-                eprintln!("Platform: Failed to lock event handler after dialog completion.");
+                log::error!("Platform: Failed to lock event handler after dialog completion.");
             }
         } else {
-            eprintln!("Platform: Event handler not available after dialog completion.");
+            log::error!("Platform: Event handler not available after dialog completion.");
         }
         Ok(())
     }
@@ -281,9 +283,12 @@ impl Win32ApiInternalState {
         prompt: String,
         emphasize_create_new: bool,
     ) -> PlatformResult<()> {
-        println!(
+        log::debug!(
             "Platform (STUB): Showing Profile Selection Dialog. Title: '{}', Prompt: '{}', Emphasize Create: {}, Profiles: {:?}",
-            title, prompt, emphasize_create_new, available_profiles
+            title,
+            prompt,
+            emphasize_create_new,
+            available_profiles
         );
 
         let (chosen_profile_name, create_new_requested, cancelled) =
@@ -294,9 +299,11 @@ impl Win32ApiInternalState {
             } else {
                 (None, false, true)
             };
-        println!(
+        log::debug!(
             "Platform (STUB): Simulating dialog result: chosen='{:?}', create_new={}, cancelled={}",
-            chosen_profile_name, create_new_requested, cancelled
+            chosen_profile_name,
+            create_new_requested,
+            cancelled
         );
         let event = AppEvent::ProfileSelectionDialogCompleted {
             window_id,
@@ -314,12 +321,14 @@ impl Win32ApiInternalState {
             if let Ok(mut handler_guard) = handler_arc.lock() {
                 handler_guard.handle_event(event);
             } else {
-                eprintln!(
+                log::error!(
                     "Platform: Failed to lock event handler for ProfileSelectionDialogCompleted."
                 );
             }
         } else {
-            eprintln!("Platform: Event handler not available for ProfileSelectionDialogCompleted.");
+            log::error!(
+                "Platform: Event handler not available for ProfileSelectionDialogCompleted."
+            );
         }
         Ok(())
     }
@@ -332,7 +341,7 @@ impl Win32ApiInternalState {
         default_text: Option<String>,
         context_tag: Option<String>,
     ) -> PlatformResult<()> {
-        println!("Platform: Showing Input Dialog. Title: '{}'", title);
+        log::debug!("Platform: Showing Input Dialog. Title: '{}'", title);
         let hwnd_owner = self.get_hwnd_owner(window_id)?;
         let mut dialog_data = InputDialogData {
             prompt_text: prompt,
@@ -354,9 +363,10 @@ impl Win32ApiInternalState {
         let final_text_result = if dialog_result != 0 && dialog_data.success {
             Some(dialog_data.input_text)
         } else {
-            println!(
+            log::debug!(
                 "Platform: Input dialog cancelled or failed. Result: {:?}, Success flag: {}",
-                dialog_result, dialog_data.success
+                dialog_result,
+                dialog_data.success
             );
             None
         };
@@ -385,7 +395,7 @@ impl Win32ApiInternalState {
         title: String,
         _initial_dir: Option<PathBuf>,
     ) -> PlatformResult<()> {
-        println!(
+        log::debug!(
             "Platform: Showing real Folder Picker Dialog. Title: '{}'",
             title
         );
@@ -404,16 +414,17 @@ impl Win32ApiInternalState {
                     match SHCreateItemFromParsingName::<_, _, IShellItem>(&dir_hstring, None) {
                         Ok(item) => {
                             if let Err(e_sdf) = file_dialog.SetDefaultFolder(&item) {
-                                eprintln!(
+                                log::error!(
                                     "Platform: IFileOpenDialog::SetDefaultFolder failed: {:?}",
                                     e_sdf
                                 );
                             }
                         }
                         Err(e_csipn) => {
-                            eprintln!(
+                            log::error!(
                                 "Platform: SHCreateItemFromParsingName for initial_dir {:?} failed: {:?}",
-                                dir_path, e_csipn
+                                dir_path,
+                                e_csipn
                             );
                         }
                     }
@@ -435,7 +446,7 @@ impl Win32ApiInternalState {
                 "Platform: CoCreateInstance for IFileOpenDialog failed: {:?}",
                 e
             );
-            eprintln!("{}", err_msg);
+            log::error!("{}", err_msg);
             let event = AppEvent::FolderPickerDialogCompleted {
                 window_id,
                 path: None,
@@ -473,7 +484,7 @@ impl Win32ApiInternalState {
     }
 
     fn _handle_quit_application_impl(self: &Arc<Self>) -> PlatformResult<()> {
-        println!("Platform: Received QuitApplication command. Posting WM_QUIT.");
+        log::debug!("Platform: Received QuitApplication command. Posting WM_QUIT.");
         unsafe { PostQuitMessage(0) };
         Ok(())
     }
@@ -493,19 +504,19 @@ impl Win32ApiInternalState {
     ) -> PlatformResult<()> {
         match severity {
             MessageSeverity::Error => {
-                eprintln!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
+                log::error!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
             }
             MessageSeverity::Warning => {
-                eprintln!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
+                log::error!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
             }
             MessageSeverity::Information => {
-                println!("Platform Status (WinID {:?} INFO): {}", window_id, text)
+                log::info!("Platform Status (WinID {:?} INFO): {}", window_id, text)
             }
             MessageSeverity::Debug => {
-                println!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
+                log::debug!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
             }
             MessageSeverity::None => {
-                println!("Platform Status (WinID {:?} CLEAR)", window_id)
+                log::debug!("Platform Status (WinID {:?} CLEAR)", window_id)
             }
         }
 
@@ -532,9 +543,11 @@ impl Win32ApiInternalState {
                     text_to_set_on_control = Some(text.clone()); // Text to actually set on the control
                 } else {
                     // Incoming message is lower severity, do not update UI, but it was already logged.
-                    println!(
+                    log::debug!(
                         "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY_UI_UPDATE): current severity {:?}, incoming {:?})",
-                        window_id, window_data.status_bar_current_severity, severity
+                        window_id,
+                        window_data.status_bar_current_severity,
+                        severity
                     );
                     return Ok(()); // Early exit, no UI update needed for this command
                 }
@@ -575,10 +588,10 @@ impl Win32ApiInternalState {
         } else {
             // HWND not found even after checking map and specific field.
             // This implies the status bar wasn't created or its HWND wasn't stored correctly.
-            println!(
+            log::error!(
                 "Platform Warning: Status bar HWND not found for WindowId {:?} during UI update (after lock release). Text was: '{}'",
                 window_id,
-                text // text here is the original input text to the function for logging
+                text, // text here is the original input text to the function for logging
             );
             // It might not be an error if the status bar isn't *expected* to be there yet.
             // However, if a command to update it comes, it implies it should be.
@@ -595,7 +608,7 @@ impl Win32ApiInternalState {
      * It's called by the main run loop after dequeuing commands from MyAppLogic.
      */
     fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
-        println!("Platform: Executing command: {:?}", command);
+        log::debug!("Platform: Executing command: {:?}", command);
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
                 window_common::set_window_title(self, window_id, &title)
@@ -724,7 +737,7 @@ impl Win32ApiInternalState {
             }
         }
 
-        println!(
+        log::debug!(
             "Platform: Main menu created and set for WindowId {:?}",
             window_id
         );
@@ -795,9 +808,11 @@ impl Win32ApiInternalState {
             unsafe {
                 EnableWindow(hwnd_ctrl, enabled);
             }
-            println!(
+            log::debug!(
                 "Platform: Control ID {} in window {:?} set to enabled: {}",
-                control_id, window_id, enabled
+                control_id,
+                window_id,
+                enabled
             );
             Ok(())
         } else {
@@ -849,9 +864,12 @@ impl Win32ApiInternalState {
                 )?
             };
             window_data.controls.insert(control_id, hwnd_button);
-            println!(
+            log::debug!(
                 "Platform: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
-                text, control_id, window_id, hwnd_button
+                text,
+                control_id,
+                window_id,
+                hwnd_button
             );
             Ok(())
         } else {
@@ -876,9 +894,11 @@ impl Win32ApiInternalState {
         control_id: i32,
         initial_text: String,
     ) -> PlatformResult<()> {
-        println!(
+        log::debug!(
             "Platform: Handling CreateStatusBar command for WinID {:?}, CtrlID {}, Text: '{}'",
-            window_id, control_id, initial_text
+            window_id,
+            control_id,
+            initial_text
         );
         let mut windows_map_guard = self.window_map.write().map_err(|_| {
             PlatformError::OperationFailed(
@@ -918,9 +938,12 @@ impl Win32ApiInternalState {
             window_data.status_bar_current_text = initial_text.clone();
             window_data.status_bar_current_severity = MessageSeverity::Information;
 
-            println!(
+            log::debug!(
                 "Platform: Created status bar (ID {}) for window {:?} with HWND {:?}, initial text: '{}'",
-                control_id, window_id, hwnd_status_bar, initial_text
+                control_id,
+                window_id,
+                hwnd_status_bar,
+                initial_text
             );
             Ok(())
         } else {
@@ -943,9 +966,10 @@ impl Win32ApiInternalState {
         window_id: WindowId,
         control_id: i32,
     ) -> PlatformResult<()> {
-        println!(
+        log::debug!(
             "Platform: Handling CreateTreeView command for WinID {:?}, CtrlID {}",
-            window_id, control_id
+            window_id,
+            control_id
         );
         let mut windows_map_guard = self.window_map.write().map_err(|_| {
             PlatformError::OperationFailed(
@@ -1011,9 +1035,11 @@ impl Win32ApiInternalState {
             window_data.treeview_state =
                 Some(control_treeview::TreeViewInternalState::new(hwnd_tv));
 
-            println!(
+            log::debug!(
                 "Platform: Created TreeView (ID {}) for window {:?} with HWND {:?}",
-                control_id, window_id, hwnd_tv
+                control_id,
+                window_id,
+                hwnd_tv
             );
             Ok(())
         } else {
@@ -1027,7 +1053,7 @@ impl Win32ApiInternalState {
 
 impl Drop for Win32ApiInternalState {
     fn drop(&mut self) {
-        println!("Platform: Win32ApiInternalState dropped, calling CoUninitialize.");
+        log::debug!("Platform: Win32ApiInternalState dropped, calling CoUninitialize.");
         unsafe { CoUninitialize() };
     }
 }
@@ -1040,7 +1066,9 @@ impl PlatformInterface {
     pub fn new(app_name_for_class: String) -> PlatformResult<Self> {
         let internal_state = Win32ApiInternalState::new(app_name_for_class)?;
         window_common::register_window_class(&internal_state)?;
-        println!("Platform: Window class registration attempted during PlatformInterface::new().");
+        log::debug!(
+            "Platform: Window class registration attempted during PlatformInterface::new()."
+        );
         Ok(PlatformInterface { internal_state })
     }
 
@@ -1064,7 +1092,7 @@ impl PlatformInterface {
                 )
             })?
             .insert(window_id, preliminary_native_data);
-        println!(
+        log::debug!(
             "Platform: Inserted preliminary NativeWindowData for WindowId {:?}",
             window_id
         );
@@ -1082,27 +1110,29 @@ impl PlatformInterface {
                     .write()
                     .unwrap()
                     .remove(&window_id);
-                println!(
+                log::debug!(
                     "Platform: Removed preliminary NativeWindowData for WindowId {:?} due to creation failure.",
                     window_id
                 );
                 return Err(e);
             }
         };
-        println!(
+        log::debug!(
             "Platform: Native window created with HWND {:?} for WindowId {:?}",
-            hwnd, window_id
+            hwnd,
+            window_id
         );
         match self.internal_state.window_map.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
-                    println!(
+                    log::debug!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
-                        window_id, window_data.hwnd_status_bar
+                        window_id,
+                        window_data.hwnd_status_bar
                     );
                 } else {
-                    eprintln!(
+                    log::error!(
                         "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
                         window_id
                     );
@@ -1165,7 +1195,7 @@ impl PlatformInterface {
                         match app_logic_ref.lock() {
                             Ok(mut logic_guard) => logic_guard.try_dequeue_command(),
                             Err(e) => {
-                                eprintln!(
+                                log::error!(
                                     "Platform: Failed to lock MyAppLogic to dequeue command: {:?}. Skipping command processing for this cycle.",
                                     e
                                 );
@@ -1177,7 +1207,7 @@ impl PlatformInterface {
                     // Step 2: Execute the command if one was dequeued. MyAppLogic is NOT locked here.
                     if let Some(command) = command_to_execute {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
-                            eprintln!("Platform: Error executing command from queue: {:?}", e);
+                            log::error!("Platform: Error executing command from queue: {:?}", e);
                             // Decide on error handling: continue, break, or return?
                             // For now, log and continue processing other commands/messages.
                         }
@@ -1193,11 +1223,13 @@ impl PlatformInterface {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 } else if result.0 == 0 {
-                    println!("Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop.");
+                    log::debug!(
+                        "Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop."
+                    );
                     break; // WM_QUIT
                 } else {
                     let last_error = GetLastError();
-                    eprintln!(
+                    log::error!(
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
@@ -1209,7 +1241,7 @@ impl PlatformInterface {
                             .load(Ordering::Relaxed)
                             == 0
                     {
-                        println!(
+                        log::debug!(
                             "Platform: GetMessageW error during intended quit sequence, treating as clean exit."
                         );
                         break;
@@ -1225,10 +1257,10 @@ impl PlatformInterface {
         if let Ok(mut handler_guard) = app_logic_ref.lock() {
             handler_guard.on_quit();
         } else {
-            eprintln!("Platform: Failed to lock MyAppLogic for on_quit call.");
+            log::error!("Platform: Failed to lock MyAppLogic for on_quit call.");
         }
         *self.internal_state.event_handler.lock().unwrap() = None;
-        println!("Platform: Message loop exited cleanly.");
+        log::debug!("Platform: Message loop exited cleanly.");
         Ok(())
     }
 }

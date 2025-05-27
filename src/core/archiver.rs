@@ -149,7 +149,7 @@ impl ArchiverOperations for CoreArchiver {
                 return ArchiveStatus::ArchiveFileMissing;
             }
             Err(e) => {
-                eprintln!(
+                log::error!(
                     "Error getting archive timestamp for {:?}: {}",
                     archive_path, e
                 );
@@ -200,7 +200,7 @@ impl ArchiverOperations for CoreArchiver {
         ) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error checking source file timestamps: {}", e);
+                log::error!("Error checking source file timestamps: {}", e);
                 return ArchiveStatus::ErrorChecking(Some(e.kind()));
             }
         }

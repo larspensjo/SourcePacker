@@ -109,7 +109,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         if !root_path.is_dir() {
             return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
         }
-        println!(
+        log::debug!(
             "FileSystemScanner: Scanning directory {:?}, respecting local .gitignore files.",
             root_path
         );
@@ -167,7 +167,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                             // if `ignored_dir` itself is not yielded by the walker.
                             // However, `ignore` crate usually yields directories if they contain non-ignored content.
                             // So, we re-insert it into nodes_map to be collected as a top-level node.
-                            println!(
+                            log::error!(
                                 "FileSystemScanner: Parent {:?} not found in map for child {:?}. Re-inserting child as potential top-level.",
                                 parent_path, child_path_ref
                             );
@@ -180,7 +180,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
 
         let mut top_level_nodes: Vec<FileNode> = nodes_map.into_values().collect();
         sort_file_nodes_recursively(&mut top_level_nodes);
-        println!(
+        log::debug!(
             "FileSystemScanner: Scan complete. Found {} top-level non-ignored entries for {:?}.",
             top_level_nodes.len(),
             root_path
@@ -283,9 +283,9 @@ mod tests {
         setup_test_dir_for_ignore(dir.path())?;
         let scanner = CoreFileSystemScanner::new();
 
-        println!("--- Starting test_scan_respects_gitignore_rules ---");
+        log::debug!("--- Starting test_scan_respects_gitignore_rules ---");
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
-        println!("--- Scan finished for test_scan_respects_gitignore_rules ---");
+        log::debug!("--- Scan finished for test_scan_respects_gitignore_rules ---");
 
         let top_level_names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
         // Expected: data, doc, logs, src, LICENSE.txt, root_file.toml
@@ -382,9 +382,9 @@ mod tests {
         setup_test_dir(dir.path())?; // Uses the original setup without .gitignore
         let scanner = CoreFileSystemScanner::new();
 
-        println!("--- Starting test_scan_structure_without_ignores ---");
+        log::debug!("--- Starting test_scan_structure_without_ignores ---");
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
-        println!("--- Scan finished for test_scan_structure_without_ignores ---");
+        log::debug!("--- Scan finished for test_scan_structure_without_ignores ---");
 
         // This test should behave as before since no .gitignore files are present
         assert_eq!(
@@ -439,17 +439,17 @@ mod tests {
         create_gitignore(dir.path(), "#empty .gitignore\n")?;
 
         let scanner = CoreFileSystemScanner::new();
-        println!("--- Starting test_scan_includes_empty_dirs_correctly ---");
+        log::debug!("--- Starting test_scan_includes_empty_dirs_correctly ---");
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
-        println!("--- Scan finished for test_scan_includes_empty_dirs_correctly ---");
+        log::debug!("--- Scan finished for test_scan_includes_empty_dirs_correctly ---");
 
         // Print details for debugging if assertions fail
         if nodes.len() != 2 {
-            println!("Nodes found (expected 2):");
+            log::debug!("Nodes found (expected 2):");
             for node in &nodes {
-                println!("  Top-level: {} (is_dir: {})", node.name, node.is_dir);
+                log::debug!("  Top-level: {} (is_dir: {})", node.name, node.is_dir);
                 for child in &node.children {
-                    println!("    Child: {} (is_dir: {})", child.name, child.is_dir);
+                    log::debug!("    Child: {} (is_dir: {})", child.name, child.is_dir);
                 }
             }
         }
@@ -524,9 +524,9 @@ mod tests {
     fn test_invalid_root_path() {
         let non_existent_path = Path::new("this_path_does_not_exist_hopefully");
         let scanner = CoreFileSystemScanner::new();
-        println!("--- Starting test_invalid_root_path ---");
+        log::debug!("--- Starting test_invalid_root_path ---");
         let result = test_scan_with_scanner(&scanner, non_existent_path);
-        println!("--- Scan finished for test_invalid_root_path ---");
+        log::debug!("--- Scan finished for test_invalid_root_path ---");
         assert!(matches!(result, Err(FileSystemError::InvalidPath(_))));
     }
 }

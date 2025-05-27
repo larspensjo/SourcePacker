@@ -22,7 +22,7 @@ use crate::platform_layer::{
  * These commands are processed by the platform layer to construct the native UI.
  */
 pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
-    println!("ui_description_layer: describe_main_window_layout called.");
+    log::debug!("ui_description_layer: describe_main_window_layout called.");
 
     let mut commands = Vec::new();
 

@@ -104,7 +104,7 @@ pub(crate) fn register_window_class(
         .is_ok()
         {
             // Class already registered
-            println!(
+            log::error!(
                 "Platform: Window class '{}' already registered.",
                 internal_state.app_name_for_class
             );
@@ -133,7 +133,7 @@ pub(crate) fn register_window_class(
                 error
             )))
         } else {
-            println!(
+            log::debug!(
                 "Platform: Window class '{}' registered successfully.",
                 internal_state.app_name_for_class
             );
@@ -338,10 +338,10 @@ impl Win32ApiInternalState {
                 if let Ok(mut handler_guard) = handler_arc.lock() {
                     handler_guard.handle_event(event);
                 } else {
-                    eprintln!("Platform: Failed to lock event handler in handle_window_message.");
+                    log::error!("Platform: Failed to lock event handler in handle_window_message.");
                 }
             } else {
-                eprintln!("Platform: Event handler not available in handle_window_message.");
+                log::error!("Platform: Event handler not available in handle_window_message.");
             }
         }
 
@@ -384,7 +384,7 @@ impl Win32ApiInternalState {
         };
 
         if get_item_result.0 == 0 {
-            eprintln!(
+            log::error!(
                 "Platform (get_tree_item_toggle_event): TVM_GETITEMW FAILED for h_item {:?}. Error: {:?}",
                 h_item,
                 unsafe { GetLastError() }
@@ -408,7 +408,7 @@ impl Win32ApiInternalState {
             if let Some(mapped_id) = tv_state.htreeitem_to_item_id.get(&(h_item.0)) {
                 app_item_id = *mapped_id;
             } else {
-                eprintln!(
+                log::error!(
                     "Platform (get_tree_item_toggle_event): AppItemId is 0 via lParam AND h_item {:?} not found in htreeitem_to_item_id map.",
                     h_item
                 );
@@ -436,7 +436,7 @@ impl Win32ApiInternalState {
         _lparam: LPARAM,
         window_id: WindowId,
     ) {
-        println!(
+        log::debug!(
             "Platform: WM_CREATE for HWND {:?}, WindowId {:?}",
             hwnd, window_id
         );
@@ -536,19 +536,19 @@ impl Win32ApiInternalState {
         if notification_code == 0 || notification_code == 1 {
             match control_id {
                 ID_MENU_FILE_LOAD_PROFILE => {
-                    println!("Platform: Menu 'Load Profile...' clicked.");
+                    log::debug!("Platform: Menu 'Load Profile...' clicked.");
                     return Some(AppEvent::MenuLoadProfileClicked);
                 }
                 ID_MENU_FILE_SAVE_PROFILE_AS => {
-                    println!("Platform: Menu 'Save Profile As...' clicked.");
+                    log::debug!("Platform: Menu 'Save Profile As...' clicked.");
                     return Some(AppEvent::MenuSaveProfileAsClicked);
                 }
                 ID_MENU_FILE_SET_ARCHIVE => {
-                    println!("Platform: Menu 'Set Archive Path...' clicked.");
+                    log::debug!("Platform: Menu 'Set Archive Path...' clicked.");
                     return Some(AppEvent::MenuSetArchiveClicked);
                 }
                 ID_MENU_FILE_REFRESH => {
-                    println!("Platform: Menu 'Refresh File List' clicked.");
+                    log::debug!("Platform: Menu 'Refresh File List' clicked.");
                     return Some(AppEvent::MenuRefreshClicked);
                 }
                 _ => {}
@@ -687,7 +687,7 @@ impl Win32ApiInternalState {
                                         LPARAM(0),
                                     )
                                     .unwrap_or_else(|e| {
-                                        eprintln!(
+                                        log::error!(
                                             "Platform: Failed to post checkbox-clicked msg: {:?}",
                                             e
                                         )
@@ -789,7 +789,7 @@ pub(crate) fn send_close_message(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    println!(
+    log::debug!(
         "Platform: send_close_message received for WindowId {:?}, proceeding to destroy.",
         window_id
     );
@@ -815,7 +815,7 @@ pub(crate) fn destroy_native_window(
                 if DestroyWindow(hwnd).is_err() {
                     let err = GetLastError();
                     if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
-                        eprintln!("DestroyWindow failed: {:?}", err);
+                        log::error!("DestroyWindow failed: {:?}", err);
                     }
                 }
             }

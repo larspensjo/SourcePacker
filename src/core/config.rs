@@ -114,7 +114,7 @@ impl CoreConfigManager {
             let config_path = proj_dirs.config_local_dir(); // Changed to config_local_dir
             if !config_path.exists() {
                 if let Err(e) = fs::create_dir_all(config_path) {
-                    eprintln!(
+                    log::error!(
                         "Failed to create app config directory {:?}: {}",
                         config_path, e
                     );
@@ -268,7 +268,7 @@ mod tests {
             // Cleanup the test app's config directory
             if config_local_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(config_local_dir) {
-                    eprintln!(
+                    log::error!(
                         "Test cleanup failed for {:?}: {}",
                         proj_dirs.config_local_dir(),
                         e
