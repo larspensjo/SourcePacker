@@ -785,12 +785,19 @@ fn test_profile_selection_dialog_completed_cancelled_quits_app() {
     // Expected: Info (Profile selection cancelled), QuitApplication
     assert_eq!(
         functional_cmds.len(),
-        1,
-        "Expected 1 functional QuitApplication command. Got: {:?}",
+        2, // << UPDATED FROM 1 to 2
+        "Expected 2 functional commands (Info + QuitApplication). Got: {:?}",
         functional_cmds
-    ); // Debug for event, Info for cancel, Quit
+    );
     assert!(matches!(
         functional_cmds[0],
+        PlatformCommand::UpdateStatusBarText {
+            severity: MessageSeverity::Information,
+            ..
+        }
+    ));
+    assert!(matches!(
+        functional_cmds[1],
         PlatformCommand::QuitApplication
     ));
 }
@@ -981,7 +988,7 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
 fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For initiate_profile_selection
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
         window_id: WindowId(1),
         text: None,
@@ -990,18 +997,23 @@ fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: ShowProfileSelectionDialog (directly after internal logic)
+    // Commands: Debug(Input dialog completed), Info(New profile name cancelled), Debug(Initiating profile selection), ShowProfileSelectionDialog
+    // Functional: Info(New profile name cancelled), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
-        1,
-        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
+        2, // << UPDATED FROM 1 to 2
+        "Expected 2 functional commands (Info + ShowProfileSelectionDialog). Got: {:?}",
         functional_cmds
-    ); // Adjusted from 3
+    );
     assert!(matches!(
-        functional_cmds
-            .iter()
-            .find(|c| matches!(c, PlatformCommand::ShowProfileSelectionDialog { .. }))
-            .unwrap(),
+        functional_cmds[0],
+        PlatformCommand::UpdateStatusBarText {
+            severity: MessageSeverity::Information,
+            ..
+        }
+    ));
+    assert!(matches!(
+        functional_cmds[1],
         PlatformCommand::ShowProfileSelectionDialog { .. }
     ));
     assert!(logic.test_pending_action().is_none());
@@ -1044,7 +1056,7 @@ fn test_folder_picker_dialog_completed_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     logic.test_set_pending_new_profile_name(Some("TempName".to_string()));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For initiate_profile_selection
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
         window_id: WindowId(1),
         path: None,
@@ -1052,18 +1064,23 @@ fn test_folder_picker_dialog_completed_cancelled() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: ShowProfileSelectionDialog (directly after internal logic)
+    // Commands: Debug(Folder picker completed), Info(Root folder selection cancelled), Debug(Initiating profile selection), ShowProfileSelectionDialog
+    // Functional: Info(Root folder selection cancelled), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
-        1,
-        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
+        2, // << UPDATED FROM 1 to 2
+        "Expected 2 functional commands (Info + ShowProfileSelectionDialog). Got: {:?}",
         functional_cmds
-    ); // Adjusted from 3
+    );
     assert!(matches!(
-        functional_cmds
-            .iter()
-            .find(|c| matches!(c, PlatformCommand::ShowProfileSelectionDialog { .. }))
-            .unwrap(),
+        functional_cmds[0],
+        PlatformCommand::UpdateStatusBarText {
+            severity: MessageSeverity::Information,
+            ..
+        }
+    ));
+    assert!(matches!(
+        functional_cmds[1],
         PlatformCommand::ShowProfileSelectionDialog { .. }
     ));
     assert!(logic.test_pending_action().is_none());

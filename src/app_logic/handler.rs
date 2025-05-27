@@ -27,6 +27,50 @@ pub(crate) enum PendingAction {
     SettingArchivePath,
 }
 
+// --- Status Message Macros ---
+macro_rules! status_message {
+    ($self:expr, $severity:expr, $($arg:tt)*) => {
+        if let Some(main_id) = $self.main_window_id {
+            let text = format!($($arg)*);
+
+            $self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateStatusBarText {
+                    window_id: main_id,
+                    text: text,
+                    severity: $severity,
+                });
+        } else {
+            // Fallback if no window_id (e.g., log to console/logger, or simply do nothing if UI update is impossible)
+            // As per request, not printing here. The information might be lost if no window ID.
+            // Consider logging to a more persistent logger if this is critical.
+            let _fallback_text = format!($($arg)*); // Evaluate args to catch errors, but don't use result
+            eprintln!("Status (no window, severity {:?}): {}", $severity, _fallback_text);
+        }
+    };
+}
+
+// Specific severity macros
+macro_rules! app_info { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Information, $($arg)*) }; }
+macro_rules! app_error { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Error, $($arg)*) }; }
+macro_rules! app_warn { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Warning, $($arg)*) }; }
+macro_rules! app_debug {
+    ($self:expr, $($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        {
+            if let Some(main_id) = $self.main_window_id {
+                let text = format!($($arg)*);
+
+                $self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateStatusBarText {
+                        window_id: main_id,
+                        text: text,
+                        severity: MessageSeverity::Debug,
+                    });
+            }
+        }
+    };
+}
+
 /*
  * Manages the core application state and UI logic in a platform-agnostic manner.
  * It processes UI events received from the platform layer and generates commands
@@ -146,45 +190,27 @@ impl MyAppLogic {
      */
     pub fn on_main_window_created(&mut self, window_id: WindowId) {
         self.main_window_id = Some(window_id);
-        // Using UpdateStatusBarText for logging
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text: format!(
-                    "AppLogic: Main window created (ID: {:?}). Attempting to load last profile.",
-                    window_id
-                ),
-                severity: MessageSeverity::Debug,
-            });
+        app_debug!(
+            self,
+            "Main window created (ID: {:?}). Attempting to load last profile.",
+            window_id
+        );
 
         match self
             .config_manager
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
         {
             Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!(
-                            "AppLogic: Found last used profile name: {}",
-                            last_profile_name
-                        ),
-                        severity: MessageSeverity::Debug,
-                    });
+                app_debug!(self, "Found last used profile name: {}", last_profile_name);
                 match self
                     .profile_manager
                     .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
                 {
                     Ok(profile) => {
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: format!(
-                                    "AppLogic: Successfully loaded last profile '{}' on startup.",
-                                    profile.name
-                                ),
-                                severity: MessageSeverity::Information,
-                            },
+                        app_info!(
+                            self,
+                            "Successfully loaded last profile '{}' on startup.",
+                            profile.name
                         );
                         let operation_status_message =
                             format!("Profile '{}' loaded.", profile.name);
@@ -195,40 +221,29 @@ impl MyAppLogic {
                         );
                     }
                     Err(e) => {
-                        let err_msg = format!(
+                        app_error!(
+                            self,
                             "Failed to load last profile '{}': {:?}. Initiating selection.",
-                            last_profile_name, e
-                        );
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: format!("AppLogic Error: {}", err_msg), // Prefix for clarity
-                                severity: MessageSeverity::Error,
-                            },
+                            last_profile_name,
+                            e
                         );
                         self.initiate_profile_selection_or_creation(window_id);
                     }
                 }
             }
             Ok(_) => {
-                self.synchronous_command_queue.push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text: "AppLogic: No last profile name found or it was empty. Initiating selection/creation.".to_string(),
-                    severity: MessageSeverity::Information,
-                });
+                app_info!(
+                    self,
+                    "No last profile name found or it was empty. Initiating selection/creation."
+                );
                 self.initiate_profile_selection_or_creation(window_id);
             }
             Err(e) => {
-                let err_msg = format!(
+                app_error!(
+                    self,
                     "Error loading last profile name: {:?}. Initiating selection.",
                     e
                 );
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!("AppLogic Error: {}", err_msg),
-                        severity: MessageSeverity::Error,
-                    });
                 self.initiate_profile_selection_or_creation(window_id);
             }
         }
@@ -297,8 +312,7 @@ impl MyAppLogic {
     }
 
     fn update_current_archive_status(&mut self) {
-        if let Some(main_id) = self.main_window_id {
-            // Ensure main_window_id is Some
+        if self.main_window_id.is_some() {
             if let Some(profile) = &self.current_profile_cache {
                 let status = self
                     .archiver
@@ -306,28 +320,17 @@ impl MyAppLogic {
                 self.current_archive_status = Some(status);
 
                 let status_text = format!("Archive: {:?}", status);
-                let severity = match status {
-                    ArchiveStatus::ErrorChecking(_) => MessageSeverity::Error,
-                    _ => MessageSeverity::Information,
+                match status {
+                    ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text),
+                    _ => app_info!(self, "{}", status_text),
                 };
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id: main_id,
-                        text: status_text,
-                        severity,
-                    });
             } else {
                 self.current_archive_status = None;
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id: main_id,
-                        text: "Archive: (No profile loaded)".to_string(),
-                        severity: MessageSeverity::Information,
-                    });
+                app_info!(self, "Archive: (No profile loaded)");
             }
         } else {
-            // No main window, so can't update status bar, but can clear internal state
             self.current_archive_status = None;
+            // eprintln used here as no window_id for status bar. This is an internal logic log.
             eprintln!(
                 "AppLogic: update_current_archive_status called but no main_window_id. Status cleared internally."
             );
@@ -398,7 +401,7 @@ impl MyAppLogic {
 
     fn handle_window_close_requested(&mut self, window_id: WindowId) {
         if self.main_window_id == Some(window_id) {
-            println!("AppLogic: Main window close requested. Commanding platform to close.");
+            // println!("AppLogic: Main window close requested. Commanding platform to close.");
             self.synchronous_command_queue
                 .push_back(PlatformCommand::CloseWindow { window_id });
         }
@@ -406,15 +409,11 @@ impl MyAppLogic {
 
     fn handle_window_destroyed(&mut self, window_id: WindowId) {
         if self.main_window_id == Some(window_id) {
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id, // Use the ID of the window being destroyed for this log message
-                    text: "AppLogic: Main window destroyed notification received.".to_string(),
-                    severity: MessageSeverity::Debug,
-                });
+            // The message for the status bar of a destroyed window might not be processed.
+            // Consider using eprintln or a logger for this kind of event.
+            app_debug!(self, "Main window destroyed notification received."); // This might not be seen if window is gone
             self.main_window_id = None;
-            // State related to current_profile_name, file_nodes_cache, current_profile_cache is kept for on_quit.
-            self.current_archive_status = None; // This is window-specific transient state.
+            self.current_archive_status = None;
             self.path_to_tree_item_id.clear();
             self.pending_action = None;
             self.pending_new_profile_name = None;
@@ -427,9 +426,15 @@ impl MyAppLogic {
         item_id: TreeItemId,
         new_state: CheckState,
     ) {
-        println!(
-            "AppLogic: TreeItem {:?} in window {:?} toggled to UI state {:?}.",
-            item_id, window_id, new_state
+        // println!(
+        //     "AppLogic: TreeItem {:?} in window {:?} toggled to UI state {:?}.",
+        //     item_id, window_id, new_state
+        // );
+        app_debug!(
+            self,
+            "TreeItem {:?} toggled to UI state {:?}.",
+            item_id,
+            new_state
         );
 
         let mut path_of_toggled_node: Option<PathBuf> = None;
@@ -468,8 +473,13 @@ impl MyAppLogic {
                     root_node_for_visual_update,
                     &mut visual_updates_list,
                 );
-                println!(
-                    "AppLogic: Requesting {} visual updates for TreeView after toggle.",
+                // println!(
+                //     "AppLogic: Requesting {} visual updates for TreeView after toggle.",
+                //     visual_updates_list.len()
+                // );
+                app_debug!(
+                    self,
+                    "Requesting {} visual updates for TreeView after toggle.",
                     visual_updates_list.len()
                 );
                 for (id_to_update_ui, state_for_ui) in visual_updates_list {
@@ -499,13 +509,7 @@ impl MyAppLogic {
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
         if self.main_window_id == Some(window_id) && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
         {
-            // This is now "Save to Archive"
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text: "AppLogic: 'Save to Archive' button clicked.".to_string(),
-                    severity: MessageSeverity::Information,
-                });
+            app_info!(self, "'Save to Archive' button clicked.");
 
             if let Some(profile) = &self.current_profile_cache {
                 if let Some(archive_path) = &profile.archive_path {
@@ -517,69 +521,41 @@ impl MyAppLogic {
                         Ok(content) => {
                             match self.archiver.save_archive_content(archive_path, &content) {
                                 Ok(_) => {
-                                    self.synchronous_command_queue.push_back(
-                                        PlatformCommand::UpdateStatusBarText {
-                                            window_id,
-                                            text: format!(
-                                                "Archive successfully saved to '{}'.",
-                                                archive_path.display()
-                                            ),
-                                            severity: MessageSeverity::Information,
-                                        },
+                                    app_info!(
+                                        self,
+                                        "Archive successfully saved to '{}'.",
+                                        archive_path.display()
                                     );
                                     self.update_current_archive_status();
                                 }
                                 Err(e) => {
-                                    let err_msg = format!(
+                                    app_error!(
+                                        self,
                                         "Failed to save archive content to '{}': {}",
                                         archive_path.display(),
                                         e
-                                    );
-                                    self.synchronous_command_queue.push_back(
-                                        PlatformCommand::UpdateStatusBarText {
-                                            window_id,
-                                            text: err_msg,
-                                            severity: MessageSeverity::Error,
-                                        },
                                     );
                                 }
                             }
                         }
                         Err(e) => {
-                            let err_msg = format!("Failed to create archive content: {}", e);
-                            self.synchronous_command_queue.push_back(
-                                PlatformCommand::UpdateStatusBarText {
-                                    window_id,
-                                    text: err_msg,
-                                    severity: MessageSeverity::Error,
-                                },
-                            );
+                            app_error!(self, "Failed to create archive content: {}", e);
                         }
                     }
                 } else {
-                    // This case should ideally not be reachable if button is disabled
-                    self.synchronous_command_queue
-                        .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text:
-                            "Error: No archive path set for current profile. Cannot save archive."
-                                .to_string(),
-                        severity: MessageSeverity::Error,
-                    });
+                    app_error!(
+                        self,
+                        "No archive path set for current profile. Cannot save archive."
+                    );
                 }
             } else {
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: "Error: No profile loaded. Cannot save archive.".to_string(),
-                        severity: MessageSeverity::Error,
-                    });
+                app_error!(self, "No profile loaded. Cannot save archive.");
             }
         }
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {
-        println!("AppLogic: MenuLoadProfileClicked received.");
+        app_debug!(self, "MenuLoadProfileClicked received.");
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -597,21 +573,18 @@ impl MyAppLogic {
     fn handle_file_open_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
         if self.main_window_id == Some(window_id) {
             if let Some(profile_file_path) = result {
-                println!(
-                    "AppLogic: Profile selected for load: {:?}",
-                    profile_file_path
-                );
+                app_debug!(self, "Profile selected for load: {:?}", profile_file_path);
                 match self
                     .profile_manager
                     .load_profile_from_path(&profile_file_path)
                 {
                     Ok(loaded_profile) => {
                         let profile_name_clone = loaded_profile.name.clone();
-                        println!(
-                            "AppLogic: Successfully loaded profile '{}' via manager from path.",
+                        app_debug!(
+                            self,
+                            "Successfully loaded profile '{}' via manager from path.",
                             loaded_profile.name
                         );
-                        // Set current profile name before saving it as last used
                         self.current_profile_name = Some(loaded_profile.name.clone());
                         self.root_path_for_scan = loaded_profile.root_folder.clone();
                         if let Err(e) = self
@@ -619,55 +592,41 @@ impl MyAppLogic {
                             .save_last_profile_name(APP_NAME_FOR_PROFILES, &loaded_profile.name)
                         {
                             // Log error, but don't prevent profile activation
-                            eprintln!(
-                                "AppLogic: Failed to save last profile name '{}': {:?}",
-                                loaded_profile.name, e
+                            app_warn!(
+                                self,
+                                "Failed to save last profile name '{}': {:?}",
+                                loaded_profile.name,
+                                e
                             );
-                            // Optionally, inform user via status bar if this is critical enough
-                            // self.synchronous_command_queue.push_back(PlatformCommand::UpdateStatusBarText {
-                            //     window_id,
-                            //     text: format!("Warning: Could not save '{}' as last used profile.", loaded_profile.name),
-                            //     severity: MessageSeverity::Warning,
-                            // });
                         }
                         let status_msg =
                             format!("Profile '{}' loaded and scanned.", profile_name_clone);
                         self._activate_profile_and_show_window(
                             window_id,
-                            loaded_profile, // Pass the loaded profile
+                            loaded_profile,
                             status_msg,
                         );
                     }
                     Err(e) => {
-                        let err_msg = format!(
+                        app_error!(
+                            self,
                             "Failed to load profile from {:?} via manager: {:?}",
-                            profile_file_path, e
+                            profile_file_path,
+                            e
                         );
-                        self.current_profile_name = None; // Clear current profile on load failure
+                        self.current_profile_name = None;
                         self.current_profile_cache = None;
                         self.current_archive_status = None;
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: err_msg,
-                                severity: MessageSeverity::Error,
-                            },
-                        );
                     }
                 }
             } else {
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: "Load profile cancelled.".to_string(),
-                        severity: MessageSeverity::Information,
-                    });
+                app_info!(self, "Load profile cancelled.");
             }
         }
     }
 
     fn handle_menu_save_profile_as_clicked(&mut self) {
-        println!("AppLogic: MenuSaveProfileAsClicked received.");
+        app_debug!(self, "MenuSaveProfileAsClicked received.");
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -692,19 +651,12 @@ impl MyAppLogic {
     }
 
     fn handle_file_save_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        let action = self.pending_action.take(); // Take the pending action first
+        let action = self.pending_action.take();
 
         match action {
             Some(PendingAction::SettingArchivePath) => {
-                // Handle new pending action
                 if let Some(path) = result {
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: format!("AppLogic: Archive path selected: {:?}", path),
-                            severity: MessageSeverity::Debug,
-                        },
-                    );
+                    app_debug!(self, "Archive path selected: {:?}", path);
                     if let Some(profile) = &mut self.current_profile_cache {
                         profile.archive_path = Some(path.clone());
                         match self
@@ -712,95 +664,45 @@ impl MyAppLogic {
                             .save_profile(profile, APP_NAME_FOR_PROFILES)
                         {
                             Ok(_) => {
-                                self.synchronous_command_queue.push_back(
-                                    PlatformCommand::UpdateStatusBarText {
-                                        window_id,
-                                        text: format!(
-                                            "Archive path set to '{}' for profile '{}' and saved.",
-                                            path.display(),
-                                            profile.name
-                                        ),
-                                        severity: MessageSeverity::Information,
-                                    },
+                                app_info!(
+                                    self,
+                                    "Archive path set to '{}' for profile '{}' and saved.",
+                                    path.display(),
+                                    profile.name
                                 );
                                 self._update_window_title_with_profile_and_archive(window_id);
                                 self.update_current_archive_status();
                                 self._update_save_to_archive_button_state(window_id);
                             }
                             Err(e) => {
-                                let err_msg = format!(
+                                app_error!(
+                                    self,
                                     "Failed to save profile '{}' after setting archive path: {}",
-                                    profile.name, e
+                                    profile.name,
+                                    e
                                 );
-                                self.synchronous_command_queue.push_back(
-                                    PlatformCommand::UpdateStatusBarText {
-                                        window_id,
-                                        text: err_msg,
-                                        severity: MessageSeverity::Error,
-                                    },
-                                );
-                                // Revert archive_path in cache if save fails? Or leave it and let user retry save?
-                                // For now, leave it as set in cache.
                             }
                         }
                     } else {
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: "Error: No profile active to set archive path for."
-                                    .to_string(),
-                                severity: MessageSeverity::Error,
-                            },
-                        );
+                        app_error!(self, "No profile active to set archive path for.");
                     }
                 } else {
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: "Set archive path cancelled.".to_string(),
-                            severity: MessageSeverity::Information,
-                        },
-                    );
-                    // If cancelled, ensure button state is re-evaluated (it might have been disabled)
+                    app_info!(self, "Set archive path cancelled.");
                     self._update_save_to_archive_button_state(window_id);
                 }
             }
             Some(PendingAction::SavingArchive) => {
-                // This case is now effectively obsolete due to direct save.
-                // If it's somehow reached, it's an old path.
-                // For robustness, clear any pending content and log a warning.
-                // self.pending_archive_content = None; // Already removed
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text:
-                        "Warning: Obsolete 'SavingArchive' action handled. This should not happen."
-                            .to_string(),
-                    severity: MessageSeverity::Warning,
-                });
+                app_warn!(
+                    self,
+                    "Obsolete 'SavingArchive' action handled. This should not happen."
+                );
                 if result.is_none() {
-                    // If dialog was cancelled from this old path
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: "Save archive (obsolete path) cancelled.".to_string(),
-                            severity: MessageSeverity::Information,
-                        },
-                    );
+                    app_info!(self, "Save archive (obsolete path) cancelled.");
                 }
             }
             Some(PendingAction::SavingProfile) => {
                 if let Some(profile_save_path) = result {
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: format!(
-                                "AppLogic: Profile save path selected: {:?}",
-                                profile_save_path
-                            ),
-                            severity: MessageSeverity::Debug,
-                        },
-                    );
+                    app_debug!(self, "Profile save path selected: {:?}", profile_save_path);
                     if let Some(profile_name_osstr) = profile_save_path.file_stem() {
                         if let Some(profile_name_str) =
                             profile_name_osstr.to_str().map(|s| s.to_string())
@@ -810,37 +712,25 @@ impl MyAppLogic {
                                     .chars()
                                     .all(core::profiles::is_valid_profile_name_char)
                             {
-                                let err_msg = format!(
+                                app_error!(
+                                    self,
                                     "Invalid profile name extracted from path: '{}'. Profile not saved.",
                                     profile_name_str
-                                );
-                                self.synchronous_command_queue.push_back(
-                                    PlatformCommand::UpdateStatusBarText {
-                                        window_id,
-                                        text: err_msg,
-                                        severity: MessageSeverity::Error,
-                                    },
                                 );
                             } else {
                                 let mut new_profile = self
                                     .create_profile_from_current_state(profile_name_str.clone());
-                                // When saving "as", the new profile might or might not inherit the archive path.
-                                // Let's assume it does NOT, to force user to "Set Archive Path" for the new profile.
-                                // Or, for consistency, maybe it should inherit? Current create_profile_from_current_state DOES inherit.
-                                // If we want it to not inherit, we'd do: new_profile.archive_path = None;
-                                // For now, let's stick to current inheritance.
-
                                 let profile_name_clone = new_profile.name.clone();
                                 match self
                                     .profile_manager
                                     .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
                                 {
                                     Ok(()) => {
-                                        self.synchronous_command_queue.push_back(PlatformCommand::UpdateStatusBarText {
-                                            window_id,
-                                            text: format!("AppLogic: Successfully saved profile as '{}' via manager.", new_profile.name),
-                                            severity: MessageSeverity::Information,
-                                        });
+                                        app_debug!(
+                                            self,
+                                            "Successfully saved profile as '{}' via manager.",
+                                            new_profile.name
+                                        );
                                         self.current_profile_name = Some(new_profile.name.clone());
                                         self.current_profile_cache = Some(new_profile.clone());
                                         self.root_path_for_scan = self
@@ -852,105 +742,62 @@ impl MyAppLogic {
 
                                         self._update_window_title_with_profile_and_archive(
                                             window_id,
-                                        ); // Update title
+                                        );
 
                                         if let Err(e) = self.config_manager.save_last_profile_name(
                                             APP_NAME_FOR_PROFILES,
                                             &new_profile.name,
                                         ) {
-                                            self.synchronous_command_queue.push_back(PlatformCommand::UpdateStatusBarText {
-                                                window_id,
-                                                text: format!("AppLogic Warning: Failed to save last profile name '{}': {:?}", new_profile.name, e),
-                                                severity: MessageSeverity::Warning,
-                                            });
+                                            app_warn!(
+                                                self,
+                                                "Failed to save last profile name '{}': {:?}",
+                                                new_profile.name,
+                                                e
+                                            );
                                         }
                                         self.update_current_archive_status();
-                                        self._update_save_to_archive_button_state(window_id); // Update button state
-                                        // Status bar message for profile saved (distinct from archive status)
-                                        self.synchronous_command_queue.push_back(
-                                            PlatformCommand::UpdateStatusBarText {
-                                                window_id,
-                                                text: format!(
-                                                    "Profile '{}' saved.",
-                                                    profile_name_clone
-                                                ),
-                                                severity: MessageSeverity::Information,
-                                            },
-                                        );
+                                        self._update_save_to_archive_button_state(window_id);
+                                        app_info!(self, "Profile '{}' saved.", profile_name_clone);
                                     }
                                     Err(e) => {
-                                        let err_msg = format!(
+                                        app_error!(
+                                            self,
                                             "Failed to save profile (via manager) as '{}': {}",
-                                            new_profile.name, e
-                                        );
-                                        self.synchronous_command_queue.push_back(
-                                            PlatformCommand::UpdateStatusBarText {
-                                                window_id,
-                                                text: err_msg,
-                                                severity: MessageSeverity::Error,
-                                            },
+                                            new_profile.name,
+                                            e
                                         );
                                     }
                                 }
                             }
                         } else {
-                            let err_msg =
+                            app_error!(
+                                self,
                                 "Profile save filename stem not valid UTF-8. Profile not saved."
-                                    .to_string();
-                            self.synchronous_command_queue.push_back(
-                                PlatformCommand::UpdateStatusBarText {
-                                    window_id,
-                                    text: err_msg,
-                                    severity: MessageSeverity::Error,
-                                },
                             );
                         }
                     } else {
-                        let err_msg =
+                        app_error!(
+                            self,
                             "Could not extract profile name from save path. Profile not saved."
-                                .to_string();
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: err_msg,
-                                severity: MessageSeverity::Error,
-                            },
                         );
                     }
                 } else {
-                    // User cancelled Save Profile As
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: "Save profile cancelled.".to_string(),
-                            severity: MessageSeverity::Information,
-                        },
-                    );
+                    app_info!(self, "Save profile cancelled.");
                 }
             }
-            // ... (other PendingAction cases)
             Some(PendingAction::CreatingNewProfileGetName)
             | Some(PendingAction::CreatingNewProfileGetRoot) => {
-                let err_msg = format!(
+                app_error!(
+                    self,
                     "Unexpected FileSaveDialogCompleted with pending action: {:?}",
                     action
                 );
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Error,
-                    });
             }
             None => {
-                let err_msg =
-                    "FileSaveDialogCompleted received but no pending action was set.".to_string();
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Warning,
-                    });
+                app_warn!(
+                    self,
+                    "FileSaveDialogCompleted received but no pending action was set."
+                );
             }
         }
     }
@@ -960,8 +807,7 @@ impl MyAppLogic {
     }
 
     fn handle_menu_refresh_clicked(&mut self) {
-        // New method for P2.9
-        println!("AppLogic: MenuRefreshClicked received.");
+        app_debug!(self, "MenuRefreshClicked received.");
         let window_id = match self.main_window_id {
             Some(id) => id,
             None => {
@@ -973,89 +819,71 @@ impl MyAppLogic {
         let current_profile_clone = match self.current_profile_cache.clone() {
             Some(profile) => profile,
             None => {
-                println!("AppLogic: Refresh requested but no profile is active. Ignoring.");
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: "Refresh: No profile active.".to_string(),
-                        severity: MessageSeverity::Warning,
-                    });
+                app_warn!(self, "Refresh: No profile active.");
                 return;
             }
         };
 
         let root_path_to_scan = current_profile_clone.root_folder.clone();
-        println!(
-            "AppLogic: Refreshing file list for profile '{}', root: {:?}",
-            current_profile_clone.name, root_path_to_scan
+        app_debug!(
+            self,
+            "Refreshing file list for profile '{}', root: {:?}",
+            current_profile_clone.name,
+            root_path_to_scan
         );
 
         match self.file_system_scanner.scan_directory(&root_path_to_scan) {
             Ok(new_nodes) => {
                 self.file_nodes_cache = new_nodes;
-                println!(
-                    "AppLogic: Scan successful, {} top-level nodes found.",
+                app_debug!(
+                    self,
+                    "Scan successful, {} top-level nodes found.",
                     self.file_nodes_cache.len()
                 );
 
                 self.state_manager
                     .apply_profile_to_tree(&mut self.file_nodes_cache, &current_profile_clone);
-                println!(
-                    "AppLogic: Applied profile '{}' to refreshed tree.",
+                app_debug!(
+                    self,
+                    "Applied profile '{}' to refreshed tree.",
                     current_profile_clone.name
                 );
 
                 self.refresh_tree_view_from_cache(window_id);
                 self.update_current_archive_status();
-
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!(
-                            "File list refreshed for profile '{}'.",
-                            current_profile_clone.name
-                        ),
-                        severity: MessageSeverity::Information,
-                    });
+                app_info!(
+                    self,
+                    "File list refreshed for profile '{}'.",
+                    current_profile_clone.name
+                );
             }
             Err(e) => {
-                let err_msg = format!("Failed to refresh file list: {}", e);
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Error,
-                    });
+                app_error!(self, "Failed to refresh file list: {}", e);
             }
         }
     }
 
-    /// Internal helper to finalize UI setup after a profile is active.
     fn _activate_profile_and_show_window(
         &mut self,
         window_id: WindowId,
         profile_to_activate: Profile,
-        operation_status_message: String,
+        operation_status_message: String, // This is the initial success/creation message
     ) {
-        let mut status_message = operation_status_message;
-        let mut status_severity = MessageSeverity::Information;
-
         self.current_profile_name = Some(profile_to_activate.name.clone());
         self.root_path_for_scan = profile_to_activate.root_folder.clone();
         self.current_profile_cache = Some(profile_to_activate.clone());
 
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text: format!(
-                    "AppLogic: Activating profile '{}'. Scanning directory: {:?}",
-                    self.current_profile_name.as_ref().unwrap(),
-                    self.root_path_for_scan
-                ),
-                severity: MessageSeverity::Debug,
-            });
+        app_debug!(
+            self,
+            "Activating profile '{}'. Scanning directory: {:?}",
+            self.current_profile_name.as_ref().unwrap(),
+            self.root_path_for_scan
+        );
 
-        self._update_window_title_with_profile_and_archive(window_id); // Set initial title
+        self._update_window_title_with_profile_and_archive(window_id);
+
+        let mut final_status_message = operation_status_message; // Start with the passed-in message
+        let mut final_status_severity = MessageSeverity::Information;
 
         match self
             .file_system_scanner
@@ -1063,70 +891,49 @@ impl MyAppLogic {
         {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!(
-                            "AppLogic: Scanned {} top-level nodes for active profile.",
-                            self.file_nodes_cache.len()
-                        ),
-                        severity: MessageSeverity::Debug,
-                    });
-
+                app_debug!(
+                    self,
+                    "Scanned {} top-level nodes for active profile.",
+                    self.file_nodes_cache.len()
+                );
                 self.state_manager
                     .apply_profile_to_tree(&mut self.file_nodes_cache, &profile_to_activate);
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!(
-                            "AppLogic: Applied active profile '{}' to the scanned tree.",
-                            profile_to_activate.name
-                        ),
-                        severity: MessageSeverity::Debug,
-                    });
+                app_debug!(
+                    self,
+                    "Applied active profile '{}' to the scanned tree.",
+                    profile_to_activate.name
+                );
             }
             Err(e) => {
-                let err_msg = format!(
+                let err_msg_scan = format!(
                     "Failed to scan directory {:?} for profile '{}': {}",
                     self.root_path_for_scan, profile_to_activate.name, e
                 );
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: format!("AppLogic Error: {}", err_msg),
-                        severity: MessageSeverity::Error,
-                    });
+                // This error is more critical than the initial "profile loaded" message.
+                final_status_message = err_msg_scan;
+                final_status_severity = MessageSeverity::Error;
                 self.file_nodes_cache.clear();
-                status_message = err_msg; // Overwrite initial success message with scan error
-                status_severity = MessageSeverity::Error;
             }
         }
 
         self.refresh_tree_view_from_cache(window_id);
 
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text: status_message,
-                severity: status_severity,
-            });
+        // Send the determined final status message
+        match final_status_severity {
+            MessageSeverity::Error => app_error!(self, "{}", final_status_message),
+            MessageSeverity::Warning => app_warn!(self, "{}", final_status_message),
+            _ => app_info!(self, "{}", final_status_message),
+        }
 
         self.update_current_archive_status();
-        self._update_save_to_archive_button_state(window_id); // Update button state
+        self._update_save_to_archive_button_state(window_id);
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
 
-    /*
-     * Initiates the UI flow for the user to select an existing profile or create a new one.
-     * This is typically called at startup if no last-used profile can be loaded, or if
-     * the user intends to switch profiles or is forced to after deleting an active profile.
-     * It lists available profiles and commands the platform layer to display a
-     * specialized dialog for this purpose. Commands are enqueued.
-     */
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {
-        println!("AppLogic: Initiating profile selection or creation flow.");
+        app_debug!(self, "Initiating profile selection or creation flow.");
 
         match self.profile_manager.list_profiles(APP_NAME_FOR_PROFILES) {
             Ok(available_profiles) => {
@@ -1144,13 +951,12 @@ impl MyAppLogic {
                         false,
                     )
                 };
-
-                println!(
-                    "AppLogic: Found {} available profiles. Dialog prompt: '{}'",
+                app_debug!(
+                    self,
+                    "Found {} available profiles. Dialog prompt: '{}'",
                     available_profiles.len(),
                     prompt
                 );
-
                 self.synchronous_command_queue.push_back(
                     PlatformCommand::ShowProfileSelectionDialog {
                         window_id,
@@ -1162,16 +968,11 @@ impl MyAppLogic {
                 );
             }
             Err(e) => {
-                let err_msg = format!(
+                app_error!(
+                    self,
                     "Failed to list profiles: {:?}. Cannot proceed with profile selection.",
                     e
                 );
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Error,
-                    });
             }
         }
     }
@@ -1183,24 +984,31 @@ impl MyAppLogic {
         create_new_requested: bool,
         user_cancelled: bool,
     ) {
-        println!(
-            "AppLogic: ProfileSelectionDialogCompleted event received: window_id: {:?}, chosen: {:?}, create_new: {}, cancelled: {}",
-            window_id, chosen_profile_name, create_new_requested, user_cancelled
+        app_debug!(
+            self,
+            "ProfileSelectionDialogCompleted event received: chosen: {:?}, create_new: {}, cancelled: {}",
+            chosen_profile_name,
+            create_new_requested,
+            user_cancelled
         );
 
         if user_cancelled {
-            println!("AppLogic: Profile selection was cancelled by user. Quitting application.");
+            app_info!(
+                self,
+                "Profile selection was cancelled by user. Quitting application."
+            ); // This message might not be seen if app quits immediately
             self.synchronous_command_queue
                 .push_back(PlatformCommand::QuitApplication);
             return;
         }
 
         if create_new_requested {
-            println!("AppLogic: User requested to create a new profile.");
+            app_debug!(self, "User requested to create a new profile.");
             self.start_new_profile_creation_flow(window_id);
         } else if let Some(profile_name) = chosen_profile_name {
-            println!(
-                "AppLogic: User chose profile '{}'. Attempting to load.",
+            app_debug!(
+                self,
+                "User chose profile '{}'. Attempting to load.",
                 profile_name
             );
             match self
@@ -1208,8 +1016,9 @@ impl MyAppLogic {
                 .load_profile(&profile_name, APP_NAME_FOR_PROFILES)
             {
                 Ok(profile) => {
-                    println!(
-                        "AppLogic: Successfully loaded chosen profile '{}'.",
+                    app_debug!(
+                        self,
+                        "Successfully loaded chosen profile '{}'.",
                         profile.name
                     );
                     let operation_status_message = format!("Profile '{}' loaded.", profile.name);
@@ -1217,9 +1026,11 @@ impl MyAppLogic {
                         .config_manager
                         .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
                     {
-                        eprintln!(
-                            "AppLogic: Failed to save last profile name '{}': {:?}",
-                            profile.name, e
+                        app_warn!(
+                            self,
+                            "Failed to save last profile name '{}': {:?}",
+                            profile.name,
+                            e
                         );
                     }
                     self._activate_profile_and_show_window(
@@ -1229,35 +1040,29 @@ impl MyAppLogic {
                     );
                 }
                 Err(e) => {
-                    let err_msg = format!(
+                    app_error!(
+                        self,
                         "Could not load profile '{}': {:?}. Please try again or create a new one.",
-                        profile_name, e
-                    );
-                    self.synchronous_command_queue.push_back(
-                        PlatformCommand::UpdateStatusBarText {
-                            window_id,
-                            text: err_msg,
-                            severity: MessageSeverity::Error,
-                        },
+                        profile_name,
+                        e
                     );
                     self.initiate_profile_selection_or_creation(window_id);
                 }
             }
         } else {
-            let err_msg = "AppLogic: ProfileSelectionDialogCompleted in unexpected state (no choice, not create, not cancelled). Re-initiating.".to_string();
-            eprintln!("{}", err_msg);
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text: err_msg,
-                    severity: MessageSeverity::Warning, // Internal logic issue, but recoverable
-                });
+            app_warn!(
+                self,
+                "ProfileSelectionDialogCompleted in unexpected state (no choice, not create, not cancelled). Re-initiating."
+            );
             self.initiate_profile_selection_or_creation(window_id);
         }
     }
 
     fn start_new_profile_creation_flow(&mut self, window_id: WindowId) {
-        println!("AppLogic: Starting new profile creation flow (Step 1: Get Name).");
+        app_debug!(
+            self,
+            "Starting new profile creation flow (Step 1: Get Name)."
+        );
         self.pending_action = Some(PendingAction::CreatingNewProfileGetName);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowInputDialog {
@@ -1275,29 +1080,25 @@ impl MyAppLogic {
         text: Option<String>,
         context_tag: Option<String>,
     ) {
-        println!(
-            "AppLogic: InputDialogCompleted event received: window_id: {:?}, text: {:?}, context_tag: {:?}",
-            window_id, text, context_tag
+        app_debug!(
+            self,
+            "InputDialogCompleted: text: {:?}, context_tag: {:?}",
+            text,
+            context_tag
         );
 
         match context_tag.as_deref() {
             Some("NewProfileName") => {
-                // self.pending_action should be CreatingNewProfileGetName here. We clear it after success or cancellation.
                 if let Some(profile_name) = text {
                     if profile_name.trim().is_empty()
                         || !profile_name
                             .chars()
                             .all(core::profiles::is_valid_profile_name_char)
                     {
-                        let err_msg = "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens.".to_string();
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: err_msg.clone(),
-                                severity: MessageSeverity::Warning, // User input error, recoverable
-                            },
+                        app_warn!(
+                            self,
+                            "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens."
                         );
-                        // Re-issue ShowInputDialog for name, keeping pending_action
                         self.synchronous_command_queue.push_back(
                             PlatformCommand::ShowInputDialog {
                                 window_id,
@@ -1309,45 +1110,39 @@ impl MyAppLogic {
                                 context_tag: Some("NewProfileName".to_string()),
                             },
                         );
-                        return; // Keep pending_action as CreatingNewProfileGetName
+                        return;
                     }
-
-                    println!(
-                        "AppLogic: New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
+                    app_debug!(
+                        self,
+                        "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
                         profile_name
                     );
                     self.pending_new_profile_name = Some(profile_name);
-                    self.pending_action = Some(PendingAction::CreatingNewProfileGetRoot); // Transition action
+                    self.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
                     self.synchronous_command_queue.push_back(
                         PlatformCommand::ShowFolderPickerDialog {
                             window_id,
                             title: "New Profile (2/2): Select Root Folder".to_string(),
-                            initial_dir: None, // TODO: Consider a default, e.g., user's home or project dir
+                            initial_dir: None,
                         },
                     );
                 } else {
-                    // User cancelled the input dialog
-                    println!(
-                        "AppLogic: New profile name input cancelled by user. Returning to profile selection."
+                    app_info!(
+                        self,
+                        "New profile name input cancelled. Returning to profile selection."
                     );
-                    self.pending_action = None; // Clear action
+                    self.pending_action = None;
                     self.pending_new_profile_name = None;
                     self.initiate_profile_selection_or_creation(window_id);
                 }
             }
             _ => {
-                let err_msg = format!(
-                    "AppLogic: InputDialogCompleted with unhandled context: {:?}",
+                app_warn!(
+                    self,
+                    "InputDialogCompleted with unhandled context: {:?}",
                     context_tag
                 );
-                eprintln!("{}", err_msg);
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Warning, // Unexpected context, but recoverable
-                    });
-                self.pending_action = None; // Clear any potentially mismatched pending action
+                self.pending_action = None;
             }
         }
     }
@@ -1357,19 +1152,16 @@ impl MyAppLogic {
         window_id: WindowId,
         path: Option<PathBuf>,
     ) {
-        println!(
-            "AppLogic: FolderPickerDialogCompleted event received: window_id: {:?}, path: {:?}",
-            window_id, path
-        );
-        // self.pending_action should be CreatingNewProfileGetRoot. Clear it.
+        app_debug!(self, "FolderPickerDialogCompleted: path: {:?}", path);
         self.pending_action = None;
 
         if let Some(root_folder_path) = path {
             if let Some(profile_name) = self.pending_new_profile_name.take() {
-                // Take consumes the name
-                println!(
-                    "AppLogic: Creating new profile '{}' with root folder {:?}.",
-                    profile_name, root_folder_path
+                app_debug!(
+                    self,
+                    "Creating new profile '{}' with root folder {:?}.",
+                    profile_name,
+                    root_folder_path
                 );
                 let new_profile = Profile::new(profile_name.clone(), root_folder_path.clone());
 
@@ -1378,8 +1170,9 @@ impl MyAppLogic {
                     .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
                 {
                     Ok(_) => {
-                        println!(
-                            "AppLogic: Successfully saved new profile '{}'.",
+                        app_debug!(
+                            self,
+                            "Successfully saved new profile '{}'.",
                             new_profile.name
                         );
                         let operation_status_message =
@@ -1389,9 +1182,11 @@ impl MyAppLogic {
                             .config_manager
                             .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile.name)
                         {
-                            eprintln!(
-                                "AppLogic: Failed to save last profile name '{}': {:?}",
-                                new_profile.name, e
+                            app_warn!(
+                                self,
+                                "Failed to save last profile name '{}': {:?}",
+                                new_profile.name,
+                                e
                             );
                         }
                         self._activate_profile_and_show_window(
@@ -1401,40 +1196,32 @@ impl MyAppLogic {
                         );
                     }
                     Err(e) => {
-                        let err_msg = format!(
+                        app_error!(
+                            self,
                             "Failed to save new profile '{}': {:?}. Please try again.",
-                            profile_name, e
-                        );
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateStatusBarText {
-                                window_id,
-                                text: err_msg,
-                                severity: MessageSeverity::Error,
-                            },
+                            profile_name,
+                            e
                         );
                         self.initiate_profile_selection_or_creation(window_id);
                     }
                 }
             } else {
-                let err_msg = "AppLogic: FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection.".to_string();
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id,
-                        text: err_msg,
-                        severity: MessageSeverity::Warning, // Internal state issue
-                    });
+                app_warn!(
+                    self,
+                    "FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection."
+                );
                 self.initiate_profile_selection_or_creation(window_id);
             }
         } else {
-            println!(
-                "AppLogic: Root folder selection cancelled by user. Returning to profile selection."
+            app_info!(
+                self,
+                "Root folder selection cancelled. Returning to profile selection."
             );
-            self.pending_new_profile_name = None; // Clear any pending name
+            self.pending_new_profile_name = None;
             self.initiate_profile_selection_or_creation(window_id);
         }
     }
 
-    /// Helper to format and set the main window title based on current profile and archive path.
     fn _update_window_title_with_profile_and_archive(&mut self, window_id: WindowId) {
         let mut title = "SourcePacker".to_string();
         if let Some(profile) = &self.current_profile_cache {
@@ -1449,7 +1236,6 @@ impl MyAppLogic {
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
 
-    /// Helper to enable/disable the "Save to Archive" button.
     fn _update_save_to_archive_button_state(&mut self, window_id: WindowId) {
         let enabled = self
             .current_profile_cache
@@ -1460,28 +1246,20 @@ impl MyAppLogic {
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetControlEnabled {
                 window_id,
-                control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC, // This is the "Save to Archive" button
+                control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
                 enabled,
             });
         if !enabled {
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id,
-                    text: "Button 'Save to Archive' disabled: No archive path set in profile."
-                        .to_string(),
-                    severity: MessageSeverity::Information,
-                });
+            app_info!(
+                self,
+                "Button 'Save to Archive' disabled: No archive path set in profile."
+            );
         }
     }
 
     fn handle_menu_set_archive_clicked(&mut self) {
         if let Some(main_id) = self.main_window_id {
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id: main_id,
-                    text: "AppLogic: MenuSetArchiveClicked received.".to_string(),
-                    severity: MessageSeverity::Debug,
-                });
+            app_debug!(self, "MenuSetArchiveClicked received.");
             if self.current_profile_cache.is_some() {
                 self.pending_action = Some(PendingAction::SettingArchivePath);
 
@@ -1521,12 +1299,7 @@ impl MyAppLogic {
                         initial_dir: initial_dir_for_dialog,
                     });
             } else {
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id: main_id,
-                        text: "Cannot set archive path: No profile is active.".to_string(),
-                        severity: MessageSeverity::Warning,
-                    });
+                app_warn!(self, "Cannot set archive path: No profile is active.");
             }
         }
     }
@@ -1538,10 +1311,6 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     fn handle_event(&mut self, event: AppEvent) {
-        // It's good practice to clear transient pending states if an unrelated event comes in,
-        // or ensure dialog completion events correctly clear their specific pending states.
-        // For now, specific handlers manage their pending states.
-
         match event {
             AppEvent::WindowCloseRequestedByUser { window_id } => {
                 self.handle_window_close_requested(window_id);
@@ -1613,18 +1382,9 @@ impl PlatformEventHandler for MyAppLogic {
         }
     }
 
-    /*
-     * Called by the platform layer when the application is about to exit its main loop.
-     * This method handles saving the current state of the active profile (if any) to disk,
-     * ensuring that selections and other profile-specific data are persisted.
-     * It also saves the name of this last active profile to the application's configuration,
-     * so it can be reloaded on the next startup.
-     */
     fn on_quit(&mut self) {
-        // Using eprintln directly here as status bar might not be available or processed.
         eprintln!("AppLogic: on_quit called by platform. Application is exiting.");
 
-        // Save the content of the currently active profile, if any
         if let Some(active_profile_name) = self.current_profile_name.clone() {
             if !active_profile_name.is_empty() {
                 let profile_to_save =
