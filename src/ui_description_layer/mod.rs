@@ -1,26 +1,22 @@
 /*
- * This module is responsible for defining the UI structure of the application.
- *
- * It generates a series of `PlatformCommand`s that describe the layout and
- * elements of UI components, such as windows, menus, and controls. This
- * decouples the UI definition from the platform-specific implementation details,
- * allowing for easier testing and potential future UI toolkit changes.
+ * This module is responsible for defining the static structure of the UI.
+ * It generates a series of `PlatformCommand`s that describe the layout
+ * and initial properties of UI elements like menus, buttons, and status bars.
+ * This decouples the UI definition from the platform-specific implementation.
  */
+
 use crate::platform_layer::{
-    PlatformCommand, WindowId,
-    types::MenuItemConfig,
+    types::{MenuItemConfig, PlatformCommand, WindowId},
     window_common::{
-        ID_MENU_FILE_LOAD_PROFILE, ID_MENU_FILE_REFRESH, ID_MENU_FILE_SAVE_PROFILE_AS,
-        ID_MENU_FILE_SET_ARCHIVE,
+        ID_BUTTON_GENERATE_ARCHIVE, ID_MENU_FILE_LOAD_PROFILE, ID_MENU_FILE_REFRESH,
+        ID_MENU_FILE_SAVE_PROFILE_AS, ID_MENU_FILE_SET_ARCHIVE,
     },
 };
 
 /*
- * Generates a list of `PlatformCommand`s that describe the main window's layout.
- *
- * This function will be called by the application's main initialization logic
- * to get the structural commands for the primary UI. Initially, it returns
- * an empty vector, but will be expanded to describe menus, buttons, etc.
+ * Generates a list of `PlatformCommand`s that describe the initial static UI layout
+ * for the main application window. This includes creating the main menu and other
+ * foundational UI elements like buttons.
  */
 pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     println!("ui_description_layer: describe_main_window_layout called.");
@@ -63,6 +59,13 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
     };
     commands.push(main_menu_command);
 
+    // 2. Create "Generate Archive" Button
+    commands.push(PlatformCommand::CreateButton {
+        window_id: window_id,
+        control_id: ID_BUTTON_GENERATE_ARCHIVE,
+        text: "Generate Archive".to_string(),
+    });
+
     commands
 }
 
@@ -91,6 +94,47 @@ mod tests {
                 .iter()
                 .any(|cmd| matches!(cmd, PlatformCommand::CreateMainMenu { .. })),
             "describe_main_window_layout should generate a CreateMainMenu command."
+        );
+    }
+
+    #[test]
+    fn test_describe_main_window_layout_generates_create_button_command() {
+        let dummy_window_id = WindowId(1);
+        let commands = describe_main_window_layout(dummy_window_id);
+
+        let has_create_main_menu = commands.iter().any(|cmd| {
+            matches!(cmd, PlatformCommand::CreateMainMenu { window_id, .. } if *window_id == dummy_window_id)
+        });
+        assert!(
+            has_create_main_menu,
+            "Commands should include CreateMainMenu"
+        );
+
+        let create_button_command = commands.iter().find_map(|cmd| {
+            if let PlatformCommand::CreateButton {
+                window_id,
+                control_id,
+                text,
+            } = cmd
+            {
+                if *window_id == dummy_window_id && *control_id == ID_BUTTON_GENERATE_ARCHIVE {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        assert!(
+            create_button_command.is_some(),
+            "Commands should include CreateButton for the generate archive button"
+        );
+        assert_eq!(
+            create_button_command.unwrap(),
+            "Generate Archive",
+            "CreateButton command should have the correct text"
         );
     }
 }

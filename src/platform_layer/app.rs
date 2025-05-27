@@ -37,6 +37,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use crate::platform_layer::window_common::{
+    ID_BUTTON_GENERATE_ARCHIVE,
+    WC_BUTTON, // Make WC_BUTTON public in window_common or re-declare
+};
+
 // Class name for Button controls
 const WC_BUTTON_CLASS: PCWSTR = windows::core::w!("Button");
 
@@ -774,10 +779,9 @@ impl Win32ApiInternalState {
 
     /*
      * Handles the `PlatformCommand::CreateButton` command.
-     * This method creates a native button control within the specified window.
-     * It uses `CreateWindowExW` with the `WC_BUTTON_CLASS` (which is "Button").
-     * The button's `HWND` is stored in `NativeWindowData.hwnd_button_generate`.
-     * The initial position and size are set to zero, as `WM_SIZE` is expected to handle layout.
+     * This method creates a native button control within the specified window
+     * and stores its HWND in the window's `NativeWindowData.controls` map.
+     * The button's position and size will be managed by `WM_SIZE`.
      */
     fn _handle_create_button_impl(
         self: &Arc<Self>,
@@ -785,64 +789,46 @@ impl Win32ApiInternalState {
         control_id: i32,
         text: String,
     ) -> PlatformResult<()> {
-        println!(
-            "Platform: Handling CreateButton for WinID {:?}, CtrlID {}, Text '{}'",
-            window_id, control_id, text
-        );
-        let hwnd_owner = self.get_hwnd_owner(window_id)?;
-
-        let h_btn = unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE(0),                                         // dwExStyle
-                WC_BUTTON_CLASS,                                            // lpClassName
-                &HSTRING::from(text.as_str()),                              // lpWindowName
-                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32), // dwStyle
-                0,                                      // X (WM_SIZE will handle)
-                0,                                      // Y (WM_SIZE will handle)
-                0,                                      // nWidth (WM_SIZE will handle)
-                0,                                      // nHeight (WM_SIZE will handle)
-                Some(hwnd_owner),                       // hWndParent
-                Some(HMENU(control_id as *mut c_void)), // hMenu (control ID)
-                Some(self.h_instance),                  // hInstance
-                None,                                   // lpParam
-            )?
-        };
-
         let mut windows_map_guard = self.window_map.write().map_err(|_| {
-            PlatformError::OperationFailed(
-                "Failed to lock windows map for CreateButton storage".into(),
-            )
+            PlatformError::OperationFailed("Failed to lock windows map for button creation".into())
         })?;
 
         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            // For now, directly store in hwnd_button_generate.
-            // Phase 5 will generalize control storage.
-            if control_id == window_common::ID_BUTTON_GENERATE_ARCHIVE {
-                window_data.hwnd_button_generate = Some(h_btn);
-                println!(
-                    "Platform: Button (CtrlID {}) created with HWND {:?} and stored in NativeWindowData.hwnd_button_generate for WinID {:?}",
-                    control_id, h_btn, window_id
-                );
-            } else {
-                // If we eventually support other buttons via this command before Phase 5,
-                // we'd need a way to store them. For now, this example focuses on the main button.
-                // A warning or error could be logged here if control_id is unexpected.
-                eprintln!(
-                    "Platform Warning: CreateButton called for unhandled control_id {} (not ID_BUTTON_GENERATE_ARCHIVE). HWND {:?} not stored in specific field.",
-                    control_id, h_btn
-                );
-                // To prevent leaks if not stored, we might destroy it, or log and continue.
-                // For now, just log, as WM_SIZE won't know about it if not stored appropriately.
+            if window_data.controls.contains_key(&control_id) {
+                return Err(PlatformError::OperationFailed(format!(
+                    "Button with ID {} already exists for window {:?}",
+                    control_id, window_id
+                )));
             }
+
+            let hwnd_button = unsafe {
+                CreateWindowExW(
+                    WINDOW_EX_STYLE(0),
+                    WC_BUTTON, // "BUTTON" class
+                    &HSTRING::from(text.as_str()),
+                    WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
+                    0,                                      // x (dummy, WM_SIZE will adjust)
+                    0,                                      // y (dummy, WM_SIZE will adjust)
+                    10,                                     // width (dummy, WM_SIZE will adjust)
+                    10,                                     // height (dummy, WM_SIZE will adjust)
+                    Some(window_data.hwnd),                 // Parent
+                    Some(HMENU(control_id as *mut c_void)), // Control ID
+                    Some(self.h_instance),
+                    None,
+                )?
+            };
+            window_data.controls.insert(control_id, hwnd_button);
+            println!(
+                "Platform: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
+                text, control_id, window_id, hwnd_button
+            );
+            Ok(())
         } else {
-            // Should not happen if get_hwnd_owner succeeded.
-            unsafe { DestroyWindow(h_btn)? }; // Clean up created button
-            return Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} disappeared after owner HWND retrieval for CreateButton",
+            Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for CreateButton",
                 window_id
-            )));
+            )))
         }
-        Ok(())
     }
 }
 
@@ -871,7 +857,7 @@ impl PlatformInterface {
             hwnd: HWND(std::ptr::null_mut()),
             id: window_id,
             treeview_state: None,
-            hwnd_button_generate: None,
+            controls: HashMap::new(),
             hwnd_status_bar: None,
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
@@ -918,9 +904,10 @@ impl PlatformInterface {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
+                    // Button HWND now set by CreateButton command. Status HWND still by WM_CREATE.
                     println!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Button HWND is {:?}, Status HWND is {:?}.",
-                        window_id, window_data.hwnd_button_generate, window_data.hwnd_status_bar
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
+                        window_id, window_data.hwnd_status_bar
                     );
                 } else {
                     eprintln!(

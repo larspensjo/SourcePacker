@@ -21,6 +21,7 @@ use windows::{
     core::{BOOL, HSTRING, PCWSTR},
 };
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::{Arc, Mutex}; // Mutex might not be needed here unless for specific shared state within this file
 
@@ -36,7 +37,7 @@ pub(crate) const ID_MENU_FILE_SET_ARCHIVE: i32 = 2004;
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
-const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
+pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
 
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
@@ -55,10 +56,16 @@ pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
     pub(crate) id: WindowId,
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
-    pub(crate) hwnd_button_generate: Option<HWND>,
+    pub(crate) controls: HashMap<i32, HWND>, // Stores HWNDs for various controls by their ID
     pub(crate) hwnd_status_bar: Option<HWND>,
     pub(crate) status_bar_current_text: String,
     pub(crate) status_bar_current_severity: MessageSeverity,
+}
+
+impl NativeWindowData {
+    pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
+        self.controls.get(&control_id).copied()
+    }
 }
 
 /// Context passed to `CreateWindowExW` via `lpCreateParams`.
@@ -466,29 +473,8 @@ impl Win32ApiInternalState {
             hwnd, window_id
         );
         unsafe {
-            match CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                WC_BUTTON,
-                &HSTRING::from("Save to archive"),
-                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-                0,
-                0,
-                0,
-                0,
-                Some(hwnd),
-                Some(HMENU(ID_BUTTON_GENERATE_ARCHIVE as *mut c_void)),
-                Some(self.h_instance),
-                None,
-            ) {
-                Ok(h_btn) => {
-                    if let Some(mut windows_map_guard) = self.window_map.write().ok() {
-                        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                            window_data.hwnd_button_generate = Some(h_btn);
-                        }
-                    }
-                }
-                Err(e) => eprintln!("Failed to create Generate Archive button: {:?}", e),
-            }
+            // Button creation is now handled by PlatformCommand::CreateButton.
+            // The direct creation call here is removed.
 
             match CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -547,7 +533,7 @@ impl Win32ApiInternalState {
                     }
                 }
 
-                if let Some(hwnd_btn) = window_data.hwnd_button_generate {
+                if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE) {
                     if !hwnd_btn.is_invalid() {
                         let btn_x_pos = BUTTON_X_PADDING;
                         let btn_y_pos = button_area_y_pos + BUTTON_Y_PADDING_IN_AREA;

@@ -10,14 +10,6 @@ Completed changes have been removed.
 
 ## Phase 2: Migrating Button Creation
 
-### Step 2.2: Update `ui_description_layer` for Button
-
-*   **File:** `src/ui_description_layer/mod.rs`
-*   **Action:**
-    *   Modify `describe_main_window_layout` to also generate a `PlatformCommand::CreateButton` for the "Generate Archive" button, using `ID_BUTTON_GENERATE_ARCHIVE`.
-*   **Rationale:** New layer describes the button.
-*   **Verification:** `describe_main_window_layout` produces the button command. App still uses old button creation.
-
 ### Step 2.3: Integrate Button Creation via Command
 
 *   **File:** `src/main.rs`
