@@ -340,7 +340,9 @@ impl Win32ApiInternalState {
                     log::error!("Platform: Failed to lock event handler in handle_window_message.");
                 }
             } else {
-                log::error!("Platform: Event handler not available in handle_window_message.");
+                log::error!(
+                    "Platform: Event handler not available in handle_window_message (Will be fixeed in Phase 8)."
+                );
             }
         }
 

@@ -415,10 +415,19 @@ impl MyAppLogic {
 
     fn handle_window_destroyed(&mut self, window_id: WindowId) {
         if self.main_window_id == Some(window_id) {
-            // The message for the status bar of a destroyed window might not be processed.
-            // Consider using eprintln or a logger for this kind of event.
-            app_debug!(self, "Main window destroyed notification received."); // This might not be seen if window is gone
-            self.main_window_id = None;
+            // Log directly that the main window is being handled for destruction.
+            // The app_debug! macro checks self.main_window_id to queue UI status updates.
+            // By setting self.main_window_id = None first, or by logging directly like this,
+            // we avoid trying to send a status bar update to a window that's already gone
+            // from the platform layer's perspective.
+            log::debug!(
+                "AppLogic: Main window (ID: {:?}) destroyed notification received by AppLogic.",
+                self.main_window_id
+            );
+
+            self.main_window_id = None; // Clear the main window ID to avoid trying to send a status bar update
+
+            // Clear other state associated with the UI or current session.
             self.current_archive_status = None;
             self.path_to_tree_item_id.clear();
             self.pending_action = None;
@@ -1419,11 +1428,11 @@ impl PlatformEventHandler for MyAppLogic {
         {
             Ok(_) => {
                 if profile_name_to_save_in_config.is_empty() {
-                    log::error!(
+                    log::debug!(
                         "AppLogic: Successfully cleared/unset last profile name in config on exit."
                     );
                 } else {
-                    log::error!(
+                    log::debug!(
                         "AppLogic: Successfully saved last active profile name '{}' to config on exit.",
                         profile_name_to_save_in_config
                     );

@@ -113,7 +113,7 @@ fn main() -> PlatformResult<()> {
     let run_result = platform_interface.run(app_event_handler);
 
     match run_result {
-        Ok(()) => log::info!("Application exited cleanly."),
+        Ok(()) => log::debug!("Application exited cleanly."),
         Err(e) => {
             log::error!("Application exited with an error: {:?}", e);
             return Err(e);
