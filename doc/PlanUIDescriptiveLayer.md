@@ -10,70 +10,11 @@ Whenever you want to change how your window loks like or population of controls,
 
 Completed changes have been removed.
 
-## Phase 2: Migrating Button Creation
-
-Completed.
-
-## Phase 3: Migrating Status Bar Creation
-
-Completed.
-
----
-
-## Phase 4: TreeView Creation (Consideration)
-
-Completed
----
-
-## Phase 5: Generalizing Control Storage and Access in `NativeWindowData`
-
-Completed
----
-
-## Phase 6: Cleanup and Review
-
-### Step 6.2: Review `main.rs` Orchestration
-
-*   **Action:** Ensure the sequence of operations in `main.rs` is logical:
-    1.  Create `PlatformInterface`, `MyAppLogic`, `UiDescriptionLayer`.
-    2.  Call `platform_interface.create_window()` for the main window frame.
-    3.  Get UI structure commands from `UiDescriptionLayer`.
-    4.  Execute these structure commands via `platform_interface.execute_command()`.
-    5.  Call `my_app_logic.on_main_window_created()` (which will now enqueue commands for *data* population and visibility, not structure).
-    6.  Start `platform_interface.run()`.
-*   **Rationale:** Ensures correct application initialization flow.
-*   **Verification:** Code review and functional testing.
-
-### Step 6.3: Update Documentation and Comments
-
-*   **Action:** Update comments in relevant modules (`platform_layer`, `ui_description_layer`, `main.rs`) to reflect the new architecture for UI creation.
-*   **Rationale:** Keeps documentation in sync with code.
-
 ---
 
 ## Phase 7: Abstracting Menu Item Identifiers
 
 **Goal:** Remove the direct dependency on `i32` control IDs for menu items from the `ui_description_layer` and `app_logic`. Instead, use semantic identifiers (e.g., enums or strings) in the UI description, and have the `platform_layer` dynamically assign and manage the native `i32` IDs.
-
-### Step 7.1: Define Semantic Menu Action Identifiers
-
-*   **File:** `src/platform_layer/types.rs` (or a new shared types module if preferred)
-*   **Action:**
-    *   Define an enum, e.g., `MenuAction`, to represent logical menu actions.
-        ```rust
-        // Example in types.rs
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        pub enum MenuAction {
-            LoadProfile,
-            SaveProfileAs,
-            SetArchivePath,
-            RefreshFileList,
-            // ... any other distinct menu actions
-        }
-        ```
-    *   Alternatively, decide on a string-based convention (e.g., "file.load_profile"). Enums are generally more type-safe.
-*   **Rationale:** Establishes a platform-agnostic way to identify menu actions.
-*   **Verification:** Code compiles. No functional change yet.
 
 ### Step 7.2: Update `MenuItemConfig` to Use Semantic Identifiers
 
