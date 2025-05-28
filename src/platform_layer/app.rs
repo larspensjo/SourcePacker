@@ -44,12 +44,14 @@ use crate::platform_layer::window_common::{
     WC_STATIC,
 };
 
-/// Internal state for the Win32 platform layer.
-///
-/// This struct holds all necessary Win32 handles and mappings required to manage
-/// the application's lifecycle and UI elements. It is managed by `PlatformInterface`
-/// and accessed by the `WndProc` and command handlers.
-/// It is passed as user data to some functions.
+/*
+ * Internal state for the Win32 platform layer.
+ *
+ * This struct holds all necessary Win32 handles and mappings required to manage
+ * the application's lifecycle and UI elements. It is managed by `PlatformInterface`
+ * and accessed by the `WndProc` and command handlers.
+ * It is passed as user data to some functions.
+ */
 pub(crate) struct Win32ApiInternalState {
     pub(crate) h_instance: HINSTANCE,
     pub(crate) next_window_id_counter: AtomicUsize,
@@ -67,6 +69,12 @@ pub(crate) struct Win32ApiInternalState {
 }
 
 impl Win32ApiInternalState {
+    /*
+     * Creates a new instance of `Win32ApiInternalState`.
+     * Initializes COM, common controls (specifically for TreeView), and
+     * retrieves the application instance handle (`HINSTANCE`).
+     * Returns a `PlatformResult` wrapping an `Arc` to the new state.
+     */
     fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
         unsafe {
             let hr = CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
@@ -191,6 +199,13 @@ impl Win32ApiInternalState {
         )
     }
 
+    /*
+     * Displays a standard Win32 file dialog (Open or Save As).
+     * This is a generic helper function used by `_handle_show_open_file_dialog_impl`
+     * and `_handle_show_save_file_dialog_impl`. It handles the common setup
+     * for `OPENFILENAMEW` and processes the dialog result, then sends an
+     * appropriate `AppEvent` constructed by `event_constructor`.
+     */
     fn _show_common_file_dialog<FDialog, FEvent>(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -598,7 +613,8 @@ impl Win32ApiInternalState {
      * Executes a single platform command directly.
      * This method centralizes the handling of all platform commands, whether
      * they originate from the initial setup or from event handling by MyAppLogic.
-     * It's called by the main run loop after dequeuing commands from MyAppLogic.
+     * It's called by the main run loop after dequeuing commands from MyAppLogic,
+     * and can also be called directly for initial UI setup commands.
      */
     fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
         log::debug!("Platform: Executing command: {:?}", command);
@@ -737,6 +753,12 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
+    /*
+     * Recursively adds menu items (and submenus) to a parent menu handle.
+     * This function is called by `_handle_create_main_menu_impl` to build
+     * the menu structure defined by `MenuItemConfig`. It uses `AppendMenuW`
+     * to add individual items or popup submenus.
+     */
     unsafe fn add_menu_item_recursive(
         parent_menu_handle: HMENU,
         item_config: &MenuItemConfig,
@@ -917,7 +939,6 @@ impl Win32ApiInternalState {
                 )?
             };
             window_data.controls.insert(control_id, hwnd_status_bar);
-            // window_data.hwnd_status_bar = Some(hwnd_status_bar); // Removed
             window_data.status_bar_current_text = initial_text.clone();
             window_data.status_bar_current_severity = MessageSeverity::Information;
 
@@ -1040,11 +1061,21 @@ impl Drop for Win32ApiInternalState {
     }
 }
 
+/*
+ * Provides the main interface for the application to interact with the
+ * underlying Win32 platform. It handles window creation, command execution,
+ * and running the main event loop.
+ */
 pub struct PlatformInterface {
     internal_state: Arc<Win32ApiInternalState>,
 }
 
 impl PlatformInterface {
+    /*
+     * Creates a new `PlatformInterface`.
+     * Initializes the internal Win32 state and registers the main window class.
+     * Returns a `PlatformResult` wrapping the new interface.
+     */
     pub fn new(app_name_for_class: String) -> PlatformResult<Self> {
         let internal_state = Win32ApiInternalState::new(app_name_for_class)?;
         window_common::register_window_class(&internal_state)?;
@@ -1061,7 +1092,6 @@ impl PlatformInterface {
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
-            // hwnd_status_bar: None, // Field removed
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
         };
@@ -1142,10 +1172,10 @@ impl PlatformInterface {
 
     /*
      * Starts the platform's main event loop.
-     * This method takes ownership of the `event_handler` (MyAppLogic) and continuously
-     * processes messages. Before checking for OS messages, it drains and executes
-     * any commands enqueued in MyAppLogic. It only returns when the application
-     * is quitting.
+     * This method takes ownership of the `event_handler` (e.g., MyAppLogic) and
+     * continuously processes messages. Before checking for OS messages, it drains
+     * and executes any commands enqueued in the event handler. It only returns
+     * when the application is quitting (e.g., after `WM_QUIT` is posted).
      */
     pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));

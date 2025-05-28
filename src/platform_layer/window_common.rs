@@ -1,3 +1,10 @@
+/*
+ * This module provides common Win32 windowing functionalities, including
+ * window class registration, native window creation, and the main window
+ * procedure (WndProc) for message handling. It defines `NativeWindowData`
+ * to store per-window native state and helper functions for interacting
+ * with the Win32 API.
+ */
 use super::app::Win32ApiInternalState;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
@@ -49,18 +56,21 @@ const BUTTON_Y_PADDING_IN_AREA: i32 = 10;
 const BUTTON_WIDTH: i32 = 150;
 const BUTTON_HEIGHT: i32 = 30;
 
-/// Holds native data associated with a specific window managed by the platform layer.
-/// This includes the native window handle (`HWND`), a map of control IDs to their
-/// `HWND`s, and any control-specific states (like for the TreeView).
+/*
+ * Holds native data associated with a specific window managed by the platform layer.
+ * This includes the native window handle (`HWND`), a map of control IDs to their
+ * `HWND`s, and any control-specific states (like for the TreeView). It also
+ * stores the current text and severity for the status bar.
+ */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
     pub(crate) id: WindowId,
-    /// Stores the specific internal state for the TreeView control if one exists.
-    /// This is initialized by the `CreateTreeView` command handler.
+    // Stores the specific internal state for the TreeView control if one exists.
+    // This is initialized by the `CreateTreeView` command handler.
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
-    /// Stores HWNDs for various controls (buttons, status bar, treeview, etc.)
-    /// keyed by their logical control ID.
+    // Stores HWNDs for various controls (buttons, status bar, treeview, etc.)
+    // keyed by their logical control ID.
     pub(crate) controls: HashMap<i32, HWND>,
     pub(crate) status_bar_current_text: String,
     pub(crate) status_bar_current_severity: MessageSeverity,
@@ -69,7 +79,8 @@ pub(crate) struct NativeWindowData {
 impl NativeWindowData {
     /*
      * Retrieves the HWND of a control stored in the `controls` map.
-     * This provides a generic way to access control handles using their logical ID.
+     * This provides a generic way to access control handles using their logical ID,
+     * which is useful for various control manipulation tasks.
      */
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.controls.get(&control_id).copied()
@@ -84,6 +95,12 @@ struct WindowCreationContext {
     window_id: WindowId,
 }
 
+/*
+ * Registers the main window class for the application if not already registered.
+ * This function sets up the `WNDCLASSEXW` structure with the window procedure
+ * (`facade_wnd_proc_router`), icons, cursor, and background brush. It uses
+ * the application name from `Win32ApiInternalState` to create a unique class name.
+ */
 pub(crate) fn register_window_class(
     internal_state: &Arc<Win32ApiInternalState>,
 ) -> PlatformResult<()> {
@@ -141,6 +158,13 @@ pub(crate) fn register_window_class(
     }
 }
 
+/*
+ * Creates a native Win32 window.
+ * This function uses `CreateWindowExW` to create the window with the specified
+ * title, dimensions, and style. It passes a `WindowCreationContext` (containing
+ * an Arc to `Win32ApiInternalState` and the `WindowId`) as `lpCreateParams`,
+ * which is retrieved by the `WndProc` during `WM_NCCREATE`.
+ */
 pub(crate) fn create_native_window(
     internal_state_arc: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
@@ -178,12 +202,15 @@ pub(crate) fn create_native_window(
     }
 }
 
-/// The main window procedure (WndProc) router for all windows created by this platform layer.
-///
-/// This static function receives messages from the OS. It retrieves the
-/// per-window `WindowCreationContext` (which contains an `Arc` to `Win32ApiInternalState`
-/// and the `WindowId`) and then calls the instance method `handle_window_message`
-/// on `Win32ApiInternalState` to process the message.
+/*
+ * The main window procedure (WndProc) router for all windows created by this platform layer.
+ *
+ * This static function receives messages from the OS. It retrieves the
+ * per-window `WindowCreationContext` (which contains an `Arc` to `Win32ApiInternalState`
+ * and the `WindowId`) stored in the window's user data. It then calls the
+ * instance method `handle_window_message` on `Win32ApiInternalState` to process the message.
+ * On `WM_NCDESTROY`, it cleans up the `WindowCreationContext`.
+ */
 unsafe extern "system" fn facade_wnd_proc_router(
     hwnd: HWND,
     msg: u32,
@@ -242,8 +269,10 @@ impl Win32ApiInternalState {
     /*
      * Handles window messages for a specific window instance.
      * This method is called by `facade_wnd_proc_router` and processes
-     * relevant messages, translating them into `AppEvent`s or performing
-     * direct actions. It manages the lifecycle and interaction of native UI elements.
+     * relevant messages (e.g., WM_CREATE, WM_SIZE, WM_COMMAND, WM_CLOSE, WM_DESTROY,
+     * WM_NOTIFY, WM_PAINT). It translates them into `AppEvent`s to be sent to the
+     * application logic or performs direct actions. It may also override the default
+     * message result (`lresult_override`).
      */
     fn handle_window_message(
         self: &Arc<Self>,
@@ -356,7 +385,9 @@ impl Win32ApiInternalState {
     /*
      * Retrieves the current state of a TreeView item after a click event
      * on its checkbox and constructs an `AppEvent::TreeViewItemToggledByUser`.
-     * This function is called in response to `WM_APP_TREEVIEW_CHECKBOX_CLICKED`.
+     * This function is called in response to `WM_APP_TREEVIEW_CHECKBOX_CLICKED`,
+     * which is a custom message posted by the `WM_NOTIFY` handler when a
+     * checkbox click is detected on the TreeView.
      */
     fn get_tree_item_toggle_event(
         self: &Arc<Self>,
@@ -428,9 +459,10 @@ impl Win32ApiInternalState {
 
     /*
      * Handles the WM_CREATE message for a window.
-     * This is called when the window is first created. Currently, its primary
-     * responsibility is minimal, as most child control creation is being
-     * shifted to be command-driven by the `ui_description_layer`.
+     * This is called when the window is first created. Its primary responsibility
+     * is now minimal, as most child control creation is command-driven by the
+     * `ui_description_layer` and executed via `PlatformCommand`s. This function
+     * currently only logs the event.
      */
     fn handle_wm_create(
         self: &Arc<Self>,
@@ -450,8 +482,9 @@ impl Win32ApiInternalState {
      * Handles the WM_SIZE message for a window.
      * This is called when the window's size changes. It's responsible for
      * resizing and repositioning child controls like the TreeView, buttons,
-     * and status bar to fit the new window dimensions. It now uses the generic
-     * `get_control_hwnd` for all controls.
+     * and status bar to fit the new window dimensions. It uses the generic
+     * `get_control_hwnd` method on `NativeWindowData` to retrieve control handles.
+     * It also generates an `AppEvent::WindowResized`.
      */
     fn handle_wm_size(
         self: &Arc<Self>,
@@ -532,7 +565,8 @@ impl Win32ApiInternalState {
     /*
      * Handles the WM_COMMAND message for a window.
      * This is typically generated by menu selections or control interactions (like button clicks).
-     * It translates these native commands into `AppEvent`s for the application logic.
+     * It translates these native commands into `AppEvent`s for the application logic,
+     * such as `AppEvent::MenuLoadProfileClicked` or `AppEvent::ButtonClicked`.
      */
     fn handle_wm_command(
         self: &Arc<Self>,
@@ -579,9 +613,11 @@ impl Win32ApiInternalState {
 
     /*
      * Handles the WM_DESTROY message for a window.
-     * This is called when the window is being destroyed. It removes the window's
-     * data from the internal map and decrements the active window count,
-     * potentially triggering application quit if it's the last window.
+     * This is called when the window is being destroyed (after `WM_CLOSE` but before
+     * `WM_NCDESTROY`). It removes the window's data from the internal `window_map`
+     * and decrements the `active_windows_count`. If this count reaches zero,
+     * it posts a `WM_QUIT` message to terminate the application's message loop.
+     * It also generates an `AppEvent::WindowDestroyed`.
      */
     fn handle_wm_destroy(
         self: &Arc<Self>,
@@ -623,7 +659,9 @@ impl Win32ApiInternalState {
      * Handles the WM_NOTIFY message, which is sent by common controls to their parent window.
      * This function specifically looks for notifications from the TreeView control,
      * such as NM_CLICK (for checkbox interactions) or TVN_ITEMCHANGEDW (for other state changes).
-     * It translates these into appropriate `AppEvent`s.
+     * For NM_CLICK on a state icon (checkbox), it posts a custom `WM_APP_TREEVIEW_CHECKBOX_CLICKED`
+     * message to handle the state change logic.
+     * It translates TVN_ITEMCHANGEDW into appropriate `AppEvent`s via `control_treeview` module.
      */
     fn handle_wm_notify(
         self: &Arc<Self>,
@@ -847,10 +885,13 @@ pub(crate) fn destroy_native_window(
     Ok(())
 }
 
-/// Updates the text of the status bar control. The actual color change is triggered
-/// by invalidating the control, which then leads to WM_CTLCOLORSTATIC being handled
-/// in app.rs using the `status_bar_current_severity` stored in `NativeWindowData`.
-/// This function is now the direct implementation called by _execute_platform_command.
+/*
+ * Updates the text of the status bar control and triggers a repaint.
+ * The actual color change based on severity is handled by `WM_CTLCOLORSTATIC`
+ * in `Win32ApiInternalState::handle_window_message`, using the
+ * `status_bar_current_severity` stored in `NativeWindowData`.
+ * This function assumes the `severity` has already been processed and stored.
+ */
 pub(crate) fn update_status_bar_text_impl(
     window_data: &mut NativeWindowData,
     text: &str,

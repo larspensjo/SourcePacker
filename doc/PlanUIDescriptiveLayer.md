@@ -32,13 +32,6 @@ Completed
 
 ## Phase 6: Cleanup and Review
 
-### Step 6.1: Review `WM_CREATE`
-
-*   **File:** `src/platform_layer/window_common.rs` (`Win32ApiInternalState::handle_wm_create`)
-*   **Action:** Ensure `handle_wm_create` is now very minimal. It should primarily be concerned with setup related to the main window frame itself if anything, not creating child controls.
-*   **Rationale:** Confirms the shift of responsibility.
-*   **Verification:** Code review.
-
 ### Step 6.2: Review `main.rs` Orchestration
 
 *   **Action:** Ensure the sequence of operations in `main.rs` is logical:
