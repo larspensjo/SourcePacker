@@ -1381,13 +1381,13 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     fn on_quit(&mut self) {
-        log::error!("AppLogic: on_quit called by platform. Application is exiting.");
+        log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
 
         if let Some(active_profile_name) = self.current_profile_name.clone() {
             if !active_profile_name.is_empty() {
                 let profile_to_save =
                     self.create_profile_from_current_state(active_profile_name.clone());
-                log::error!(
+                log::debug!(
                     "AppLogic: Attempting to save content of active profile '{}' on exit.",
                     active_profile_name
                 );
@@ -1395,7 +1395,7 @@ impl PlatformEventHandler for MyAppLogic {
                     .profile_manager
                     .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
                 {
-                    Ok(_) => log::error!(
+                    Ok(_) => log::info!(
                         "AppLogic: Successfully saved content of profile '{}' to disk on exit.",
                         active_profile_name
                     ),
@@ -1409,7 +1409,7 @@ impl PlatformEventHandler for MyAppLogic {
         }
 
         let profile_name_to_save_in_config = self.current_profile_name.as_deref().unwrap_or("");
-        log::error!(
+        log::debug!(
             "AppLogic: Attempting to save last profile name '{}' to config on exit.",
             profile_name_to_save_in_config
         );

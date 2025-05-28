@@ -34,8 +34,8 @@ fn main() -> PlatformResult<()> {
         Ok(file) => {
             let config = ConfigBuilder::new()
                 .set_time_format_rfc3339()
-                .set_thread_level(LevelFilter::Off) // Don't log thread_id
-                .set_target_level(LevelFilter::Trace) // Don't include target (module path) by default
+                // .set_thread_level(LevelFilter::Off) // Don't log thread_id
+                // .set_target_level(LevelFilter::Trace) // Don't include target (module path) by default
                 .build();
 
             if let Err(e) = CombinedLogger::init(vec![
@@ -51,7 +51,7 @@ fn main() -> PlatformResult<()> {
         }
     }
 
-    log::info!("Application Starting...");
+    log::debug!("Application Starting...");
 
     let platform_interface = match PlatformInterface::new("SourcePacker".to_string()) {
         Ok(pi) => pi,
@@ -60,7 +60,7 @@ fn main() -> PlatformResult<()> {
             return Err(e);
         }
     };
-    log::info!("Platform interface initialized.");
+    log::debug!("Platform interface initialized.");
 
     let core_config_manager = Arc::new(CoreConfigManagerForConfig::new());
     let core_profile_manager = Arc::new(CoreProfileManager::new());
@@ -75,7 +75,7 @@ fn main() -> PlatformResult<()> {
         core_archiver,
         core_state_manager,
     );
-    log::info!("Application logic initialized.");
+    log::debug!("Application logic initialized.");
 
     let main_window_config = WindowConfig {
         title: "SourcePacker",
@@ -90,10 +90,10 @@ fn main() -> PlatformResult<()> {
             return Err(e);
         }
     };
-    log::info!("Main window requested with ID: {:?}", main_window_id);
+    log::debug!("Main window requested with ID: {:?}", main_window_id);
 
     let ui_commands = ui_description_layer::describe_main_window_layout(main_window_id);
-    log::info!(
+    log::debug!(
         "main: Received {} UI description commands.",
         ui_commands.len()
     );
@@ -105,7 +105,7 @@ fn main() -> PlatformResult<()> {
     }
 
     my_app_logic.on_main_window_created(main_window_id);
-    log::info!("AppLogic.on_main_window_created called; initial commands enqueued.");
+    log::debug!("AppLogic.on_main_window_created called; initial commands enqueued.");
 
     let app_event_handler = Arc::new(Mutex::new(my_app_logic));
 
