@@ -62,7 +62,6 @@ pub(crate) struct NativeWindowData {
     /// Stores HWNDs for various controls (buttons, status bar, treeview, etc.)
     /// keyed by their logical control ID.
     pub(crate) controls: HashMap<i32, HWND>,
-    pub(crate) hwnd_status_bar: Option<HWND>, // Will be removed in Phase 5.1
     pub(crate) status_bar_current_text: String,
     pub(crate) status_bar_current_severity: MessageSeverity,
 }
@@ -364,6 +363,8 @@ impl Win32ApiInternalState {
     ) -> Option<AppEvent> {
         let windows_guard = self.window_map.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
+
+        let hwnd_treeview = window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)?;
         let tv_state = window_data.treeview_state.as_ref()?;
 
         let mut tv_item_get = TVITEMEXW {
@@ -376,7 +377,7 @@ impl Win32ApiInternalState {
 
         let get_item_result = unsafe {
             SendMessageW(
-                tv_state.hwnd,
+                hwnd_treeview, // Use HWND from controls map
                 TVM_GETITEMW,
                 Some(WPARAM(0)),
                 Some(LPARAM(&mut tv_item_get as *mut _ as isize)),
@@ -438,7 +439,8 @@ impl Win32ApiInternalState {
     ) {
         log::debug!(
             "Platform: WM_CREATE for HWND {:?}, WindowId {:?}",
-            hwnd, window_id
+            hwnd,
+            window_id
         );
     }
 
@@ -471,7 +473,14 @@ impl Win32ApiInternalState {
                 {
                     if !hwnd_tv.is_invalid() {
                         unsafe {
-                            let _ = MoveWindow(hwnd_tv, 0, 0, client_width, treeview_height, true);
+                            let _ = MoveWindow(
+                                hwnd_tv,
+                                0,
+                                0,
+                                client_width,
+                                treeview_height.max(0),
+                                true,
+                            );
                         }
                     }
                 }
@@ -503,7 +512,7 @@ impl Win32ApiInternalState {
                                 0,
                                 status_bar_y_pos,
                                 client_width,
-                                STATUS_BAR_HEIGHT,
+                                STATUS_BAR_HEIGHT.max(0),
                                 true,
                             );
                         }
@@ -654,45 +663,57 @@ impl Win32ApiInternalState {
 
                 if let Some(windows_guard) = self.window_map.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
-                        if let Some(ref tv_state) = window_data.treeview_state {
-                            if hwnd_tv_from_notify != tv_state.hwnd {
-                                return None;
-                            }
-
-                            let mut tvht_info = TVHITTESTINFO {
-                                pt: client_pt_for_hittest,
-                                flags: TVHITTESTINFO_FLAGS(0),
-                                hItem: HTREEITEM(0),
-                            };
-                            let h_item_hit = HTREEITEM(
-                                unsafe {
-                                    SendMessageW(
-                                        hwnd_tv_from_notify,
-                                        TVM_HITTEST,
-                                        Some(WPARAM(0)),
-                                        Some(LPARAM(&mut tvht_info as *mut _ as isize)),
-                                    )
-                                }
-                                .0,
+                        // Check if the notification is from THE TreeView we manage for this window
+                        if Some(hwnd_tv_from_notify)
+                            != window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
+                        {
+                            log::warn!(
+                                "Platform: NM_CLICK received from HWND {:?} which is not the registered TreeView HWND for WinID {:?}",
+                                hwnd_tv_from_notify,
+                                window_id
                             );
+                            return None;
+                        }
+                        // Ensure treeview_state exists (though HWND is now from controls map)
+                        if window_data.treeview_state.is_none() {
+                            log::warn!(
+                                "Platform: NM_CLICK received for TreeView, but no treeview_state for WinID {:?}",
+                                window_id
+                            );
+                            return None;
+                        }
 
-                            if h_item_hit.0 != 0
-                                && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0
-                            {
-                                unsafe {
-                                    PostMessageW(
-                                        Some(hwnd),
-                                        WM_APP_TREEVIEW_CHECKBOX_CLICKED,
-                                        WPARAM(h_item_hit.0 as usize),
-                                        LPARAM(0),
+                        let mut tvht_info = TVHITTESTINFO {
+                            pt: client_pt_for_hittest,
+                            flags: TVHITTESTINFO_FLAGS(0),
+                            hItem: HTREEITEM(0),
+                        };
+                        let h_item_hit = HTREEITEM(
+                            unsafe {
+                                SendMessageW(
+                                    hwnd_tv_from_notify,
+                                    TVM_HITTEST,
+                                    Some(WPARAM(0)),
+                                    Some(LPARAM(&mut tvht_info as *mut _ as isize)),
+                                )
+                            }
+                            .0,
+                        );
+
+                        if h_item_hit.0 != 0 && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0 {
+                            unsafe {
+                                PostMessageW(
+                                    Some(hwnd),
+                                    WM_APP_TREEVIEW_CHECKBOX_CLICKED,
+                                    WPARAM(h_item_hit.0 as usize),
+                                    LPARAM(0),
+                                )
+                                .unwrap_or_else(|e| {
+                                    log::error!(
+                                        "Platform: Failed to post checkbox-clicked msg: {:?}",
+                                        e
                                     )
-                                    .unwrap_or_else(|e| {
-                                        log::error!(
-                                            "Platform: Failed to post checkbox-clicked msg: {:?}",
-                                            e
-                                        )
-                                    });
-                                }
+                                });
                             }
                         }
                     }
@@ -835,7 +856,7 @@ pub(crate) fn update_status_bar_text_impl(
 ) -> PlatformResult<()> {
     let hwnd_status_opt = window_data
         .get_control_hwnd(ID_STATUS_BAR_CTRL)
-        .or(window_data.hwnd_status_bar);
+        .or(window_data.get_control_hwnd(ID_STATUS_BAR_CTRL));
 
     if let Some(hwnd_status) = hwnd_status_opt {
         unsafe {

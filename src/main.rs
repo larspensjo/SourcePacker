@@ -109,7 +109,7 @@ fn main() -> PlatformResult<()> {
 
     let app_event_handler = Arc::new(Mutex::new(my_app_logic));
 
-    log::info!("Starting platform event loop...");
+    log::debug!("Starting platform event loop...");
     let run_result = platform_interface.run(app_event_handler);
 
     match run_result {

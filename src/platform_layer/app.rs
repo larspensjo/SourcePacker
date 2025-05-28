@@ -507,7 +507,7 @@ impl Win32ApiInternalState {
                 log::error!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
             }
             MessageSeverity::Warning => {
-                log::error!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
+                log::warn!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
             }
             MessageSeverity::Information => {
                 log::info!("Platform Status (WinID {:?} INFO): {}", window_id, text)
@@ -553,10 +553,7 @@ impl Win32ApiInternalState {
                 }
 
                 // Get the HWND for the status bar.
-                // Prefer the generic controls map, fallback to specific field during transition.
-                hwnd_status_bar_for_api_call = window_data
-                    .get_control_hwnd(ID_STATUS_BAR_CTRL)
-                    .or(window_data.hwnd_status_bar);
+                hwnd_status_bar_for_api_call = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL);
             } else {
                 return Err(PlatformError::InvalidHandle(format!(
                     "WindowId {:?} not found for status bar update",
@@ -586,17 +583,13 @@ impl Win32ApiInternalState {
                 Ok(())
             }
         } else {
-            // HWND not found even after checking map and specific field.
-            // This implies the status bar wasn't created or its HWND wasn't stored correctly.
+            // HWND not found in the controls map.
             log::error!(
-                "Platform Warning: Status bar HWND not found for WindowId {:?} during UI update (after lock release). Text was: '{}'",
+                "Platform Warning: Status bar HWND (ID {}) not found for WindowId {:?} during UI update. Text was: '{}'",
+                ID_STATUS_BAR_CTRL,
                 window_id,
-                text, // text here is the original input text to the function for logging
+                text,
             );
-            // It might not be an error if the status bar isn't *expected* to be there yet.
-            // However, if a command to update it comes, it implies it should be.
-            // For now, let's treat it as an Ok since the data in NativeWindowData was updated.
-            // The UI simply won't reflect it if the HWND is missing.
             Ok(())
         }
     }
@@ -792,16 +785,10 @@ impl Win32ApiInternalState {
             let hwnd_ctrl = match hwnd_ctrl_opt {
                 Some(hwnd) => hwnd,
                 None => {
-                    // Fallback logic for status bar if it's not yet in the 'controls' map
-                    // This specific check can be removed after Phase 5.1 when hwnd_status_bar is gone.
-                    if control_id == ID_STATUS_BAR_CTRL && window_data.hwnd_status_bar.is_some() {
-                        window_data.hwnd_status_bar.unwrap()
-                    } else {
-                        return Err(PlatformError::InvalidHandle(format!(
-                            "Control ID {} not found in window {:?}",
-                            control_id, window_id
-                        )));
-                    }
+                    return Err(PlatformError::InvalidHandle(format!(
+                        "Control ID {} not found in window {:?}",
+                        control_id, window_id
+                    )));
                 }
             };
 
@@ -883,9 +870,8 @@ impl Win32ApiInternalState {
     /*
      * Handles the `PlatformCommand::CreateStatusBar` command.
      * This method creates a native status bar control (using a STATIC control)
-     * within the specified window. It stores its HWND in both
-     * `NativeWindowData.controls` and `NativeWindowData.hwnd_status_bar`
-     * for compatibility during the refactoring phases.
+     * within the specified window. It stores its HWND in
+     * `NativeWindowData.controls`.
      * The status bar's position and size will be managed by `WM_SIZE`.
      */
     fn _handle_create_status_bar_impl(
@@ -907,12 +893,9 @@ impl Win32ApiInternalState {
         })?;
 
         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            if window_data.controls.contains_key(&control_id)
-                || window_data.hwnd_status_bar.is_some()
-            // Keep this check during transition
-            {
+            if window_data.controls.contains_key(&control_id) {
                 return Err(PlatformError::OperationFailed(format!(
-                    "Status bar with ID {} or existing status bar already present for window {:?}",
+                    "Status bar with ID {} already present for window {:?}",
                     control_id, window_id
                 )));
             }
@@ -934,7 +917,7 @@ impl Win32ApiInternalState {
                 )?
             };
             window_data.controls.insert(control_id, hwnd_status_bar);
-            window_data.hwnd_status_bar = Some(hwnd_status_bar); // Keep for now
+            // window_data.hwnd_status_bar = Some(hwnd_status_bar); // Removed
             window_data.status_bar_current_text = initial_text.clone();
             window_data.status_bar_current_severity = MessageSeverity::Information;
 
@@ -1032,8 +1015,7 @@ impl Win32ApiInternalState {
             };
 
             window_data.controls.insert(control_id, hwnd_tv);
-            window_data.treeview_state =
-                Some(control_treeview::TreeViewInternalState::new(hwnd_tv));
+            window_data.treeview_state = Some(control_treeview::TreeViewInternalState::new()); // HWND no longer passed
 
             log::debug!(
                 "Platform: Created TreeView (ID {}) for window {:?} with HWND {:?}",
@@ -1079,7 +1061,7 @@ impl PlatformInterface {
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
-            hwnd_status_bar: None,
+            // hwnd_status_bar: None, // Field removed
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
         };
@@ -1129,7 +1111,7 @@ impl PlatformInterface {
                     log::debug!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
                         window_id,
-                        window_data.hwnd_status_bar
+                        window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
                     );
                 } else {
                     log::error!(

@@ -27,16 +27,7 @@ Completed
 
 ## Phase 5: Generalizing Control Storage and Access in `NativeWindowData`
 
-### Step 5.1: Refactor `NativeWindowData` for Generic Control Storage
-
-*   **File:** `src/platform_layer/window_common.rs`
-*   **Action:**
-    *   Change `NativeWindowData` to store control HWNDs in a `HashMap<i32, HWND>` where the key is the logical `control_id`.
-    *   Remove specific fields like `hwnd_button_generate`, `hwnd_status_bar`.
-    *   Update all places that accessed these specific fields (e.g., `WM_SIZE`, `WM_COMMAND`, `WM_CTLCOLORSTATIC`, status bar updates) to use the HashMap lookup: `window_data.controls.get(&ID_BUTTON_GENERATE_ARCHIVE)`.
-*   **Rationale:** Makes the `platform_layer` more generic, as it no longer has hardcoded knowledge of specific button or status bar fields. It just knows about controls identified by an `i32` ID.
-*   **Verification:** All UI elements (button, status bar) still function correctly and are laid out properly.
-
+Completed
 ---
 
 ## Phase 6: Cleanup and Review
