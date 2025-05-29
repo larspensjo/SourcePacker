@@ -720,6 +720,54 @@ impl Win32ApiInternalState {
                 window_id,
                 control_id,
             } => self._handle_create_treeview_impl(window_id, control_id),
+            PlatformCommand::SignalMainWindowUISetupComplete { window_id } => {
+                self._handle_signal_main_window_ui_setup_complete_impl(window_id)
+            }
+        }
+    }
+
+    /*
+     * Handles the `PlatformCommand::SignalMainWindowUISetupComplete` command.
+     * This method is called when all initial static UI description commands have been
+     * processed. It retrieves the application's event handler and sends it an
+     * `AppEvent::MainWindowUISetupComplete` to signal that `MyAppLogic` can proceed
+     * with its data-dependent UI initialization.
+     */
+    fn _handle_signal_main_window_ui_setup_complete_impl(
+        self: &Arc<Self>,
+        window_id: WindowId,
+    ) -> PlatformResult<()> {
+        log::debug!(
+            "Platform: Handling SignalMainWindowUISetupComplete for window_id: {:?}",
+            window_id
+        );
+
+        // Obtain the Arc to the event handler. The lock on self.event_handler is released after this block.
+        let handler_arc_opt = {
+            let event_handler_guard = self.event_handler.lock().map_err(|_e| {
+                PlatformError::OperationFailed("Failed to lock internal event_handler field".into())
+            })?;
+            event_handler_guard
+                .as_ref()
+                .and_then(|weak_handler| weak_handler.upgrade())
+        };
+
+        if let Some(handler_arc) = handler_arc_opt {
+            // Now lock the actual event handler (MyAppLogic) to send the event.
+            let mut handler_guard = handler_arc.lock().map_err(|_e| {
+                PlatformError::OperationFailed(
+                    "Failed to lock app event handler for MainWindowUISetupComplete".into(),
+                )
+            })?;
+            handler_guard.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
+            Ok(())
+        } else {
+            log::error!(
+                "Platform: Event handler not available to send MainWindowUISetupComplete event."
+            );
+            Err(PlatformError::OperationFailed(
+                "Event handler (MyAppLogic) not available for MainWindowUISetupComplete.".into(),
+            ))
         }
     }
 
@@ -1256,8 +1304,31 @@ impl PlatformInterface {
      * and executes any commands enqueued in the event handler. It only returns
      * when the application is quitting (e.g., after `WM_QUIT` is posted).
      */
-    pub fn run(&self, event_handler: Arc<Mutex<dyn PlatformEventHandler>>) -> PlatformResult<()> {
+    pub fn run(
+        &self,
+        event_handler: Arc<Mutex<dyn PlatformEventHandler>>,
+        initial_commands_to_execute: Vec<PlatformCommand>,
+    ) -> PlatformResult<()> {
         *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
+
+        log::debug!(
+            "Platform: run() called. Processing {} initial UI commands before event loop.",
+            initial_commands_to_execute.len()
+        );
+
+        // Execute initial UI setup commands before starting the message loop.
+        for command in initial_commands_to_execute {
+            log::trace!("Platform: Executing initial command: {:?}", command);
+            if let Err(e) = self.internal_state._execute_platform_command(command) {
+                log::error!(
+                    "Platform: Error executing initial UI command: {:?}. Halting initialization.",
+                    e
+                );
+                return Err(e); // Halt if initial setup fails
+            }
+        }
+        log::debug!("Platform: Initial UI commands processed successfully.");
+
         let app_logic_ref = event_handler;
         unsafe {
             let mut msg = MSG::default();

@@ -167,13 +167,13 @@ impl MyAppLogic {
     }
 
     /*
-     * Handles the event indicating the main application window has been created.
+     * Handles the completion of the initial static UI setup for the main window.
      * It attempts to load the last used profile. If successful, it uses that profile's
      * settings to activate the UI. Otherwise, it initiates a flow for the user to
      * select or create a new profile, keeping the main window hidden until a profile
      * is active. Commands generated are enqueued.
      */
-    pub fn on_main_window_created(&mut self, window_id: WindowId) {
+    pub fn _on_ui_setup_complete(&mut self, window_id: WindowId) {
         self.main_window_id = Some(window_id);
         log::debug!(
             "Main window created (ID: {:?}). Attempting to load last profile.",
@@ -1322,6 +1322,9 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::FolderPickerDialogCompleted { window_id, path } => {
                 self.handle_folder_picker_dialog_completed(window_id, path);
+            }
+            AppEvent::MainWindowUISetupComplete { window_id } => {
+                self._on_ui_setup_complete(window_id);
             }
         }
     }

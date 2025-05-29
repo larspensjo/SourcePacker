@@ -545,7 +545,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -620,7 +620,7 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
     mock_fs_scanner.set_scan_directory_result(&mock_profile.root_folder, Ok(vec![]));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -652,7 +652,7 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -685,7 +685,7 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
     let existing_profiles = vec!["ProfileA".to_string(), "ProfileB".to_string()];
     mock_profile_manager.set_list_profiles_result(Ok(existing_profiles.clone()));
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -707,7 +707,7 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
     mock_config_manager.set_load_last_profile_name_result(Err(config_error));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -745,7 +745,7 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
     mock_profile_manager.set_load_profile_result(last_profile_name, Err(profile_error));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic.on_main_window_created(WindowId(1));
+    logic._on_ui_setup_complete(WindowId(1));
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 

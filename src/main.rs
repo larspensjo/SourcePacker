@@ -96,26 +96,27 @@ fn main() -> PlatformResult<()> {
     log::debug!("Main window requested with ID: {:?}", main_window_id);
     log::debug!("Describe and Create Static UI Structure");
 
-    let ui_commands = ui_description_layer::describe_main_window_layout(main_window_id);
+    // Get initial UI commands from the description layer
+    let mut initial_commands = ui_description_layer::describe_main_window_layout(main_window_id);
     log::debug!(
-        "main: Received {} UI description commands.",
-        ui_commands.len()
+        "main: Received {} initial UI description commands.",
+        initial_commands.len()
     );
-    for command in ui_commands {
-        if let Err(e) = platform_interface.execute_command(command) {
-            log::error!("Fatal: Failed to execute UI description command: {:?}", e);
-            return Err(e);
-        }
-    }
 
-    log::debug!("Notify App Logic of UI Readiness");
-    my_app_logic.on_main_window_created(main_window_id);
-    log::debug!("AppLogic.on_main_window_created called; initial commands enqueued.");
+    // Append the signal command to indicate completion of static UI setup
+    initial_commands.push(
+        platform_layer::PlatformCommand::SignalMainWindowUISetupComplete {
+            window_id: main_window_id,
+        },
+    );
 
     let app_event_handler = Arc::new(Mutex::new(my_app_logic));
+    log::debug!(
+        "Starting platform event loop. Initial app logic commands will be queued by MainWindowUISetupComplete event."
+    );
 
-    log::debug!("Starting platform event loop...");
-    let run_result = platform_interface.run(app_event_handler);
+    // Pass the initial commands to the run loop for execution
+    let run_result = platform_interface.run(app_event_handler, initial_commands);
 
     match run_result {
         Ok(()) => log::debug!("Application exited cleanly."),

@@ -157,6 +157,10 @@ pub enum AppEvent {
         window_id: WindowId,
         path: Option<PathBuf>,
     },
+    // Signals that the initial static UI setup for the main window is complete.
+    MainWindowUISetupComplete {
+        window_id: WindowId,
+    },
 }
 
 // Defines the severity of a message to be displayed, e.g., in the status bar.
@@ -260,6 +264,11 @@ pub enum PlatformCommand {
         window_id: WindowId,
         control_id: i32, // The logical ID for the TreeView (e.g., ID_TREEVIEW_CTRL)
                          // Future: styles, position/size if not fully managed by WM_SIZE
+    },
+    // Signals to the platform layer that all initial UI description commands
+    // for the main window have been enqueued and processed.
+    SignalMainWindowUISetupComplete {
+        window_id: WindowId,
     },
 }
 
