@@ -9,7 +9,8 @@ use super::app::Win32ApiInternalState;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, CheckState, MenuAction, MessageSeverity, PlatformCommand, TreeItemId, WindowId,
+    AppEvent, CheckState, LayoutRule, MenuAction, MessageSeverity, PlatformCommand, TreeItemId,
+    WindowId,
 };
 
 use windows::{
@@ -57,8 +58,9 @@ const BUTTON_HEIGHT: i32 = 30;
  * Holds native data associated with a specific window managed by the platform layer.
  * This includes the native window handle (`HWND`), a map of control IDs to their
  * `HWND`s, any control-specific states (like for the TreeView), the current status
- * bar text and severity, a map for menu item actions (`menu_action_map`), and
- * a counter for generating unique menu item IDs (`next_menu_item_id_counter`).
+ * bar text and severity, a map for menu item actions (`menu_action_map`),
+ * a counter for generating unique menu item IDs (`next_menu_item_id_counter`),
+ * and a list of layout rules (`layout_rules`) for positioning controls.
  */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
@@ -86,6 +88,12 @@ pub(crate) struct NativeWindowData {
      * Initialized to a high value (e.g., 30000) to avoid clashes with other control IDs.
      */
     pub(crate) next_menu_item_id_counter: i32,
+    /*
+     * Stores layout rules for controls within this window.
+     * Populated by the `PlatformCommand::DefineLayout` command.
+     * If `None`, a default or hardcoded layout might be used (initially).
+     */
+    pub(crate) layout_rules: Option<Vec<LayoutRule>>,
 }
 
 impl NativeWindowData {

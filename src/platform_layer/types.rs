@@ -1,6 +1,3 @@
-use std::any::Any;
-use std::path::PathBuf;
-
 /*
  * This module defines core data types used for communication between the
  * application logic and the platform layer. It includes identifiers for windows
@@ -10,6 +7,9 @@ use std::path::PathBuf;
  * and semantic identifiers for menu actions (`MenuAction`). It also defines the
  * `PlatformEventHandler` trait that the application logic must implement.
  */
+
+use std::any::Any;
+use std::path::PathBuf;
 
 // An opaque identifier for a native window, managed by the platform layer.
 //
@@ -91,6 +91,38 @@ pub struct MenuItemConfig {
     pub action: Option<MenuAction>,
     pub text: String,
     pub children: Vec<MenuItemConfig>, // For submenus
+}
+
+// --- Layout Primitives ---
+
+/*
+ * Defines how a control should dock within its parent container.
+ * This is a simplified docking model. More advanced anchoring or grid systems
+ * could be introduced later.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockStyle {
+    None,   // No docking, control is positioned manually or by other rules.
+    Top,    // Docks to the top edge of the container.
+    Bottom, // Docks to the bottom edge of the container.
+    Left,   // Docks to the left edge of the container.
+    Right,  // Docks to the right edge of the container.
+    Fill,   // Fills the remaining space in the container.
+}
+
+/*
+ * A rule that associates a control (by its ID) with a specific docking style.
+ * The `order` field can be used to determine the sequence in which docking
+ * calculations are performed (e.g., top/bottom docks first, then left/right, then fill).
+ * Lower order values are typically processed first.
+ */
+#[derive(Debug, Clone)]
+pub struct LayoutRule {
+    pub control_id: i32, // The ID of the control this rule applies to.
+    pub dock_style: DockStyle,
+    pub order: u32, // Order of application (e.g., 0 for top, 1 for bottom, 10 for fill)
+    pub fixed_size: Option<i32>, // For Top/Bottom, this is height. For Left/Right, this is width. Not used for Fill/None.
+    pub margin: (i32, i32, i32, i32), // (top, right, bottom, left) margins around the control.
 }
 
 // --- Events from Platform to App Logic ---
@@ -178,7 +210,7 @@ pub enum MessageSeverity {
 //
 // These commands instruct the platform layer to perform specific actions on
 // native UI elements.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PlatformCommand {
     SetWindowTitle {
         window_id: WindowId,
@@ -251,24 +283,28 @@ pub enum PlatformCommand {
         window_id: WindowId,
         control_id: i32, // The existing logical ID (e.g., ID_BUTTON_GENERATE_ARCHIVE)
         text: String,
-        // Position/size can be added later if needed, relying on WM_SIZE for now.
+        // Position/size will be managed by DefineLayout command.
     },
     CreateStatusBar {
         window_id: WindowId,
         control_id: i32, // The existing logical ID (e.g., ID_STATUS_BAR_CTRL)
         initial_text: String,
-        // Position/size can be added later if needed.
+        // Position/size will be managed by DefineLayout command.
     },
     CreateTreeView {
-        // New command for explicit TreeView creation
         window_id: WindowId,
         control_id: i32, // The logical ID for the TreeView (e.g., ID_TREEVIEW_CTRL)
-                         // Future: styles, position/size if not fully managed by WM_SIZE
+                         // Position/size will be managed by DefineLayout command.
     },
     // Signals to the platform layer that all initial UI description commands
     // for the main window have been enqueued and processed.
     SignalMainWindowUISetupComplete {
         window_id: WindowId,
+    },
+    // New command to define layout rules for controls within a window.
+    DefineLayout {
+        window_id: WindowId,
+        rules: Vec<LayoutRule>,
     },
 }
 

@@ -723,6 +723,10 @@ impl Win32ApiInternalState {
             PlatformCommand::SignalMainWindowUISetupComplete { window_id } => {
                 self._handle_signal_main_window_ui_setup_complete_impl(window_id)
             }
+            PlatformCommand::DefineLayout { .. } => {
+                todo!("PlatformCommand::DefineLayout is not implemented for Win32 platform layer");
+                Ok(())
+            }
         }
     }
 
@@ -1219,8 +1223,9 @@ impl PlatformInterface {
             controls: HashMap::new(),
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
-            menu_action_map: HashMap::new(),  // Initialize new field
-            next_menu_item_id_counter: 30000, // Initialize new field
+            menu_action_map: HashMap::new(),
+            next_menu_item_id_counter: 30000,
+            layout_rules: None,
         };
         self.internal_state
             .window_map
@@ -1670,6 +1675,7 @@ mod app_tests {
             status_bar_current_severity: MessageSeverity::None,
             menu_action_map: HashMap::new(),
             next_menu_item_id_counter: 30000,
+            layout_rules: None,
         };
 
         let menu_items = vec![

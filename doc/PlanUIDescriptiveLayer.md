@@ -12,16 +12,7 @@ Whenever you want to change how your window looks like or population of controls
 
 **Goal:** Further refine the separation of concerns according to MVP principles, focusing on making the `platform_layer` a truly generic View. This involves ensuring all UI-specific knowledge (beyond what's needed to render generic controls and translate events) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter). This phase also focuses on restructuring the `platform_layer` code (primarily `app.rs` and `window_common.rs`) for better maintainability and implements a generic layout mechanism.
 
-**Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring (Steps A.1 & A.2 from previous plan)**
-
-**Step A.I.1: Define Layout Primitives & New `PlatformCommand`**
-    *   **Action a:** Define `LayoutRule`, `DockStyle`, etc. in `platform_layer/types.rs`.
-    *   **Action b:** Define `PlatformCommand::DefineLayout { ... }` in `platform_layer/types.rs`.
-    *   *Verification:* Compiles. App runs as before (no functional change yet).
-
-**Step A.I.2: Add `layout_rules` field to `NativeWindowData`**
-    *   **Action:** Add `layout_rules: Option<Vec<LayoutRule>>` (or similar) to `NativeWindowData` in `src/platform_layer/window_common.rs`. Initialize it to `None`.
-    *   *Verification:* Compiles. App runs as before.
+**Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring**
 
 **Step A.I.3: Implement `DefineLayout` Command Handler (Storing Rules)**
     *   **Action a:** Create the basic structure of `src/platform_layer/command_executor.rs`.
