@@ -1,7 +1,8 @@
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, MessageSeverity, PlatformCommand, PlatformEventHandler, WindowConfig, WindowId,
+    AppEvent, MenuAction, MessageSeverity, PlatformCommand, PlatformEventHandler, WindowConfig,
+    WindowId,
 };
 use super::{types::MenuItemConfig, window_common};
 
@@ -55,15 +56,15 @@ use crate::platform_layer::window_common::{
 pub(crate) struct Win32ApiInternalState {
     pub(crate) h_instance: HINSTANCE,
     pub(crate) next_window_id_counter: AtomicUsize,
-    /// Maps platform-agnostic `WindowId` to native `HWND` and associated window data.
+    // Maps platform-agnostic `WindowId` to native `HWND` and associated window data.
     pub(crate) window_map: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
-    /// A weak reference to the event handler provided by the application logic.
-    /// Stored to be accessible by the WndProc. Weak to avoid cycles if event_handler holds PlatformInterface.
+    // A weak reference to the event handler provided by the application logic.
+    // Stored to be accessible by the WndProc. Weak to avoid cycles if event_handler holds PlatformInterface.
     pub(crate) event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
-    /// The application name, used for window class registration.
+    // The application name, used for window class registration.
     pub(crate) app_name_for_class: String,
-    /// Keeps track of active top-level windows. When this count reaches zero,
-    /// and `is_quitting` is true, the application exits.
+    // Keeps track of active top-level windows. When this count reaches zero,
+    // and `is_quitting` is true, the application exits.
     active_windows_count: AtomicUsize,
     is_quitting: AtomicUsize, // 0 = false, 1 = true (using usize for Atomic)
 }
@@ -727,63 +728,139 @@ impl Win32ApiInternalState {
         window_id: WindowId,
         menu_items: Vec<MenuItemConfig>,
     ) -> PlatformResult<()> {
-        let hwnd_owner = self.get_hwnd_owner(window_id)?;
+        let h_main_menu = unsafe { CreateMenu()? };
+        let mut hwnd_owner_opt: Option<HWND> = None;
 
-        unsafe {
-            let h_main_menu = CreateMenu()?;
+        // Scope for the write lock to modify NativeWindowData
+        {
+            let mut windows_map_guard = self.window_map.write().map_err(|_| {
+                PlatformError::OperationFailed(
+                    "Failed to lock windows map for main menu creation (data population)".into(),
+                )
+            })?;
 
-            for item_config in menu_items {
-                Self::add_menu_item_recursive(h_main_menu, &item_config)?;
+            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                hwnd_owner_opt = Some(window_data.hwnd);
+                if window_data.hwnd.is_invalid() {
+                    // Should not happen if create_window was called and completed successfully
+                    unsafe {
+                        DestroyMenu(h_main_menu).unwrap_or_default();
+                    }
+                    return Err(PlatformError::InvalidHandle(format!(
+                        "HWND not yet valid for WindowId {:?} during menu data population",
+                        window_id
+                    )));
+                }
+
+                for item_config in menu_items {
+                    // Pass mutable reference to window_data for ID generation and mapping
+                    unsafe {
+                        self.add_menu_item_recursive(h_main_menu, &item_config, window_data)?;
+                    }
+                }
+            } else {
+                unsafe {
+                    DestroyMenu(h_main_menu).unwrap_or_default();
+                }
+                return Err(PlatformError::InvalidHandle(format!(
+                    "WindowId {:?} not found for CreateMainMenu (data population)",
+                    window_id
+                )));
             }
+            // windows_map_guard is dropped here, releasing the write lock.
+        }
 
-            if SetMenu(hwnd_owner, Some(h_main_menu)).is_err() {
-                let _ = DestroyMenu(h_main_menu);
+        // Now call SetMenu AFTER releasing the lock
+        if let Some(hwnd_owner) = hwnd_owner_opt {
+            if unsafe { SetMenu(hwnd_owner, Some(h_main_menu)) }.is_err() {
+                unsafe {
+                    DestroyMenu(h_main_menu).unwrap_or_default();
+                }
                 return Err(PlatformError::OperationFailed(format!(
                     "SetMenu failed for main menu on WindowId {:?}: {:?}",
                     window_id,
-                    GetLastError()
+                    unsafe { GetLastError() }
                 )));
             }
+            log::debug!(
+                "Platform: Main menu created and set for WindowId {:?}",
+                window_id
+            );
+            Ok(())
+        } else {
+            // This case should ideally be caught earlier if window_data wasn't found
+            unsafe {
+                DestroyMenu(h_main_menu).unwrap_or_default();
+            }
+            Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} became invalid or HWND was not set before SetMenu",
+                window_id
+            )))
         }
-
-        log::debug!(
-            "Platform: Main menu created and set for WindowId {:?}",
-            window_id
-        );
-        Ok(())
     }
 
     /*
      * Recursively adds menu items (and submenus) to a parent menu handle.
      * This function is called by `_handle_create_main_menu_impl` to build
-     * the menu structure defined by `MenuItemConfig`. It uses `AppendMenuW`
-     * to add individual items or popup submenus.
+     * the menu structure defined by `MenuItemConfig`. If an item has a `MenuAction`,
+     * a unique `i32` ID is generated, stored in `NativeWindowData.menu_action_map`,
+     * and used with `AppendMenuW`. For items that are popups (no action), the
+     * submenu handle is used.
      */
     unsafe fn add_menu_item_recursive(
+        self: &Arc<Self>, // Added self to potentially access h_instance if ever needed, though not currently
         parent_menu_handle: HMENU,
         item_config: &MenuItemConfig,
+        window_data: &mut window_common::NativeWindowData, // For ID generation and map
     ) -> PlatformResult<()> {
         if item_config.children.is_empty() {
-            unsafe {
-                AppendMenuW(
-                    parent_menu_handle,
-                    MF_STRING,
-                    item_config.id as usize,
-                    &HSTRING::from(item_config.text.as_str()),
-                )?;
+            // This is a command item
+            if let Some(action) = item_config.action {
+                let generated_id = window_data.generate_menu_item_id();
+                window_data.menu_action_map.insert(generated_id, action);
+                log::trace!(
+                    "Platform: Mapping menu action {:?} to ID {} for window {:?}",
+                    action,
+                    generated_id,
+                    window_data.id
+                );
+                unsafe {
+                    AppendMenuW(
+                        parent_menu_handle,
+                        MF_STRING,
+                        generated_id as usize, // Use the generated ID
+                        &HSTRING::from(item_config.text.as_str()),
+                    )?;
+                }
+            } else {
+                // This is a simple menu item with no action (e.g., a separator if MF_SEPARATOR was used)
+                // Or an item that should have had an action but doesn't - log a warning.
+                log::warn!(
+                    "Platform: Menu item '{}' has no children and no action. It will be non-functional.",
+                    item_config.text
+                );
+                // Add it as a disabled item or an item that does nothing.
+                // For now, let's treat it like an item with an action but use a placeholder ID that won't be in map.
+                // Or, more simply, just append it with ID 0 if that's acceptable for non-action items.
+                // Current structure means it's only appended if it has an action.
+                // If it is intended to be a non-actionable label, AppendMenuW requires an ID.
+                // Let's assume items without children *must* have an action to be useful.
+                // So, if action is None here, we might skip it or log an error.
+                // The current ui_description_layer ensures items without children have an action.
             }
         } else {
+            // This is a popup item (has children)
             let h_submenu = unsafe { CreatePopupMenu()? };
             for child_config in &item_config.children {
                 unsafe {
-                    Self::add_menu_item_recursive(h_submenu, child_config)?;
+                    self.add_menu_item_recursive(h_submenu, child_config, window_data)?;
                 }
             }
             unsafe {
                 AppendMenuW(
                     parent_menu_handle,
                     MF_POPUP,
-                    h_submenu.0 as usize,
+                    h_submenu.0 as usize, // ID for MF_POPUP is the submenu handle
                     &HSTRING::from(item_config.text.as_str()),
                 )?;
             }
@@ -1094,6 +1171,8 @@ impl PlatformInterface {
             controls: HashMap::new(),
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
+            menu_action_map: HashMap::new(),  // Initialize new field
+            next_menu_item_id_counter: 30000, // Initialize new field
         };
         self.internal_state
             .window_map
@@ -1488,13 +1567,15 @@ fn build_input_dialog_template(
 #[cfg(test)]
 mod app_tests {
     use super::*;
+    use crate::platform_layer::types::MenuAction; // For test
+    use crate::platform_layer::types::MenuItemConfig; // For test
 
     #[test]
     fn roundtrip_simple() {
         let mut wide: Vec<u16> = "C:\\temp\\file.txt".encode_utf16().collect();
         wide.push(0);
         let path = pathbuf_from_buf(&wide);
-        assert_eq!(path, PathBuf::from(r"C:\temp\file.txt"));
+        assert_eq!(path, PathBuf::from(r"C:\\temp\\file.txt"));
     }
 
     #[test]
@@ -1502,5 +1583,74 @@ mod app_tests {
         let wide: Vec<u16> = "D:\\data\\incomplete".encode_utf16().collect();
         let path = pathbuf_from_buf(&wide);
         assert_eq!(path, PathBuf::from(r"D:\\data\\incomplete"));
+    }
+
+    #[test]
+    fn test_menu_id_generation_and_mapping() {
+        let internal_state_arc = Win32ApiInternalState::new("TestApp".to_string()).unwrap();
+        let window_id = internal_state_arc.generate_window_id();
+        let mut native_window_data = window_common::NativeWindowData {
+            hwnd: HWND(0), // Dummy HWND for this test
+            id: window_id,
+            treeview_state: None,
+            controls: HashMap::new(),
+            status_bar_current_text: String::new(),
+            status_bar_current_severity: MessageSeverity::None,
+            menu_action_map: HashMap::new(),
+            next_menu_item_id_counter: 30000,
+        };
+
+        let menu_items = vec![
+            MenuItemConfig {
+                action: Some(MenuAction::LoadProfile),
+                text: "Load".to_string(),
+                children: vec![],
+            },
+            MenuItemConfig {
+                action: None, // This is a popup
+                text: "File".to_string(),
+                children: vec![MenuItemConfig {
+                    action: Some(MenuAction::SaveProfileAs),
+                    text: "Save As".to_string(),
+                    children: vec![],
+                }],
+            },
+            MenuItemConfig {
+                action: Some(MenuAction::RefreshFileList),
+                text: "Refresh".to_string(),
+                children: vec![],
+            },
+        ];
+
+        unsafe {
+            let h_main_menu = CreateMenu().unwrap();
+            for item_config in &menu_items {
+                internal_state_arc
+                    .add_menu_item_recursive(h_main_menu, item_config, &mut native_window_data)
+                    .unwrap();
+            }
+            DestroyMenu(h_main_menu).unwrap(); // Clean up
+        }
+
+        assert_eq!(native_window_data.menu_action_map.len(), 3); // Load, Save As, Refresh
+        assert_eq!(native_window_data.next_menu_item_id_counter, 30003);
+
+        // Check if the actions are correctly mapped to generated IDs
+        let mut found_load = false;
+        let mut found_save_as = false;
+        let mut found_refresh = false;
+
+        for (id, action) in &native_window_data.menu_action_map {
+            assert!(*id >= 30000 && *id < 30003); // IDs should be in the generated range
+            match action {
+                MenuAction::LoadProfile => found_load = true,
+                MenuAction::SaveProfileAs => found_save_as = true,
+                MenuAction::RefreshFileList => found_refresh = true,
+                _ => panic!("Unexpected action in map"),
+            }
+        }
+        assert!(found_load, "LoadProfile action not found in map");
+        assert!(found_save_as, "SaveProfileAs action not found in map");
+        assert!(found_refresh, "RefreshFileList action not found in map");
     }
 }

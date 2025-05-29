@@ -8,11 +8,8 @@
 
 use crate::platform_layer::{
     control_treeview::ID_TREEVIEW_CTRL,
-    types::{MenuItemConfig, PlatformCommand, WindowId},
-    window_common::{
-        ID_BUTTON_GENERATE_ARCHIVE, ID_MENU_FILE_LOAD_PROFILE, ID_MENU_FILE_REFRESH,
-        ID_MENU_FILE_SAVE_PROFILE_AS, ID_MENU_FILE_SET_ARCHIVE, ID_STATUS_BAR_CTRL,
-    },
+    types::{MenuAction, MenuItemConfig, PlatformCommand, WindowId},
+    window_common::{ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL},
 };
 
 /*
@@ -20,6 +17,7 @@ use crate::platform_layer::{
  * for the main application window. This includes creating the main menu, TreeView,
  * status bar, and other foundational UI elements like buttons.
  * These commands are processed by the platform layer to construct the native UI.
+ * Menu items use `MenuAction` for semantic identification.
  */
 pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     log::debug!("ui_description_layer: describe_main_window_layout called.");
@@ -29,17 +27,17 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
     // 1. Define the "File" menu structure
     let file_menu_items = vec![
         MenuItemConfig {
-            id: ID_MENU_FILE_LOAD_PROFILE,
+            action: Some(MenuAction::LoadProfile),
             text: "Load Profile...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            id: ID_MENU_FILE_SAVE_PROFILE_AS,
+            action: Some(MenuAction::SaveProfileAs),
             text: "Save Profile As...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            id: ID_MENU_FILE_SET_ARCHIVE,
+            action: Some(MenuAction::SetArchivePath),
             text: "Set Archive Path...".to_string(),
             children: Vec::new(),
         },
@@ -49,12 +47,12 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
         window_id,
         menu_items: vec![
             MenuItemConfig {
-                id: 0, // Top-level menu items like "&File" that are popups don't usually have command IDs themselves
+                action: None, // Top-level "&File" is a popup, no direct action
                 text: "&File".to_string(),
                 children: file_menu_items,
             },
             MenuItemConfig {
-                id: ID_MENU_FILE_REFRESH,
+                action: Some(MenuAction::RefreshFileList),
                 text: "&Refresh".to_string(),
                 children: Vec::new(),
             },
@@ -88,7 +86,7 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform_layer::{WindowId, control_treeview::ID_TREEVIEW_CTRL};
+    use crate::platform_layer::{WindowId, control_treeview::ID_TREEVIEW_CTRL, types::MenuAction};
 
     #[test]
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
@@ -112,15 +110,33 @@ mod tests {
 
         let menu_items = main_menu_cmd.unwrap();
         // Check for "File" menu
-        assert!(
-            menu_items
-                .iter()
-                .any(|item| item.text == "&File" && !item.children.is_empty())
+        let file_menu_item = menu_items.iter().find(|item| item.text == "&File");
+        assert!(file_menu_item.is_some(), "File menu item should exist.");
+        assert_eq!(
+            file_menu_item.unwrap().action,
+            None,
+            "File menu item should have no action (it's a popup)."
         );
+        assert!(
+            !file_menu_item.unwrap().children.is_empty(),
+            "File menu item should have children."
+        );
+
         // Check for "Refresh" menu directly
-        assert!(menu_items.iter().any(|item| item.text == "&Refresh"
-            && item.id == ID_MENU_FILE_REFRESH
-            && item.children.is_empty()));
+        let refresh_menu_item = menu_items.iter().find(|item| item.text == "&Refresh");
+        assert!(
+            refresh_menu_item.is_some(),
+            "Refresh menu item should exist."
+        );
+        assert_eq!(
+            refresh_menu_item.unwrap().action,
+            Some(MenuAction::RefreshFileList),
+            "Refresh menu item should have RefreshFileList action."
+        );
+        assert!(
+            refresh_menu_item.unwrap().children.is_empty(),
+            "Refresh menu item should have no children."
+        );
 
         // Check that "Refresh" is NOT under "File"
         let file_menu = menu_items.iter().find(|item| item.text == "&File").unwrap();
@@ -128,8 +144,23 @@ mod tests {
             !file_menu
                 .children
                 .iter()
-                .any(|sub_item| sub_item.id == ID_MENU_FILE_REFRESH)
+                .any(|sub_item| sub_item.action == Some(MenuAction::RefreshFileList))
         );
+
+        // Check specific actions under "File"
+        assert!(
+            file_menu
+                .children
+                .iter()
+                .any(|sub_item| sub_item.action == Some(MenuAction::LoadProfile)
+                    && sub_item.text == "Load Profile...")
+        );
+        assert!(file_menu.children.iter().any(|sub_item| sub_item.action
+            == Some(MenuAction::SaveProfileAs)
+            && sub_item.text == "Save Profile As..."));
+        assert!(file_menu.children.iter().any(|sub_item| sub_item.action
+            == Some(MenuAction::SetArchivePath)
+            && sub_item.text == "Set Archive Path..."));
     }
 
     #[test]

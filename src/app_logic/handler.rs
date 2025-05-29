@@ -5,7 +5,7 @@ use crate::core::{
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-    TreeItemDescriptor, TreeItemId, WindowId,
+    TreeItemDescriptor, TreeItemId, WindowId, types::MenuAction,
 };
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -562,7 +562,7 @@ impl MyAppLogic {
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {
-        app_debug!(self, "MenuLoadProfileClicked received.");
+        app_debug!(self, "MenuAction::LoadProfile action received by AppLogic.");
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -633,7 +633,10 @@ impl MyAppLogic {
     }
 
     fn handle_menu_save_profile_as_clicked(&mut self) {
-        app_debug!(self, "MenuSaveProfileAsClicked received.");
+        app_debug!(
+            self,
+            "MenuAction::SaveProfileAs action received by AppLogic."
+        );
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -813,8 +816,11 @@ impl MyAppLogic {
         // Currently does not generate commands.
     }
 
-    fn handle_menu_refresh_clicked(&mut self) {
-        app_debug!(self, "MenuRefreshClicked received.");
+    fn handle_menu_refresh_file_list_clicked(&mut self) {
+        app_debug!(
+            self,
+            "MenuAction::RefreshFileList action received by AppLogic."
+        );
         let window_id = match self.main_window_id {
             Some(id) => id,
             None => {
@@ -1264,9 +1270,12 @@ impl MyAppLogic {
         }
     }
 
-    fn handle_menu_set_archive_clicked(&mut self) {
+    fn handle_menu_set_archive_path_clicked(&mut self) {
         if let Some(main_id) = self.main_window_id {
-            app_debug!(self, "MenuSetArchiveClicked received.");
+            app_debug!(
+                self,
+                "MenuAction::SetArchivePath action received by AppLogic."
+            );
             if self.current_profile_cache.is_some() {
                 self.pending_action = Some(PendingAction::SettingArchivePath);
 
@@ -1338,23 +1347,23 @@ impl PlatformEventHandler for MyAppLogic {
             } => {
                 self.handle_button_clicked(window_id, control_id);
             }
-            AppEvent::MenuLoadProfileClicked => {
-                self.handle_menu_load_profile_clicked();
+            AppEvent::MenuActionClicked {
+                window_id: _,
+                action,
+            } => {
+                // window_id is available if needed
+                match action {
+                    MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
+                    MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
+                    MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
+                    MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
+                }
             }
             AppEvent::FileOpenProfileDialogCompleted { window_id, result } => {
                 self.handle_file_open_dialog_completed(window_id, result);
             }
-            AppEvent::MenuSaveProfileAsClicked => {
-                self.handle_menu_save_profile_as_clicked();
-            }
-            AppEvent::MenuSetArchiveClicked => {
-                self.handle_menu_set_archive_clicked();
-            }
             AppEvent::FileSaveDialogCompleted { window_id, result } => {
                 self.handle_file_save_dialog_completed(window_id, result);
-            }
-            AppEvent::MenuRefreshClicked => {
-                self.handle_menu_refresh_clicked();
             }
             AppEvent::WindowResized {
                 window_id,
