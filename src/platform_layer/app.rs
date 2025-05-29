@@ -2,26 +2,29 @@ use super::command_executor;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, MenuAction, MessageSeverity, PlatformCommand, PlatformEventHandler, WindowConfig,
-    WindowId,
+    AppEvent, CheckState, MenuAction, MessageSeverity, PlatformCommand, PlatformEventHandler,
+    TreeItemId, WindowConfig, WindowId,
 };
 use super::{types::MenuItemConfig, window_common};
 
 use windows::{
     Win32::{
         Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, RECT, TRUE, WPARAM},
-        Graphics::Gdi::InvalidateRect,
+        // Graphics::Gdi::InvalidateRect, // No longer directly used here for status bar
         System::Com::{
             CLSCTX_INPROC_SERVER, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize,
         },
         System::LibraryLoader::GetModuleHandleW,
-        System::SystemServices::SS_LEFTNOWORDWRAP,
+        System::SystemServices::SS_LEFTNOWORDWRAP, // No longer used here
         UI::Controls::{
-            Dialogs::*, ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
-            TVS_CHECKBOXES, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS,
-            WC_TREEVIEWW,
+            Dialogs::*,
+            ICC_TREEVIEW_CLASSES,
+            INITCOMMONCONTROLSEX,
+            InitCommonControlsEx,
+            // TVS_CHECKBOXES, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS, // No longer used here
+            // WC_TREEVIEWW, // No longer used here
         },
-        UI::Input::KeyboardAndMouse::EnableWindow,
+        // UI::Input::KeyboardAndMouse::EnableWindow, // No longer used here
         UI::Shell::{
             FOS_PICKFOLDERS, FileOpenDialog, IFileOpenDialog, IShellItem,
             SHCreateItemFromParsingName, SIGDN_FILESYSPATH,
@@ -41,10 +44,11 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use crate::platform_layer::window_common::{
-    BUTTON_AREA_HEIGHT, ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON,
-    WC_STATIC,
-};
+// These constants are used by command_executor now, but keep them here for dialogs or until full refactor.
+// use crate::platform_layer::window_common::{
+//     BUTTON_AREA_HEIGHT, ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON,
+//     WC_STATIC,
+// };
 
 /*
  * Internal state for the Win32 platform layer.
@@ -156,6 +160,8 @@ impl Win32ApiInternalState {
             })
     }
 
+    // _handle_show_save_file_dialog_impl and other dialog handlers remain here for now.
+    // They will be moved in the next step (A.I.6).
     fn _handle_show_save_file_dialog_impl(
         self: &Arc<Self>,
         window_id: WindowId,
@@ -500,117 +506,6 @@ impl Win32ApiInternalState {
         Ok(())
     }
 
-    fn _handle_quit_application_impl(self: &Arc<Self>) -> PlatformResult<()> {
-        log::debug!("Platform: Received QuitApplication command. Posting WM_QUIT.");
-        unsafe { PostQuitMessage(0) };
-        Ok(())
-    }
-
-    /*
-     * Handles the `PlatformCommand::UpdateStatusBarText` command.
-     * It updates the stored text and severity in `NativeWindowData` and then
-     * calls the WinAPI functions to update the visual appearance of the status bar.
-     * The lock on `window_map` is released before making WinAPI calls that might
-     * trigger synchronous messages (like WM_CTLCOLORSTATIC) to prevent deadlocks.
-     */
-    fn _handle_update_status_bar_text_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        text: String,
-        severity: MessageSeverity,
-    ) -> PlatformResult<()> {
-        match severity {
-            MessageSeverity::Error => {
-                log::error!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
-            }
-            MessageSeverity::Warning => {
-                log::warn!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
-            }
-            MessageSeverity::Information => {
-                log::info!("Platform Status (WinID {:?} INFO): {}", window_id, text)
-            }
-            MessageSeverity::Debug => {
-                log::debug!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
-            }
-            MessageSeverity::None => {
-                log::debug!("Platform Status (WinID {:?} CLEAR)", window_id)
-            }
-        }
-
-        let mut text_to_set_on_control: Option<String> = None;
-        let mut hwnd_status_bar_for_api_call: Option<HWND> = None;
-
-        // Scope for the write lock on window_map
-        {
-            let mut windows_map_guard = self.window_map.write().map_err(|_| {
-                PlatformError::OperationFailed(
-                    "Failed to lock windows map for status update".into(),
-                )
-            })?;
-
-            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                // Logic to decide if the status bar UI needs updating
-                if severity == MessageSeverity::None {
-                    window_data.status_bar_current_text.clear();
-                    window_data.status_bar_current_severity = MessageSeverity::None;
-                    text_to_set_on_control = Some("".to_string());
-                } else if severity >= window_data.status_bar_current_severity {
-                    window_data.status_bar_current_text = text.clone(); // Store full text
-                    window_data.status_bar_current_severity = severity;
-                    text_to_set_on_control = Some(text.clone()); // Text to actually set on the control
-                } else {
-                    // Incoming message is lower severity, do not update UI, but it was already logged.
-                    log::debug!(
-                        "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY_UI_UPDATE): current severity {:?}, incoming {:?})",
-                        window_id,
-                        window_data.status_bar_current_severity,
-                        severity
-                    );
-                    return Ok(()); // Early exit, no UI update needed for this command
-                }
-
-                // Get the HWND for the status bar.
-                hwnd_status_bar_for_api_call = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL);
-            } else {
-                return Err(PlatformError::InvalidHandle(format!(
-                    "WindowId {:?} not found for status bar update",
-                    window_id
-                )));
-            }
-        } // Write lock on window_map (windows_map_guard) is released here.
-
-        // Perform WinAPI calls *after* releasing the lock.
-        if let Some(hwnd_status) = hwnd_status_bar_for_api_call {
-            if let Some(final_text) = text_to_set_on_control {
-                // This text was determined while the lock was held.
-                unsafe {
-                    if SetWindowTextW(hwnd_status, &HSTRING::from(final_text)).is_err() {
-                        return Err(PlatformError::OperationFailed(format!(
-                            "SetWindowTextW for status bar failed: {:?}",
-                            GetLastError()
-                        )));
-                    }
-                    // Invalidate the status bar control to force a repaint.
-                    // WM_CTLCOLORSTATIC will then use the (already updated) severity for color.
-                    InvalidateRect(Some(hwnd_status), None, true); // true to erase background
-                }
-                Ok(())
-            } else {
-                // This case means no UI update was needed (e.g., lower severity message)
-                Ok(())
-            }
-        } else {
-            // HWND not found in the controls map.
-            log::error!(
-                "Platform Warning: Status bar HWND (ID {}) not found for WindowId {:?} during UI update. Text was: '{}'",
-                ID_STATUS_BAR_CTRL,
-                window_id,
-                text,
-            );
-            Ok(())
-        }
-    }
-
     /*
      * Executes a single platform command directly.
      * This method centralizes the handling of all platform commands, whether
@@ -622,25 +517,26 @@ impl Win32ApiInternalState {
         log::debug!("Platform: Executing command: {:?}", command);
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
-                window_common::set_window_title(self, window_id, &title)
+                command_executor::execute_set_window_title(self, window_id, &title)
             }
             PlatformCommand::ShowWindow { window_id } => {
-                window_common::show_window(self, window_id, true)
+                command_executor::execute_show_window(self, window_id, true)
             }
             PlatformCommand::CloseWindow { window_id } => {
-                window_common::send_close_message(self, window_id)
+                command_executor::execute_close_window(self, window_id)
             }
             PlatformCommand::PopulateTreeView { window_id, items } => {
-                control_treeview::populate_treeview(self, window_id, items)
+                command_executor::execute_populate_treeview(self, window_id, items)
             }
             PlatformCommand::UpdateTreeItemVisualState {
                 window_id,
                 item_id,
                 new_state,
-            } => control_treeview::update_treeview_item_visual_state(
+            } => command_executor::execute_update_tree_item_visual_state(
                 self, window_id, item_id, new_state,
             ),
             PlatformCommand::ShowSaveFileDialog {
+                // Stays here for now
                 window_id,
                 title,
                 default_filename,
@@ -654,6 +550,7 @@ impl Win32ApiInternalState {
                 initial_dir,
             ),
             PlatformCommand::ShowOpenFileDialog {
+                // Stays here for now
                 window_id,
                 title,
                 filter_spec,
@@ -665,8 +562,9 @@ impl Win32ApiInternalState {
                 window_id,
                 text,
                 severity,
-            } => self._handle_update_status_bar_text_impl(window_id, text, severity),
+            } => command_executor::execute_update_status_bar_text(self, window_id, text, severity),
             PlatformCommand::ShowProfileSelectionDialog {
+                // Stays here for now
                 window_id,
                 available_profiles,
                 title,
@@ -680,6 +578,7 @@ impl Win32ApiInternalState {
                 emphasize_create_new,
             ),
             PlatformCommand::ShowInputDialog {
+                // Stays here for now
                 window_id,
                 title,
                 prompt,
@@ -693,6 +592,7 @@ impl Win32ApiInternalState {
                 context_tag,
             ),
             PlatformCommand::ShowFolderPickerDialog {
+                // Stays here for now
                 window_id,
                 title,
                 initial_dir,
@@ -701,484 +601,39 @@ impl Win32ApiInternalState {
                 window_id,
                 control_id,
                 enabled,
-            } => self._handle_set_control_enabled_impl(window_id, control_id, enabled),
-            PlatformCommand::QuitApplication => self._handle_quit_application_impl(),
+            } => {
+                command_executor::execute_set_control_enabled(self, window_id, control_id, enabled)
+            }
+            PlatformCommand::QuitApplication => command_executor::execute_quit_application(self),
             PlatformCommand::CreateMainMenu {
                 window_id,
                 menu_items,
-            } => self._handle_create_main_menu_impl(window_id, menu_items),
+            } => command_executor::execute_create_main_menu(self, window_id, menu_items),
             PlatformCommand::CreateButton {
                 window_id,
                 control_id,
                 text,
-            } => self._handle_create_button_impl(window_id, control_id, text),
+            } => command_executor::execute_create_button(self, window_id, control_id, text),
             PlatformCommand::CreateStatusBar {
                 window_id,
                 control_id,
                 initial_text,
-            } => self._handle_create_status_bar_impl(window_id, control_id, initial_text),
+            } => command_executor::execute_create_status_bar(
+                self,
+                window_id,
+                control_id,
+                initial_text,
+            ),
             PlatformCommand::CreateTreeView {
                 window_id,
                 control_id,
-            } => self._handle_create_treeview_impl(window_id, control_id),
+            } => command_executor::execute_create_treeview(self, window_id, control_id),
             PlatformCommand::SignalMainWindowUISetupComplete { window_id } => {
-                self._handle_signal_main_window_ui_setup_complete_impl(window_id)
+                command_executor::execute_signal_main_window_ui_setup_complete(self, window_id)
             }
             PlatformCommand::DefineLayout { window_id, rules } => {
                 command_executor::execute_define_layout(self, window_id, rules)
             }
-        }
-    }
-
-    /*
-     * Handles the `PlatformCommand::SignalMainWindowUISetupComplete` command.
-     * This method is called when all initial static UI description commands have been
-     * processed. It retrieves the application's event handler and sends it an
-     * `AppEvent::MainWindowUISetupComplete` to signal that `MyAppLogic` can proceed
-     * with its data-dependent UI initialization.
-     */
-    fn _handle_signal_main_window_ui_setup_complete_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-    ) -> PlatformResult<()> {
-        log::debug!(
-            "Platform: Handling SignalMainWindowUISetupComplete for window_id: {:?}",
-            window_id
-        );
-
-        // Obtain the Arc to the event handler. The lock on self.event_handler is released after this block.
-        let handler_arc_opt = {
-            let event_handler_guard = self.event_handler.lock().map_err(|_e| {
-                PlatformError::OperationFailed("Failed to lock internal event_handler field".into())
-            })?;
-            event_handler_guard
-                .as_ref()
-                .and_then(|weak_handler| weak_handler.upgrade())
-        };
-
-        if let Some(handler_arc) = handler_arc_opt {
-            // Now lock the actual event handler (MyAppLogic) to send the event.
-            let mut handler_guard = handler_arc.lock().map_err(|_e| {
-                PlatformError::OperationFailed(
-                    "Failed to lock app event handler for MainWindowUISetupComplete".into(),
-                )
-            })?;
-            handler_guard.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
-            Ok(())
-        } else {
-            log::error!(
-                "Platform: Event handler not available to send MainWindowUISetupComplete event."
-            );
-            Err(PlatformError::OperationFailed(
-                "Event handler (MyAppLogic) not available for MainWindowUISetupComplete.".into(),
-            ))
-        }
-    }
-
-    fn _handle_create_main_menu_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        menu_items: Vec<MenuItemConfig>,
-    ) -> PlatformResult<()> {
-        let h_main_menu = unsafe { CreateMenu()? };
-        let mut hwnd_owner_opt: Option<HWND> = None;
-
-        // Scope for the write lock to modify NativeWindowData
-        {
-            let mut windows_map_guard = self.window_map.write().map_err(|_| {
-                PlatformError::OperationFailed(
-                    "Failed to lock windows map for main menu creation (data population)".into(),
-                )
-            })?;
-
-            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                hwnd_owner_opt = Some(window_data.hwnd);
-                if window_data.hwnd.is_invalid() {
-                    // Should not happen if create_window was called and completed successfully
-                    unsafe {
-                        DestroyMenu(h_main_menu).unwrap_or_default();
-                    }
-                    return Err(PlatformError::InvalidHandle(format!(
-                        "HWND not yet valid for WindowId {:?} during menu data population",
-                        window_id
-                    )));
-                }
-
-                for item_config in menu_items {
-                    // Pass mutable reference to window_data for ID generation and mapping
-                    unsafe {
-                        self.add_menu_item_recursive(h_main_menu, &item_config, window_data)?;
-                    }
-                }
-            } else {
-                unsafe {
-                    DestroyMenu(h_main_menu).unwrap_or_default();
-                }
-                return Err(PlatformError::InvalidHandle(format!(
-                    "WindowId {:?} not found for CreateMainMenu (data population)",
-                    window_id
-                )));
-            }
-            // windows_map_guard is dropped here, releasing the write lock.
-        }
-
-        // Now call SetMenu AFTER releasing the lock
-        if let Some(hwnd_owner) = hwnd_owner_opt {
-            if unsafe { SetMenu(hwnd_owner, Some(h_main_menu)) }.is_err() {
-                unsafe {
-                    DestroyMenu(h_main_menu).unwrap_or_default();
-                }
-                return Err(PlatformError::OperationFailed(format!(
-                    "SetMenu failed for main menu on WindowId {:?}: {:?}",
-                    window_id,
-                    unsafe { GetLastError() }
-                )));
-            }
-            log::debug!(
-                "Platform: Main menu created and set for WindowId {:?}",
-                window_id
-            );
-            Ok(())
-        } else {
-            // This case should ideally be caught earlier if window_data wasn't found
-            unsafe {
-                DestroyMenu(h_main_menu).unwrap_or_default();
-            }
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} became invalid or HWND was not set before SetMenu",
-                window_id
-            )))
-        }
-    }
-
-    /*
-     * Recursively adds menu items (and submenus) to a parent menu handle.
-     * This function is called by `_handle_create_main_menu_impl` to build
-     * the menu structure defined by `MenuItemConfig`. If an item has a `MenuAction`,
-     * a unique `i32` ID is generated, stored in `NativeWindowData.menu_action_map`,
-     * and used with `AppendMenuW`. For items that are popups (no action), the
-     * submenu handle is used.
-     */
-    unsafe fn add_menu_item_recursive(
-        self: &Arc<Self>, // Added self to potentially access h_instance if ever needed, though not currently
-        parent_menu_handle: HMENU,
-        item_config: &MenuItemConfig,
-        window_data: &mut window_common::NativeWindowData, // For ID generation and map
-    ) -> PlatformResult<()> {
-        if item_config.children.is_empty() {
-            // This is a command item
-            if let Some(action) = item_config.action {
-                let generated_id = window_data.generate_menu_item_id();
-                window_data.menu_action_map.insert(generated_id, action);
-                log::trace!(
-                    "Platform: Mapping menu action {:?} to ID {} for window {:?}",
-                    action,
-                    generated_id,
-                    window_data.id
-                );
-                unsafe {
-                    AppendMenuW(
-                        parent_menu_handle,
-                        MF_STRING,
-                        generated_id as usize, // Use the generated ID
-                        &HSTRING::from(item_config.text.as_str()),
-                    )?;
-                }
-            } else {
-                // This is a simple menu item with no action (e.g., a separator if MF_SEPARATOR was used)
-                // Or an item that should have had an action but doesn't - log a warning.
-                log::warn!(
-                    "Platform: Menu item '{}' has no children and no action. It will be non-functional.",
-                    item_config.text
-                );
-                // Add it as a disabled item or an item that does nothing.
-                // For now, let's treat it like an item with an action but use a placeholder ID that won't be in map.
-                // Or, more simply, just append it with ID 0 if that's acceptable for non-action items.
-                // Current structure means it's only appended if it has an action.
-                // If it is intended to be a non-actionable label, AppendMenuW requires an ID.
-                // Let's assume items without children *must* have an action to be useful.
-                // So, if action is None here, we might skip it or log an error.
-                // The current ui_description_layer ensures items without children have an action.
-            }
-        } else {
-            // This is a popup item (has children)
-            let h_submenu = unsafe { CreatePopupMenu()? };
-            for child_config in &item_config.children {
-                unsafe {
-                    self.add_menu_item_recursive(h_submenu, child_config, window_data)?;
-                }
-            }
-            unsafe {
-                AppendMenuW(
-                    parent_menu_handle,
-                    MF_POPUP,
-                    h_submenu.0 as usize, // ID for MF_POPUP is the submenu handle
-                    &HSTRING::from(item_config.text.as_str()),
-                )?;
-            }
-        }
-        Ok(())
-    }
-
-    fn _handle_set_control_enabled_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        control_id: i32,
-        enabled: bool,
-    ) -> PlatformResult<()> {
-        let windows_guard = self.window_map.read().map_err(|_| {
-            PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
-        })?;
-
-        if let Some(window_data) = windows_guard.get(&window_id) {
-            let hwnd_ctrl_opt = window_data.get_control_hwnd(control_id);
-
-            let hwnd_ctrl = match hwnd_ctrl_opt {
-                Some(hwnd) => hwnd,
-                None => {
-                    return Err(PlatformError::InvalidHandle(format!(
-                        "Control ID {} not found in window {:?}",
-                        control_id, window_id
-                    )));
-                }
-            };
-
-            unsafe {
-                EnableWindow(hwnd_ctrl, enabled);
-            }
-            log::debug!(
-                "Platform: Control ID {} in window {:?} set to enabled: {}",
-                control_id,
-                window_id,
-                enabled
-            );
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for SetControlEnabled",
-                window_id
-            )))
-        }
-    }
-
-    /*
-     * Handles the `PlatformCommand::CreateButton` command.
-     * This method creates a native button control within the specified window
-     * and stores its HWND in the window's `NativeWindowData.controls` map.
-     * The button's position and size will be managed by `WM_SIZE`.
-     */
-    fn _handle_create_button_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        control_id: i32,
-        text: String,
-    ) -> PlatformResult<()> {
-        let mut windows_map_guard = self.window_map.write().map_err(|_| {
-            PlatformError::OperationFailed("Failed to lock windows map for button creation".into())
-        })?;
-
-        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            if window_data.controls.contains_key(&control_id) {
-                return Err(PlatformError::OperationFailed(format!(
-                    "Button with ID {} already exists for window {:?}",
-                    control_id, window_id
-                )));
-            }
-
-            let hwnd_button = unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    WC_BUTTON,
-                    &HSTRING::from(text.as_str()),
-                    WS_CHILD | WS_VISIBLE | WINDOW_STYLE(BS_PUSHBUTTON as u32),
-                    0,
-                    0,
-                    10,
-                    10, // Dummies, WM_SIZE will adjust
-                    Some(window_data.hwnd),
-                    Some(HMENU(control_id as *mut c_void)),
-                    Some(self.h_instance),
-                    None,
-                )?
-            };
-            window_data.controls.insert(control_id, hwnd_button);
-            log::debug!(
-                "Platform: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
-                text,
-                control_id,
-                window_id,
-                hwnd_button
-            );
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for CreateButton",
-                window_id
-            )))
-        }
-    }
-
-    /*
-     * Handles the `PlatformCommand::CreateStatusBar` command.
-     * This method creates a native status bar control (using a STATIC control)
-     * within the specified window. It stores its HWND in
-     * `NativeWindowData.controls`.
-     * The status bar's position and size will be managed by `WM_SIZE`.
-     */
-    fn _handle_create_status_bar_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        control_id: i32,
-        initial_text: String,
-    ) -> PlatformResult<()> {
-        log::debug!(
-            "Platform: Handling CreateStatusBar command for WinID {:?}, CtrlID {}, Text: '{}'",
-            window_id,
-            control_id,
-            initial_text
-        );
-        let mut windows_map_guard = self.window_map.write().map_err(|_| {
-            PlatformError::OperationFailed(
-                "Failed to lock windows map for status bar creation".into(),
-            )
-        })?;
-
-        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            if window_data.controls.contains_key(&control_id) {
-                return Err(PlatformError::OperationFailed(format!(
-                    "Status bar with ID {} already present for window {:?}",
-                    control_id, window_id
-                )));
-            }
-
-            let hwnd_status_bar = unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    WC_STATIC,
-                    &HSTRING::from(initial_text.as_str()),
-                    WS_CHILD | WS_VISIBLE | SS_LEFT,
-                    0,
-                    0,
-                    0,
-                    0, // Dummies, WM_SIZE will adjust
-                    Some(window_data.hwnd),
-                    Some(HMENU(control_id as *mut c_void)),
-                    Some(self.h_instance),
-                    None,
-                )?
-            };
-            window_data.controls.insert(control_id, hwnd_status_bar);
-            window_data.status_bar_current_text = initial_text.clone();
-            window_data.status_bar_current_severity = MessageSeverity::Information;
-
-            log::debug!(
-                "Platform: Created status bar (ID {}) for window {:?} with HWND {:?}, initial text: '{}'",
-                control_id,
-                window_id,
-                hwnd_status_bar,
-                initial_text
-            );
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for CreateStatusBar",
-                window_id
-            )))
-        }
-    }
-
-    /*
-     * Handles the `PlatformCommand::CreateTreeView` command.
-     * This method creates a native TreeView control within the specified window.
-     * It stores its HWND in `NativeWindowData.controls` and initializes
-     * `NativeWindowData.treeview_state` with the `TreeViewInternalState`.
-     * The TreeView's position and size will be managed by `WM_SIZE`.
-     */
-    fn _handle_create_treeview_impl(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        control_id: i32,
-    ) -> PlatformResult<()> {
-        log::debug!(
-            "Platform: Handling CreateTreeView command for WinID {:?}, CtrlID {}",
-            window_id,
-            control_id
-        );
-        let mut windows_map_guard = self.window_map.write().map_err(|_| {
-            PlatformError::OperationFailed(
-                "Failed to lock windows map for TreeView creation".into(),
-            )
-        })?;
-
-        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            if window_data.controls.contains_key(&control_id)
-                || window_data.treeview_state.is_some()
-            {
-                return Err(PlatformError::ControlCreationFailed(format!(
-                    "TreeView with ID {} or existing TreeView state already present for window {:?}",
-                    control_id, window_id
-                )));
-            }
-
-            // Get initial dimensions based on parent window's client area (dummy values if not available yet)
-            let mut client_rect = RECT::default();
-            if !window_data.hwnd.is_invalid() {
-                unsafe { GetClientRect(window_data.hwnd, &mut client_rect)? };
-            } else {
-                // Fallback if parent HWND not fully ready (should not happen if create_window is called first)
-                client_rect.right = 600; // Arbitrary default
-                client_rect.bottom = 400; // Arbitrary default
-            }
-
-            let tvs_style = WINDOW_STYLE(
-                TVS_HASLINES
-                    | TVS_LINESATROOT
-                    | TVS_HASBUTTONS
-                    | TVS_SHOWSELALWAYS
-                    | TVS_CHECKBOXES,
-            );
-            let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
-
-            // Initial size, WM_SIZE will adjust it correctly later.
-            // Subtract placeholder for button area and status bar.
-            let tv_width = client_rect.right - client_rect.left;
-            let tv_height = client_rect.bottom
-                - client_rect.top
-                - BUTTON_AREA_HEIGHT
-                - window_common::STATUS_BAR_HEIGHT;
-
-            let hwnd_tv = unsafe {
-                CreateWindowExW(
-                    WINDOW_EX_STYLE(0),
-                    WC_TREEVIEWW,
-                    PCWSTR::null(),
-                    combined_style,
-                    0,                 // X
-                    0,                 // Y
-                    tv_width.max(10),  // nWidth, ensure non-zero
-                    tv_height.max(10), // nHeight, ensure non-zero
-                    Some(window_data.hwnd),
-                    Some(HMENU(control_id as *mut c_void)),
-                    Some(self.h_instance),
-                    None,
-                )?
-            };
-
-            window_data.controls.insert(control_id, hwnd_tv);
-            window_data.treeview_state = Some(control_treeview::TreeViewInternalState::new()); // HWND no longer passed
-
-            log::debug!(
-                "Platform: Created TreeView (ID {}) for window {:?} with HWND {:?}",
-                control_id,
-                window_id,
-                hwnd_tv
-            );
-            Ok(())
-        } else {
-            Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for CreateTreeView",
-                window_id
-            )))
         }
     }
 }
@@ -1273,7 +728,7 @@ impl PlatformInterface {
                     log::debug!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
                         window_id,
-                        window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
+                        window_data.get_control_hwnd(window_common::ID_STATUS_BAR_CTRL)
                     );
                 } else {
                     log::error!(
@@ -1643,9 +1098,12 @@ fn build_input_dialog_template(
 #[cfg(test)]
 mod app_tests {
     use super::*;
-    use crate::platform_layer::types::MenuAction; // For test
-    use crate::platform_layer::types::MenuItemConfig; // For test
-    use std::ptr; // Added for null_mut
+    // use crate::platform_layer::types::MenuAction; // No longer needed here
+    // use crate::platform_layer::types::MenuItemConfig; // No longer needed here
+    use std::ffi::OsString; // Keep for pathbuf_from_buf tests
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf; // Keep for pathbuf_from_buf tests // Keep for pathbuf_from_buf tests
+    // use std::ptr; // No longer needed here
 
     #[test]
     fn roundtrip_simple() {
@@ -1662,73 +1120,5 @@ mod app_tests {
         assert_eq!(path, PathBuf::from(r"D:\\data\\incomplete"));
     }
 
-    #[test]
-    fn test_menu_id_generation_and_mapping() {
-        let internal_state_arc = Win32ApiInternalState::new("TestApp".to_string()).unwrap();
-        let window_id = internal_state_arc.generate_window_id();
-        let mut native_window_data = window_common::NativeWindowData {
-            hwnd: HWND(ptr::null_mut()), // Dummy HWND for this test
-            id: window_id,
-            treeview_state: None,
-            controls: HashMap::new(),
-            status_bar_current_text: String::new(),
-            status_bar_current_severity: MessageSeverity::None,
-            menu_action_map: HashMap::new(),
-            next_menu_item_id_counter: 30000,
-            layout_rules: None,
-        };
-
-        let menu_items = vec![
-            MenuItemConfig {
-                action: Some(MenuAction::LoadProfile),
-                text: "Load".to_string(),
-                children: vec![],
-            },
-            MenuItemConfig {
-                action: None, // This is a popup
-                text: "File".to_string(),
-                children: vec![MenuItemConfig {
-                    action: Some(MenuAction::SaveProfileAs),
-                    text: "Save As".to_string(),
-                    children: vec![],
-                }],
-            },
-            MenuItemConfig {
-                action: Some(MenuAction::RefreshFileList),
-                text: "Refresh".to_string(),
-                children: vec![],
-            },
-        ];
-
-        unsafe {
-            let h_main_menu = CreateMenu().unwrap();
-            for item_config in &menu_items {
-                internal_state_arc
-                    .add_menu_item_recursive(h_main_menu, item_config, &mut native_window_data)
-                    .unwrap();
-            }
-            DestroyMenu(h_main_menu).unwrap(); // Clean up
-        }
-
-        assert_eq!(native_window_data.menu_action_map.len(), 3); // Load, Save As, Refresh
-        assert_eq!(native_window_data.next_menu_item_id_counter, 30003);
-
-        // Check if the actions are correctly mapped to generated IDs
-        let mut found_load = false;
-        let mut found_save_as = false;
-        let mut found_refresh = false;
-
-        for (id, action) in &native_window_data.menu_action_map {
-            assert!(*id >= 30000 && *id < 30003); // IDs should be in the generated range
-            match action {
-                MenuAction::LoadProfile => found_load = true,
-                MenuAction::SaveProfileAs => found_save_as = true,
-                MenuAction::RefreshFileList => found_refresh = true,
-                _ => panic!("Unexpected action in map"),
-            }
-        }
-        assert!(found_load, "LoadProfile action not found in map");
-        assert!(found_save_as, "SaveProfileAs action not found in map");
-        assert!(found_refresh, "RefreshFileList action not found in map");
-    }
+    // test_menu_id_generation_and_mapping IS REMOVED FROM HERE
 }
