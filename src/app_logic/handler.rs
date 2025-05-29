@@ -55,28 +55,6 @@ macro_rules! status_message {
 macro_rules! app_info { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Information, info, $($arg)*) }; }
 macro_rules! app_error { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Error, error, $($arg)*) }; }
 macro_rules! app_warn { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Warning, warn, $($arg)*) }; }
-// app_debug already sends to status bar only in debug_assertions.
-// We'll make it also log via `log::debug!` in debug_assertions.
-macro_rules! app_debug {
-    ($self:expr, $($arg:tt)*) => {
-        #[cfg(debug_assertions)]
-        {
-            let text = format!($($arg)*);
-            // Log using the standard `log` crate
-            debug!("AppLogic Debug: {}", text);
-
-            // Update UI status bar (only in debug builds for debug messages)
-            if let Some(main_id) = $self.main_window_id {
-                $self.synchronous_command_queue
-                    .push_back(PlatformCommand::UpdateStatusBarText {
-                        window_id: main_id,
-                        text: text,
-                        severity: MessageSeverity::Debug,
-                    });
-            }
-        }
-    };
-}
 
 /*
  * Manages the core application state and UI logic in a platform-agnostic manner.
@@ -197,8 +175,7 @@ impl MyAppLogic {
      */
     pub fn on_main_window_created(&mut self, window_id: WindowId) {
         self.main_window_id = Some(window_id);
-        app_debug!(
-            self,
+        log::debug!(
             "Main window created (ID: {:?}). Attempting to load last profile.",
             window_id
         );
@@ -208,7 +185,7 @@ impl MyAppLogic {
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
         {
             Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
-                app_debug!(self, "Found last used profile name: {}", last_profile_name);
+                log::debug!("Found last used profile name: {}", last_profile_name);
                 match self
                     .profile_manager
                     .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
@@ -416,7 +393,7 @@ impl MyAppLogic {
     fn handle_window_destroyed(&mut self, window_id: WindowId) {
         if self.main_window_id == Some(window_id) {
             // Log directly that the main window is being handled for destruction.
-            // The app_debug! macro checks self.main_window_id to queue UI status updates.
+            // The log::debug! macro checks self.main_window_id to queue UI status updates.
             // By setting self.main_window_id = None first, or by logging directly like this,
             // we avoid trying to send a status bar update to a window that's already gone
             // from the platform layer's perspective.
@@ -441,8 +418,7 @@ impl MyAppLogic {
         item_id: TreeItemId,
         new_state: CheckState,
     ) {
-        app_debug!(
-            self,
+        log::debug!(
             "TreeItem {:?} toggled to UI state {:?}.",
             item_id,
             new_state
@@ -484,8 +460,7 @@ impl MyAppLogic {
                     root_node_for_visual_update,
                     &mut visual_updates_list,
                 );
-                app_debug!(
-                    self,
+                log::debug!(
                     "Requesting {} visual updates for TreeView after toggle.",
                     visual_updates_list.len()
                 );
@@ -562,7 +537,7 @@ impl MyAppLogic {
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {
-        app_debug!(self, "MenuAction::LoadProfile action received by AppLogic.");
+        log::debug!("MenuAction::LoadProfile action received by AppLogic.");
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -580,15 +555,14 @@ impl MyAppLogic {
     fn handle_file_open_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
         if self.main_window_id == Some(window_id) {
             if let Some(profile_file_path) = result {
-                app_debug!(self, "Profile selected for load: {:?}", profile_file_path);
+                log::debug!("Profile selected for load: {:?}", profile_file_path);
                 match self
                     .profile_manager
                     .load_profile_from_path(&profile_file_path)
                 {
                     Ok(loaded_profile) => {
                         let profile_name_clone = loaded_profile.name.clone();
-                        app_debug!(
-                            self,
+                        log::debug!(
                             "Successfully loaded profile '{}' via manager from path.",
                             loaded_profile.name
                         );
@@ -633,10 +607,7 @@ impl MyAppLogic {
     }
 
     fn handle_menu_save_profile_as_clicked(&mut self) {
-        app_debug!(
-            self,
-            "MenuAction::SaveProfileAs action received by AppLogic."
-        );
+        log::debug!("MenuAction::SaveProfileAs action received by AppLogic.");
         if let Some(main_id) = self.main_window_id {
             let profile_dir_opt = self
                 .profile_manager
@@ -666,7 +637,7 @@ impl MyAppLogic {
         match action {
             Some(PendingAction::SettingArchivePath) => {
                 if let Some(path) = result {
-                    app_debug!(self, "Archive path selected: {:?}", path);
+                    log::debug!("Archive path selected: {:?}", path);
                     if let Some(profile) = &mut self.current_profile_cache {
                         profile.archive_path = Some(path.clone());
                         match self
@@ -712,7 +683,7 @@ impl MyAppLogic {
             }
             Some(PendingAction::SavingProfile) => {
                 if let Some(profile_save_path) = result {
-                    app_debug!(self, "Profile save path selected: {:?}", profile_save_path);
+                    log::debug!("Profile save path selected: {:?}", profile_save_path);
                     if let Some(profile_name_osstr) = profile_save_path.file_stem() {
                         if let Some(profile_name_str) =
                             profile_name_osstr.to_str().map(|s| s.to_string())
@@ -736,8 +707,7 @@ impl MyAppLogic {
                                     .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
                                 {
                                     Ok(()) => {
-                                        app_debug!(
-                                            self,
+                                        log::debug!(
                                             "Successfully saved profile as '{}' via manager.",
                                             new_profile.name
                                         );
@@ -817,10 +787,7 @@ impl MyAppLogic {
     }
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
-        app_debug!(
-            self,
-            "MenuAction::RefreshFileList action received by AppLogic."
-        );
+        log::debug!("MenuAction::RefreshFileList action received by AppLogic.");
         let window_id = match self.main_window_id {
             Some(id) => id,
             None => {
@@ -838,8 +805,7 @@ impl MyAppLogic {
         };
 
         let root_path_to_scan = current_profile_clone.root_folder.clone();
-        app_debug!(
-            self,
+        log::debug!(
             "Refreshing file list for profile '{}', root: {:?}",
             current_profile_clone.name,
             root_path_to_scan
@@ -848,16 +814,14 @@ impl MyAppLogic {
         match self.file_system_scanner.scan_directory(&root_path_to_scan) {
             Ok(new_nodes) => {
                 self.file_nodes_cache = new_nodes;
-                app_debug!(
-                    self,
+                log::debug!(
                     "Scan successful, {} top-level nodes found.",
                     self.file_nodes_cache.len()
                 );
 
                 self.state_manager
                     .apply_profile_to_tree(&mut self.file_nodes_cache, &current_profile_clone);
-                app_debug!(
-                    self,
+                log::debug!(
                     "Applied profile '{}' to refreshed tree.",
                     current_profile_clone.name
                 );
@@ -886,8 +850,7 @@ impl MyAppLogic {
         self.root_path_for_scan = profile_to_activate.root_folder.clone();
         self.current_profile_cache = Some(profile_to_activate.clone());
 
-        app_debug!(
-            self,
+        log::debug!(
             "Activating profile '{}'. Scanning directory: {:?}",
             self.current_profile_name.as_ref().unwrap(),
             self.root_path_for_scan
@@ -904,15 +867,13 @@ impl MyAppLogic {
         {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
-                app_debug!(
-                    self,
+                log::debug!(
                     "Scanned {} top-level nodes for active profile.",
                     self.file_nodes_cache.len()
                 );
                 self.state_manager
                     .apply_profile_to_tree(&mut self.file_nodes_cache, &profile_to_activate);
-                app_debug!(
-                    self,
+                log::debug!(
                     "Applied active profile '{}' to the scanned tree.",
                     profile_to_activate.name
                 );
@@ -946,7 +907,7 @@ impl MyAppLogic {
     }
 
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {
-        app_debug!(self, "Initiating profile selection or creation flow.");
+        log::debug!("Initiating profile selection or creation flow.");
 
         match self.profile_manager.list_profiles(APP_NAME_FOR_PROFILES) {
             Ok(available_profiles) => {
@@ -964,8 +925,7 @@ impl MyAppLogic {
                         false,
                     )
                 };
-                app_debug!(
-                    self,
+                log::debug!(
                     "Found {} available profiles. Dialog prompt: '{}'",
                     available_profiles.len(),
                     prompt
@@ -997,8 +957,7 @@ impl MyAppLogic {
         create_new_requested: bool,
         user_cancelled: bool,
     ) {
-        app_debug!(
-            self,
+        log::debug!(
             "ProfileSelectionDialogCompleted event received: chosen: {:?}, create_new: {}, cancelled: {}",
             chosen_profile_name,
             create_new_requested,
@@ -1016,24 +975,16 @@ impl MyAppLogic {
         }
 
         if create_new_requested {
-            app_debug!(self, "User requested to create a new profile.");
+            log::debug!("User requested to create a new profile.");
             self.start_new_profile_creation_flow(window_id);
         } else if let Some(profile_name) = chosen_profile_name {
-            app_debug!(
-                self,
-                "User chose profile '{}'. Attempting to load.",
-                profile_name
-            );
+            log::debug!("User chose profile '{}'. Attempting to load.", profile_name);
             match self
                 .profile_manager
                 .load_profile(&profile_name, APP_NAME_FOR_PROFILES)
             {
                 Ok(profile) => {
-                    app_debug!(
-                        self,
-                        "Successfully loaded chosen profile '{}'.",
-                        profile.name
-                    );
+                    log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                     let operation_status_message = format!("Profile '{}' loaded.", profile.name);
                     if let Err(e) = self
                         .config_manager
@@ -1072,10 +1023,7 @@ impl MyAppLogic {
     }
 
     fn start_new_profile_creation_flow(&mut self, window_id: WindowId) {
-        app_debug!(
-            self,
-            "Starting new profile creation flow (Step 1: Get Name)."
-        );
+        log::debug!("Starting new profile creation flow (Step 1: Get Name).");
         self.pending_action = Some(PendingAction::CreatingNewProfileGetName);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowInputDialog {
@@ -1093,8 +1041,7 @@ impl MyAppLogic {
         text: Option<String>,
         context_tag: Option<String>,
     ) {
-        app_debug!(
-            self,
+        log::debug!(
             "InputDialogCompleted: text: {:?}, context_tag: {:?}",
             text,
             context_tag
@@ -1125,8 +1072,7 @@ impl MyAppLogic {
                         );
                         return;
                     }
-                    app_debug!(
-                        self,
+                    log::debug!(
                         "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
                         profile_name
                     );
@@ -1165,13 +1111,12 @@ impl MyAppLogic {
         window_id: WindowId,
         path: Option<PathBuf>,
     ) {
-        app_debug!(self, "FolderPickerDialogCompleted: path: {:?}", path);
+        log::debug!("FolderPickerDialogCompleted: path: {:?}", path);
         self.pending_action = None;
 
         if let Some(root_folder_path) = path {
             if let Some(profile_name) = self.pending_new_profile_name.take() {
-                app_debug!(
-                    self,
+                log::debug!(
                     "Creating new profile '{}' with root folder {:?}.",
                     profile_name,
                     root_folder_path
@@ -1183,11 +1128,7 @@ impl MyAppLogic {
                     .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
                 {
                     Ok(_) => {
-                        app_debug!(
-                            self,
-                            "Successfully saved new profile '{}'.",
-                            new_profile.name
-                        );
+                        log::debug!("Successfully saved new profile '{}'.", new_profile.name);
                         let operation_status_message =
                             format!("New profile '{}' created and loaded.", new_profile.name);
 
@@ -1272,10 +1213,7 @@ impl MyAppLogic {
 
     fn handle_menu_set_archive_path_clicked(&mut self) {
         if let Some(main_id) = self.main_window_id {
-            app_debug!(
-                self,
-                "MenuAction::SetArchivePath action received by AppLogic."
-            );
+            log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
             if self.current_profile_cache.is_some() {
                 self.pending_action = Some(PendingAction::SettingArchivePath);
 
