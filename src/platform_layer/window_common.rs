@@ -595,52 +595,89 @@ impl Win32ApiInternalState {
      */
     fn handle_wm_command(
         self: &Arc<Self>,
-        _hwnd: HWND,
+        _hwnd_parent: HWND, // The HWND of the window that received WM_COMMAND
         wparam: WPARAM,
-        _lparam: LPARAM,
+        lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
-        let control_id = loword_from_wparam(wparam);
-        let notification_code = highord_from_wparam(wparam);
+        let command_id = loword_from_wparam(wparam); // This is the menu ID or control ID (as i32)
+        let notification_code_raw = highord_from_wparam(wparam); // Notification code or 0/1 for menu/accel (as i32)
+        let menu_item_or_accelerator = (lparam.0 == 0);
 
-        if notification_code == 0 || notification_code == 1 {
-            // Menu item or accelerator
-            if let Ok(windows_guard) = self.window_map.read() {
-                if let Some(window_data) = windows_guard.get(&window_id) {
-                    if let Some(action) = window_data.menu_action_map.get(&control_id) {
-                        log::debug!(
-                            "Platform: Menu action {:?} (ID {}) clicked for window {:?}.",
-                            action,
-                            control_id,
-                            window_id
-                        );
-                        return Some(AppEvent::MenuActionClicked {
-                            window_id,
-                            action: *action,
-                        });
-                    } else {
-                        log::warn!(
-                            "Platform: WM_COMMAND for unknown menu ID {} received for window {:?}.",
-                            control_id,
-                            window_id
-                        );
+        if menu_item_or_accelerator {
+            // It's a Menu item or an Accelerator command.
+            // For menu: HIWORD(wParam) is 0.
+            // For accelerator: HIWORD(wParam) is 1.
+            if notification_code_raw == 0 || notification_code_raw == 1 {
+                if let Ok(windows_guard) = self.window_map.read() {
+                    if let Some(window_data) = windows_guard.get(&window_id) {
+                        if let Some(action) = window_data.menu_action_map.get(&command_id) {
+                            log::debug!(
+                                "Platform: Menu/Accelerator action {:?} (ID {}) triggered for window {:?}.",
+                                action,
+                                command_id,
+                                window_id
+                            );
+                            return Some(AppEvent::MenuActionClicked {
+                                window_id,
+                                action: *action,
+                            });
+                        } else {
+                            log::warn!(
+                                "Platform: WM_COMMAND (lparam=0) for unknown menu/accelerator ID {} received for window {:?}.",
+                                command_id,
+                                window_id
+                            );
+                        }
                     }
+                } else {
+                    log::error!(
+                        "Platform: Failed to get read lock for menu_action_map lookup for lparam=0 command."
+                    );
                 }
             } else {
-                log::error!("Platform: Failed to get read lock for menu_action_map lookup.");
-            }
-        } else if notification_code as u32 == BN_CLICKED {
-            if control_id == ID_BUTTON_GENERATE_ARCHIVE {
-                log::debug!(
-                    "Platform: Button ID {} clicked for window {:?}.",
-                    control_id,
+                // This case should ideally not happen if lparam is 0.
+                log::warn!(
+                    "Platform: WM_COMMAND (lparam=0) with unexpected notification_code {} for ID {} in window {:?}.",
+                    notification_code_raw,
+                    command_id,
                     window_id
                 );
-                return Some(AppEvent::ButtonClicked {
-                    window_id,
-                    control_id,
-                });
             }
+        } else {
+            // It's a Control notification. lparam is the HWND of the control.
+            // HIWORD(wParam) is the control-specific notification code (e.g., BN_CLICKED for buttons).
+            // LOWORD(wParam) is the ID of the control.
+
+            let hwnd_control = HWND(lparam.0 as *mut c_void);
+            let control_notification_code = notification_code_raw as u32; // Cast to u32 for comparison with BN_CLICKED etc.
+
+            // Handle button clicks
+            // BN_CLICKED is defined as 0 in windows::Win32::UI::WindowsAndMessaging
+            if control_notification_code == BN_CLICKED {
+                if command_id == ID_BUTTON_GENERATE_ARCHIVE {
+                    log::debug!(
+                        "Platform: Button ID {} (HWND {:?}) clicked for window {:?}.",
+                        command_id,
+                        hwnd_control,
+                        window_id
+                    );
+                    return Some(AppEvent::ButtonClicked {
+                        window_id,
+                        control_id: command_id,
+                    });
+                } else {
+                    // Potentially other buttons, if any, would be checked here.
+                    log::warn!(
+                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled control ID {} (HWND {:?}) in window {:?}.",
+                        command_id,
+                        hwnd_control,
+                        window_id
+                    );
+                }
+            }
+            // Future: Handle other control notifications here if needed (e.g., EN_CHANGE from an edit box)
+            // else if control_notification_code == EN_CHANGE && command_id == SOME_EDIT_ID { ... }
         }
         None
     }
