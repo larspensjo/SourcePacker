@@ -14,12 +14,6 @@ Whenever you want to change how your window looks like or population of controls
 
 **Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring**
 
-**Step A.I.3: Implement `DefineLayout` Command Handler (Storing Rules)**
-    *   **Action a:** Create the basic structure of `src/platform_layer/command_executor.rs`.
-    *   **Action b:** In `command_executor.rs`, implement a function `execute_define_layout(state: &Arc<Win32ApiInternalState>, window_id: WindowId, rules: Vec<LayoutRule>)`. This function will lock `Win32ApiInternalState::window_map`, get the `NativeWindowData` for `window_id`, and store the `rules` in the new `layout_rules` field.
-    *   **Action c:** In `Win32ApiInternalState::_execute_platform_command` (in `app.rs`), add a match arm for `PlatformCommand::DefineLayout` that calls the new `execute_define_layout` function.
-    *   *Verification:* Compiles. App runs as before. The new command can be processed, but `WM_SIZE` doesn't use the rules yet.
-
 **Step A.I.4: Update `ui_description_layer` to Send `DefineLayout` Commands**
     *   **Action:** Modify `ui_description_layer::describe_main_window_layout` to generate and include `PlatformCommand::DefineLayout` commands for the TreeView, Button, and Status Bar, *alongside* the existing `CreateButton`, `CreateTreeView`, `CreateStatusBar` commands.
     *   *Verification:* Compiles. App runs. The `DefineLayout` commands are sent and processed, storing rules in `NativeWindowData`. Layout still handled by old `WM_SIZE`.

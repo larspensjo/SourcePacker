@@ -1,3 +1,4 @@
+use super::command_executor;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
@@ -723,9 +724,8 @@ impl Win32ApiInternalState {
             PlatformCommand::SignalMainWindowUISetupComplete { window_id } => {
                 self._handle_signal_main_window_ui_setup_complete_impl(window_id)
             }
-            PlatformCommand::DefineLayout { .. } => {
-                todo!("PlatformCommand::DefineLayout is not implemented for Win32 platform layer");
-                Ok(())
+            PlatformCommand::DefineLayout { window_id, rules } => {
+                command_executor::execute_define_layout(self, window_id, rules)
             }
         }
     }
