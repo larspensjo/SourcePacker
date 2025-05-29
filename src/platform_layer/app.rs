@@ -1569,13 +1569,14 @@ mod app_tests {
     use super::*;
     use crate::platform_layer::types::MenuAction; // For test
     use crate::platform_layer::types::MenuItemConfig; // For test
+    use std::ptr; // Added for null_mut
 
     #[test]
     fn roundtrip_simple() {
         let mut wide: Vec<u16> = "C:\\temp\\file.txt".encode_utf16().collect();
         wide.push(0);
         let path = pathbuf_from_buf(&wide);
-        assert_eq!(path, PathBuf::from(r"C:\\temp\\file.txt"));
+        assert_eq!(path, PathBuf::from(r"C:\temp\file.txt"));
     }
 
     #[test]
@@ -1590,7 +1591,7 @@ mod app_tests {
         let internal_state_arc = Win32ApiInternalState::new("TestApp".to_string()).unwrap();
         let window_id = internal_state_arc.generate_window_id();
         let mut native_window_data = window_common::NativeWindowData {
-            hwnd: HWND(0), // Dummy HWND for this test
+            hwnd: HWND(ptr::null_mut()), // Dummy HWND for this test
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
