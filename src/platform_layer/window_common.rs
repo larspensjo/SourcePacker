@@ -49,10 +49,10 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
 pub const BUTTON_AREA_HEIGHT: i32 = 50;
 pub const STATUS_BAR_HEIGHT: i32 = 25;
-const BUTTON_X_PADDING: i32 = 10;
+pub(crate) const BUTTON_X_PADDING: i32 = 10;
 const BUTTON_Y_PADDING_IN_AREA: i32 = 10;
 const BUTTON_WIDTH: i32 = 150;
-const BUTTON_HEIGHT: i32 = 30;
+pub(crate) const BUTTON_HEIGHT: i32 = 30;
 
 /*
  * Holds native data associated with a specific window managed by the platform layer.

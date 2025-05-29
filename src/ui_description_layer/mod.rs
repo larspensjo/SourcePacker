@@ -8,14 +8,17 @@
 
 use crate::platform_layer::{
     control_treeview::ID_TREEVIEW_CTRL,
-    types::{MenuAction, MenuItemConfig, PlatformCommand, WindowId},
-    window_common::{ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL},
+    types::{DockStyle, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId},
+    window_common::{
+        BUTTON_AREA_HEIGHT, ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, STATUS_BAR_HEIGHT,
+    },
 };
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
  * for the main application window. This includes creating the main menu, TreeView,
- * status bar, and other foundational UI elements like buttons.
+ * status bar, and other foundational UI elements like buttons. It also now includes
+ * `DefineLayout` commands to specify how these controls should be positioned and resized.
  * These commands are processed by the platform layer to construct the native UI.
  * Menu items use `MenuAction` for semantic identification.
  */
@@ -80,13 +83,68 @@ pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> 
         initial_text: "Ready".to_string(),
     });
 
+    // 5. Define Layout Rules for the controls
+    let layout_rules = vec![
+        // Status Bar: Docks to the bottom, fixed height. Order 0 (processed first among bottom docks).
+        LayoutRule {
+            control_id: ID_STATUS_BAR_CTRL,
+            dock_style: DockStyle::Bottom,
+            order: 0,
+            fixed_size: Some(STATUS_BAR_HEIGHT),
+            margin: (0, 0, 0, 0),
+        },
+        // Button Area (conceptually, the button docks within this space):
+        // The "Generate Archive" button docks to the bottom of the remaining space AFTER status bar.
+        // For simplicity now, we'll treat the button itself as docking.
+        // It needs a fixed height area, so its "DockStyle::Bottom" will be relative to space above status bar.
+        LayoutRule {
+            control_id: ID_BUTTON_GENERATE_ARCHIVE,
+            dock_style: DockStyle::Bottom, // It will be placed in the area made available by TreeView Fill
+            order: 1, // After status bar, but before TreeView fill for bottom calculation
+            fixed_size: Some(BUTTON_AREA_HEIGHT), // This rule implies the button gets this height band
+            // The button itself might be smaller, this is the "panel" height it occupies.
+            // The generic layout engine will need to interpret this.
+            // For now, let's assume this means the button is placed within this band.
+            // A simpler interpretation is that the button itself is just placed,
+            // and the TreeView fills above it.
+            // Let's adjust for a simpler direct control layout:
+            // The button will be positioned from the bottom, within the button area space.
+            // Actual button height is smaller than BUTTON_AREA_HEIGHT.
+            // This simple DockStyle might need refinement or a more complex layout system.
+            // For now, we'll use margin to position it within its "conceptual" bottom panel.
+            margin: (
+                BUTTON_AREA_HEIGHT - crate::platform_layer::window_common::BUTTON_HEIGHT - 5, /* top margin within its allocated space */
+                0,                                                      /* right */
+                5, /* bottom margin within its allocated space */
+                crate::platform_layer::window_common::BUTTON_X_PADDING, /* left */
+            ),
+        },
+        // TreeView: Fills the remaining space. Order 10 (processed last).
+        LayoutRule {
+            control_id: ID_TREEVIEW_CTRL,
+            dock_style: DockStyle::Fill,
+            order: 10,
+            fixed_size: None,
+            margin: (0, 0, 0, 0),
+        },
+    ];
+
+    commands.push(PlatformCommand::DefineLayout {
+        window_id,
+        rules: layout_rules,
+    });
+
     commands
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::platform_layer::{WindowId, control_treeview::ID_TREEVIEW_CTRL, types::MenuAction};
+    use crate::platform_layer::{
+        control_treeview::ID_TREEVIEW_CTRL,
+        types::{DockStyle, MenuAction},
+        window_common::{ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL},
+    };
 
     #[test]
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
@@ -241,5 +299,63 @@ mod tests {
             "Ready",
             "CreateStatusBar command should have the correct initial text"
         );
+    }
+
+    #[test]
+    fn test_describe_main_window_layout_generates_define_layout_command() {
+        let dummy_window_id = WindowId(1);
+        let commands = describe_main_window_layout(dummy_window_id);
+
+        let define_layout_command = commands.iter().find_map(|cmd| {
+            if let PlatformCommand::DefineLayout { window_id, rules } = cmd {
+                if *window_id == dummy_window_id {
+                    Some(rules.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        assert!(
+            define_layout_command.is_some(),
+            "Commands should include DefineLayout"
+        );
+        let rules = define_layout_command.unwrap();
+        assert_eq!(rules.len(), 3, "Should define rules for 3 controls");
+
+        // Check status bar rule
+        let status_bar_rule = rules
+            .iter()
+            .find(|r| r.control_id == ID_STATUS_BAR_CTRL)
+            .expect("Status bar rule not found");
+        assert_eq!(status_bar_rule.dock_style, DockStyle::Bottom);
+        assert_eq!(status_bar_rule.order, 0);
+        assert_eq!(
+            status_bar_rule.fixed_size,
+            Some(crate::platform_layer::window_common::STATUS_BAR_HEIGHT)
+        );
+
+        // Check button rule
+        let button_rule = rules
+            .iter()
+            .find(|r| r.control_id == ID_BUTTON_GENERATE_ARCHIVE)
+            .expect("Button rule not found");
+        assert_eq!(button_rule.dock_style, DockStyle::Bottom);
+        assert_eq!(button_rule.order, 1);
+        assert_eq!(
+            button_rule.fixed_size,
+            Some(crate::platform_layer::window_common::BUTTON_AREA_HEIGHT)
+        ); // This is the conceptual band height
+
+        // Check tree view rule
+        let treeview_rule = rules
+            .iter()
+            .find(|r| r.control_id == ID_TREEVIEW_CTRL)
+            .expect("TreeView rule not found");
+        assert_eq!(treeview_rule.dock_style, DockStyle::Fill);
+        assert_eq!(treeview_rule.order, 10);
+        assert_eq!(treeview_rule.fixed_size, None);
     }
 }

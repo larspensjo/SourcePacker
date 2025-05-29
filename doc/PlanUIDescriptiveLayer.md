@@ -14,10 +14,6 @@ Whenever you want to change how your window looks like or population of controls
 
 **Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring**
 
-**Step A.I.4: Update `ui_description_layer` to Send `DefineLayout` Commands**
-    *   **Action:** Modify `ui_description_layer::describe_main_window_layout` to generate and include `PlatformCommand::DefineLayout` commands for the TreeView, Button, and Status Bar, *alongside* the existing `CreateButton`, `CreateTreeView`, `CreateStatusBar` commands.
-    *   *Verification:* Compiles. App runs. The `DefineLayout` commands are sent and processed, storing rules in `NativeWindowData`. Layout still handled by old `WM_SIZE`.
-
 **Step A.I.5: Move Non-Dialog Command Implementations to `command_executor.rs`**
     *   **Action (iterative, one command type at a time):**
         *   For each non-dialog `_handle_..._impl` method in `Win32ApiInternalState` (e.g., `_handle_create_button_impl`, `_handle_create_main_menu_impl`, etc., but *not* `_handle_show_save_file_dialog_impl` yet):
