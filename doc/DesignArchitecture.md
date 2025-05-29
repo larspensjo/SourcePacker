@@ -1,105 +1,66 @@
 # SourcePacker Design and Architecture
 
-## The project shall consist of several small modules, where each is has a full set of tests.
+## Core Principles
 
-## For every module, add a comment that describes its purpose and key components.
-The comment shall emphasize why it is being used, and why it is doing what it does.
-The comment shall be succinct no more than two paragraphs.
-Don't refer to any internal names in the comment, as these usually get outdated and requires frequent updates.
-The comment should strive to be persistent. That is, it shouldn't need to be updated.
+This project emphasizes modularity, with each module aimed at a specific responsibility and accompanied by comprehensive tests. Module-level documentation will explain its purpose and rationale, focusing on why it exists and its role, rather than volatile internal details, to ensure comments remain relevant over time.
 
-## User Interface Architecture: A Two-Layer Approach
+## User Interface Architecture: Model-View-Presenter (MVP)
 
-The user interface will be structured into two distinct layers: a high-level Application Logic Layer and a low-level Platform Abstraction Layer. This separation aims to isolate platform-specific details from the core application behavior, enhancing testability, maintainability, and potential portability of the application logic.
+SourcePacker's UI architecture is structured around the Model-View-Presenter (MVP) pattern. This pattern enhances testability, maintainability, and separates concerns effectively.
 
-### 1. Application Logic Layer
+### 1. Model
 
-#### Purpose
+*   **Purpose:** Manages the application's data, core business logic, and rules. It is the source of truth for the application's state and is entirely UI-agnostic.
+*   **SourcePacker Context:** Includes `core` modules (e.g., `CoreProfileManager`, `CoreFileSystemScanner`) and the data-holding aspects of `app_logic` (e.g., `current_profile_cache`, `file_nodes_cache`).
 
-This layer is responsible for the core user interface logic and application state management, entirely independent of any specific GUI toolkit (like Win32). It defines *what* the UI should represent and how it reacts to user interactions in a platform-agnostic manner. Its primary goals are:
+### 2. View (`platform_layer` & `ui_description_layer`)
 
-- **Platform Independence:** Contains no direct dependencies on native UI libraries (e.g., `windows-rs`).
-- **Testability:** Enables UI logic to be unit-tested without a running graphical environment. Use Dependency Injection (Function Pointers / Closures—Method) as a mehtod to mock free functions.
-- **Clear Semantics:** Focuses on application behavior and data manipulation, rather than rendering details.
+*   **Purpose:** Presents the Model's data to the user and routes user interactions (as raw input) to the Presenter. It is a passive interface, responsible for rendering and abstracting platform-specific UI details.
+*   **Key Components & Responsibilities (`platform_layer`):**
+    *   Encapsulates all interactions with the native UI toolkit (e.g., Win32).
+    *   Manages native window and control handles, and the native event loop.
+    *   Executes `PlatformCommand`s received from the Presenter to create or modify UI elements.
+    *   Translates native OS events into platform-agnostic `AppEvent`s.
+*   **View Definition (`ui_description_layer`):**
+    *   Defines the static structure and layout of the UI by generating initial `PlatformCommand`s. This component tells the View *what* to display initially.
 
-#### Key Concepts
+### 3. Presenter (`app_logic::handler`)
 
--   **Application State Models:** Manages the data that drives the UI (e.g., the file tree structure, current profile, selection states).
--   **Event Handling Logic:** Implements a defined interface (provided by the Platform Abstraction Layer) to process platform-agnostic UI events (e.g., a button click, an item selection).
--   **Command Generation:** Based on its internal state or incoming events, it issues descriptive, platform-agnostic commands to the Platform Abstraction Layer to effect changes in the native UI (e.g., "create a window with this title," "update this item's state").
+*   **Purpose:** Acts as the intermediary between the Model and the View. It retrieves data from the Model, formats it for display (by deciding what `PlatformCommand`s to send), and handles user input (`AppEvent`s) from the View to update the Model and instruct the View.
+*   **Key Responsibilities:**
+    *   Implements the `PlatformEventHandler` trait to receive `AppEvent`s from the View.
+    *   Interacts with the Model to fetch data or trigger business logic.
+    *   Contains UI-specific logic that doesn't belong in the View or Model (e.g., orchestrating dialog flows, deciding when to enable/disable controls based on application state).
+    *   Generates `PlatformCommand`s to instruct the View on how to update.
 
-### 2. Platform Abstraction Layer
+### Communication Flow (MVP)
 
-#### Purpose
+1.  **Initialization:**
+    *   The `ui_description_layer` provides initial `PlatformCommand`s to the `platform_layer` (View) to build the static UI structure.
+    *   The `platform_layer` creates native UI elements.
+2.  **User Interaction:**
+    *   The user interacts with a native UI element (e.g., clicks a button).
+    *   The `platform_layer` (View) captures this native event, translates it into a platform-agnostic `AppEvent` (e.g., `AppEvent::MenuActionClicked { action: MenuAction::LoadProfile }`), and sends it to `app_logic` (Presenter).
+3.  **Presenter Logic:**
+    *   `app_logic` (Presenter) receives the `AppEvent`.
+    *   It may query or update the Model (e.g., load a profile, scan files).
+    *   Based on the event and Model state, it decides how the UI should change.
+4.  **View Update:**
+    *   `app_logic` (Presenter) issues one or more `PlatformCommand`s (e.g., `PlatformCommand::PopulateTreeView`, `PlatformCommand::UpdateStatusBarText`) to the `platform_layer` (View).
+5.  **Rendering:**
+    *   The `platform_layer` (View) receives these commands and executes them by making the corresponding native UI toolkit calls, updating what the user sees.
 
-This layer serves as a bridge between the platform-agnostic Application Logic Layer and the native operating system's UI toolkit (e.g., Win32). It provides an idiomatic Rust API that abstracts the complexities of direct native programming. Its primary goals are:
+This MVP approach ensures the `app_logic` (Presenter) and `core` (Model) can be tested independently of the `platform_layer` (View), and the `platform_layer` can be developed as a reusable, generic UI toolkit abstraction.
 
-- **Encapsulating Native Code:** Contains all interactions with the specific UI toolkit (e.g., `windows-rs` for Win32), including window creation, message loops, and control management.
-- **Providing a Stable Interface:** Offers a well-defined set of types and functions for the Application Logic Layer to consume.
-- **Translating Communication:** Converts platform-agnostic commands from the Application Logic Layer into native UI operations, and translates native OS events into platform-agnostic events for the Application Logic Layer.
+## Key Abstractions for MVP
 
-#### Key Components & Interaction Flow
+*   **`PlatformCommand` (Presenter -> View):** An enum defining all operations the Presenter can request the View to perform (e.g., create control, update text, show dialog).
+*   **`AppEvent` (View -> Presenter):** An enum defining all UI interactions or platform events the View can report to the Presenter (e.g., button clicked, menu action triggered, window closed).
+*   **`MenuAction`:** A semantic enum used by the Presenter and View Definition to refer to menu operations, abstracted from native IDs.
+*   **Opaque Handles (`WindowId`, `TreeItemId`):** Used by the Presenter to refer to UI elements without needing knowledge of native handles.
 
--   **Platform Interface:** The primary API surface exposed to the Application Logic Layer for creating and managing UI elements and running the application.
--   **Opaque Handles:** Represents native UI elements (like windows or tree view items) with platform-agnostic identifiers. The Application Logic Layer uses these identifiers without needing to know about native handle types (e.g., `HWND`).
--   **Declarative Configuration:** The Application Logic Layer describes UI elements (e.g., a window's properties, a list of tree items) using platform-agnostic data structures when requesting their creation.
--   **Platform-Agnostic Commands:** A defined set of instructions (e.g., an enum) that the Application Logic Layer can send to the Platform Abstraction Layer to manipulate the UI (e.g., `CreateWindow`, `PopulateTreeView`, `SetItemState`).
--   **Platform-Agnostic Events:** A defined set of event types (e.g., an enum) that the Platform Abstraction Layer emits to the Application Logic Layer when user interactions or system events occur (e.g., `WindowCloseRequested`, `TreeItemToggled`).
--   **Event Handler Trait/Callback:** A mechanism (typically a trait implemented by the Application Logic Layer or a closure) through which the Platform Abstraction Layer delivers `AppEvent`s. The handler in the Application Logic Layer processes these events and may return a list of `PlatformCommand`s.
--   **Native Implementation Details:** Internally, this layer manages the native event loop (`WndProc` in Win32), native window and control handles, and the direct calls to the native UI APIs.
+## Lock Strategy Summary
 
-### Flow Summary (Revised)
-
-1.  The Application Logic Layer, using the Platform Interface, requests the creation of UI elements (e.g., a main window) by providing platform-agnostic configurations.
-2.  The Platform Abstraction Layer translates these requests into native UI toolkit calls, creating the actual OS windows and controls. It returns opaque handles to the Application Logic Layer.
-3.  The Platform Abstraction Layer runs the native event loop.
-4.  When a native UI event occurs (e.g., mouse click, key press):
-    a.  The Platform Abstraction Layer captures it.
-    b.  It translates the native event into a platform-agnostic `AppEvent`, often referencing UI elements via their opaque handles.
-    c.  It delivers this `AppEvent` to the registered event handler in the Application Logic Layer.
-5.  The Application Logic Layer processes the `AppEvent`:
-    a.  It may update its internal state models.
-    b.  It may decide to issue one or more `PlatformCommand`s back to the Platform Abstraction Layer to change the UI (e.g., update text, change an item's check state).
-6.  The Platform Abstraction Layer receives these `PlatformCommand`s and executes them by making the corresponding native UI toolkit calls.
-
-# Lock Analysis for SourcePacker
-
-## 1. Locks in Mock Objects (`handler_tests.rs`)
-
-*   **Type:** `std::sync::Mutex`
-*   **Data Protected:**
-    *   Internal state of various mock objects (e.g., `MockConfigManager`, `MockProfileManager`, `MockFileSystemScanner`, `MockArchiver`).
-    *   This includes fields storing pre-configured results for mock methods and logs of calls made to these methods.
-*   **Purpose:**
-    *   To ensure thread-safety for the mock objects themselves during unit testing.
-    *   Allows test setup (configuring mock results) and mock method execution to occur without data races, even if tests were run in parallel or mocks were shared.
-
-## 2. `Win32ApiInternalState::window_map`
-
-*   **Type:** `std::sync::RwLock`
-*   **Data Protected:**
-    *   The `HashMap` that maps platform-agnostic `WindowId`s to their corresponding `NativeWindowData`.
-    *   `NativeWindowData` includes the native window handle (`HWND`), TreeView state, other control `HWND`s, and current status bar text/severity.
-*   **Purpose:**
-    *   To allow safe concurrent access and modification of the window state from different parts of the Win32 platform layer.
-    *   Multiple parts of the code (e.g., `WndProc`, command execution logic) can read window data concurrently, while modifications (e.g., adding/removing windows, updating control handles) are serialized.
-
-## 3. `Win32ApiInternalState::event_handler`
-
-*   **Type:** `std::sync::Mutex`
-*   **Data Protected:**
-    *   The `Option<Weak<Mutex<dyn PlatformEventHandler>>>` field. This is a weak pointer to the main application logic (`MyAppLogic`).
-*   **Purpose:**
-    *   To allow thread-safe setting (during application startup) and retrieval (from `WndProc` or dialog completion handlers) of the reference to the application logic.
-    *   Ensures that the pointer itself is accessed and modified safely.
-
-## 4. `MyAppLogic` Instance Lock
-
-*   **Type:** `std::sync::Mutex` (This is the `Mutex` part of `Arc<Mutex<dyn PlatformEventHandler>>`)
-*   **Data Protected:**
-    *   The entire `MyAppLogic` instance and all its internal state.
-    *   This includes caches like `file_nodes_cache`, `current_profile_cache`, `current_archive_status`, pending action states (`pending_action`), and the `synchronous_command_queue`.
-*   **Purpose:**
-    *   To serialize all access to `MyAppLogic`, ensuring that only one thread of execution can modify or read its state at any given time.
-    *   Prevents race conditions on `MyAppLogic`'s internal fields when events are handled or commands are processed.
-    *   **Note:** While this lock ensures safety, it's important that operations performed while holding this lock (especially in `handle_event`) are not long-running or blocking to maintain UI responsiveness.
+*   **`MyAppLogic` (Presenter):** The entire instance is protected by a `std::sync::Mutex` (via `Arc<Mutex<dyn PlatformEventHandler>>`). This serializes all event handling and command generation within the Presenter, ensuring its internal state is consistent. Operations under this lock should be brief.
+*   **`Win32ApiInternalState::window_map` (View State):** Protected by `std::sync::RwLock`. This allows concurrent reads of window data (e.g., by `WndProc` for different messages or by command handlers needing to look up `HWND`s) but serializes writes (e.g., adding/removing windows, modifying `NativeWindowData` like the `menu_action_map`). Locks are kept for minimal duration, especially avoiding calls to external/OS functions that might re-enter or send synchronous messages while a write lock is held (e.g., `SetMenu`).
+*   **Mock Objects (Tests):** Utilize `std::sync::Mutex` for thread-safe testing of mock components.
