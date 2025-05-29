@@ -306,11 +306,11 @@ impl MyAppLogic {
                 let status_text = format!("Archive: {:?}", status);
                 match status {
                     ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text),
-                    _ => app_info!(self, "{}", status_text),
+                    _ => log::debug!("{}", status_text),
                 };
             } else {
                 self.current_archive_status = None;
-                app_info!(self, "Archive: (No profile loaded)");
+                app_info!(self, "No profile loaded");
             }
         } else {
             self.current_archive_status = None;
@@ -491,7 +491,7 @@ impl MyAppLogic {
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
         if self.main_window_id == Some(window_id) && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
         {
-            app_info!(self, "'Save to Archive' button clicked.");
+            log::debug!("'Save to Archive' button clicked.");
 
             if let Some(profile) = &self.current_profile_cache {
                 if let Some(archive_path) = &profile.archive_path {
@@ -601,7 +601,7 @@ impl MyAppLogic {
                     }
                 }
             } else {
-                app_info!(self, "Load profile cancelled.");
+                log::debug!("Load profile cancelled.");
             }
         }
     }
@@ -668,7 +668,7 @@ impl MyAppLogic {
                         app_error!(self, "No profile active to set archive path for.");
                     }
                 } else {
-                    app_info!(self, "Set archive path cancelled.");
+                    log::debug!("Set archive path cancelled.");
                     self._update_save_to_archive_button_state(window_id);
                 }
             }
@@ -678,7 +678,7 @@ impl MyAppLogic {
                     "Obsolete 'SavingArchive' action handled. This should not happen."
                 );
                 if result.is_none() {
-                    app_info!(self, "Save archive (obsolete path) cancelled.");
+                    log::debug!("Save archive (obsolete path) cancelled.");
                 }
             }
             Some(PendingAction::SavingProfile) => {
@@ -762,7 +762,7 @@ impl MyAppLogic {
                         );
                     }
                 } else {
-                    app_info!(self, "Save profile cancelled.");
+                    log::debug!("Save profile cancelled.");
                 }
             }
             Some(PendingAction::CreatingNewProfileGetName)
@@ -965,10 +965,7 @@ impl MyAppLogic {
         );
 
         if user_cancelled {
-            app_info!(
-                self,
-                "Profile selection was cancelled by user. Quitting application."
-            ); // This message might not be seen if app quits immediately
+            log::debug!("Profile selection was cancelled by user. Quitting application.");
             self.synchronous_command_queue
                 .push_back(PlatformCommand::QuitApplication);
             return;
@@ -1086,8 +1083,7 @@ impl MyAppLogic {
                         },
                     );
                 } else {
-                    app_info!(
-                        self,
+                    log::debug!(
                         "New profile name input cancelled. Returning to profile selection."
                     );
                     self.pending_action = None;
@@ -1167,10 +1163,7 @@ impl MyAppLogic {
                 self.initiate_profile_selection_or_creation(window_id);
             }
         } else {
-            app_info!(
-                self,
-                "Root folder selection cancelled. Returning to profile selection."
-            );
+            log::debug!("Root folder selection cancelled. Returning to profile selection.");
             self.pending_new_profile_name = None;
             self.initiate_profile_selection_or_creation(window_id);
         }
@@ -1204,10 +1197,7 @@ impl MyAppLogic {
                 enabled,
             });
         if !enabled {
-            app_info!(
-                self,
-                "Button 'Save to Archive' disabled: No archive path set in profile."
-            );
+            log::debug!("Button 'Save to Archive' disabled: No archive path set in profile.");
         }
     }
 
@@ -1351,7 +1341,7 @@ impl PlatformEventHandler for MyAppLogic {
                     .profile_manager
                     .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
                 {
-                    Ok(_) => log::info!(
+                    Ok(_) => log::debug!(
                         "AppLogic: Successfully saved content of profile '{}' to disk on exit.",
                         active_profile_name
                     ),
