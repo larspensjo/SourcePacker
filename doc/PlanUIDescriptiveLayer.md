@@ -4,66 +4,99 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 
 **Goal:** Decouple UI structure definition from the platform-specific implementation, improve testability, and pave the way for a more reusable `platform_layer`. The application should remain functional after each major step. We want the platform_layer to be independent of the actual application UI. The goal is to eventually break it out into a separate library that any application can use.
 
-Whenever you want to change how your window loks like or population of controls, you should never need to change the platform_layer.
+Whenever you want to change how your window looks like or population of controls, you should never need to change the platform_layer.
 
 ---
 
-Completed changes have been removed.
+## Phase A: MVP Refinements, Platform Layer Restructuring, and Generic Layout
+
+**Goal:** Further refine the separation of concerns according to MVP principles, focusing on making the `platform_layer` a truly generic View. This involves ensuring all UI-specific knowledge (beyond what's needed to render generic controls and translate events) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter). This phase also focuses on restructuring the `platform_layer` code (primarily `app.rs` and `window_common.rs`) for better maintainability and implements a generic layout mechanism.
+
+**Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring (Steps A.1 & A.2 from previous plan)**
+
+**Step A.I.1: Define Layout Primitives & New `PlatformCommand`**
+    *   **Action a:** Define `LayoutRule`, `DockStyle`, etc. in `platform_layer/types.rs`.
+    *   **Action b:** Define `PlatformCommand::DefineLayout { ... }` in `platform_layer/types.rs`.
+    *   *Verification:* Compiles. App runs as before (no functional change yet).
+
+**Step A.I.2: Add `layout_rules` field to `NativeWindowData`**
+    *   **Action:** Add `layout_rules: Option<Vec<LayoutRule>>` (or similar) to `NativeWindowData` in `src/platform_layer/window_common.rs`. Initialize it to `None`.
+    *   *Verification:* Compiles. App runs as before.
+
+**Step A.I.3: Implement `DefineLayout` Command Handler (Storing Rules)**
+    *   **Action a:** Create the basic structure of `src/platform_layer/command_executor.rs`.
+    *   **Action b:** In `command_executor.rs`, implement a function `execute_define_layout(state: &Arc<Win32ApiInternalState>, window_id: WindowId, rules: Vec<LayoutRule>)`. This function will lock `Win32ApiInternalState::window_map`, get the `NativeWindowData` for `window_id`, and store the `rules` in the new `layout_rules` field.
+    *   **Action c:** In `Win32ApiInternalState::_execute_platform_command` (in `app.rs`), add a match arm for `PlatformCommand::DefineLayout` that calls the new `execute_define_layout` function.
+    *   *Verification:* Compiles. App runs as before. The new command can be processed, but `WM_SIZE` doesn't use the rules yet.
+
+**Step A.I.4: Update `ui_description_layer` to Send `DefineLayout` Commands**
+    *   **Action:** Modify `ui_description_layer::describe_main_window_layout` to generate and include `PlatformCommand::DefineLayout` commands for the TreeView, Button, and Status Bar, *alongside* the existing `CreateButton`, `CreateTreeView`, `CreateStatusBar` commands.
+    *   *Verification:* Compiles. App runs. The `DefineLayout` commands are sent and processed, storing rules in `NativeWindowData`. Layout still handled by old `WM_SIZE`.
+
+**Step A.I.5: Move Non-Dialog Command Implementations to `command_executor.rs`**
+    *   **Action (iterative, one command type at a time):**
+        *   For each non-dialog `_handle_..._impl` method in `Win32ApiInternalState` (e.g., `_handle_create_button_impl`, `_handle_create_main_menu_impl`, etc., but *not* `_handle_show_save_file_dialog_impl` yet):
+            1.  Move its implementation to a corresponding free function in `command_executor.rs` (e.g., `execute_create_button(...)`).
+            2.  Update the `_execute_platform_command` match arm in `app.rs` to call this new function.
+    *   *Verification (after each command type moved):* Compiles. App runs, and the specific functionality related to that command still works.
+
+**Step A.I.6: Create `dialog_handler.rs` and Move Dialog Command Implementations**
+    *   **Action a:** Create the basic structure of `src/platform_layer/dialog_handler.rs`.
+    *   **Action b (iterative, one dialog type at a time):**
+        *   For each dialog-related `_handle_..._impl` method in `Win32ApiInternalState` (or if already moved, in `command_executor.rs`):
+            1.  Move its implementation (and any helper structs/functions like `_show_common_file_dialog`, `InputDialogData`, etc.) to a corresponding free function in `dialog_handler.rs`.
+            2.  Update the `_execute_platform_command` match arm (or the call in `command_executor.rs`) to call this new function from `dialog_handler.rs`.
+    *   *Verification (after each dialog type moved):* Compiles. App runs, and dialog functionality still works.
 
 ---
 
-## Phase A: MVP Refinements & Platform Layer Generalization
+**Sub-Phase A.II: Implementing Generic Layout & Control Handler Modules (Steps A.3 & A.4 from previous plan)**
 
-**Goal:** Further refine the separation of concerns according to MVP principles, focusing on making the `platform_layer` a truly generic View. This involves ensuring all UI-specific knowledge (beyond what's needed to render generic controls and translate events) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter). This phase also considers initial steps towards more advanced layout management.
+**Step A.II.1: Implement Generic `handle_wm_size` (Side-by-Side or Flagged)**
+    *   **Action a:** In `Win32ApiInternalState::handle_wm_size` (`window_common.rs`), add logic to check if `layout_rules` are present in `NativeWindowData`.
+    *   **Action b:** If rules are present, implement the new generic layout logic that iterates through controls and applies these rules.
+    *   **Action c (Crucial for stability):** Initially, the *old* hardcoded layout logic in `handle_wm_size` should *still run*. You might:
+        *   Have the new logic run *after* the old one (it might override positions if controls are the same). This is simpler but could be messy.
+        *   Or, introduce a temporary flag (e.g., in `NativeWindowData` or even a global atomic for initial testing) to switch between old and new `WM_SIZE` logic. This is safer.
+        *   Or, if the layout rules only target the existing known controls (TreeView, Button, Statusbar), you can carefully replace the old logic for *just those controls* with the new rule-based calculations one by one, ensuring the constants like `BUTTON_AREA_HEIGHT` are only used by the `ui_description_layer` when it generates the rules.
+    *   **Goal:** Transition to the new `WM_SIZE` behavior for the existing controls *without breaking the layout*.
+    *   *Verification:* Compiles. App runs. The layout of TreeView, Button area, and Status Bar is now determined by the rules sent from `ui_description_layer` and applied by the new generic part of `handle_wm_size`. The old hardcoded positioning for these specific elements is no longer active.
 
-### Step A.1: Relocate Control-Specific Layout Logic from `platform_layer` (View)
+**Step A.II.2: Remove Old Hardcoded Layout from `handle_wm_size`**
+    *   **Action:** Once Step A.II.1 is verified, remove the old, hardcoded layout logic for TreeView, Button area, and Status Bar from `handle_wm_size`. The constants like `BUTTON_AREA_HEIGHT` should only be referenced (if needed) by the `ui_description_layer` when it defines the layout rules.
+    *   *Verification:* Compiles. App runs. Layout is correct and entirely driven by `PlatformCommand::DefineLayout`. `handle_wm_size` is now generic.
 
-*   **File:** `src/platform_layer/window_common.rs` (primarily `Win32ApiInternalState::handle_wm_size`)
-*   **Current Issue:** `handle_wm_size` currently has hardcoded knowledge of specific controls (TreeView, Button, Status Bar) and their intended layout relationships (e.g., TreeView above Button area, Button area above Status Bar).
-*   **Action:**
-    1.  **Define Layout Commands/Descriptions:** Introduce new `PlatformCommand` variants or augment existing ones to allow the `ui_description_layer` to describe the *layout relationships* or *anchoring* of controls, rather than just their existence. Examples:
-        *   `PlatformCommand::DefineLayout { window_id, layout_rules: Vec<LayoutRule> }`
-        *   `LayoutRule { control_id, anchor_top: Option<ControlIdOrEdge>, anchor_bottom: ..., size_policy_h: ..., size_policy_v: ... }`
-        *   Alternatively, enhance `CreateButton`, `CreateTreeView`, etc., commands with optional layout parameters (e.g., `dock: DockStyle`, `margin: Rect`, `size_percentage: Option<f32>`).
-    2.  **Update `ui_description_layer`:** Modify `describe_main_window_layout` to generate these new layout commands/parameters. It will now define not just *that* a button exists, but *where* it should generally be and how it should behave on resize (e.g., "button X is docked to the bottom-left of the button panel area").
-    3.  **Generic `handle_wm_size`:** Refactor `handle_wm_size` in the `platform_layer` to be a generic layout engine. It will iterate through the controls registered for the window and apply the layout rules/parameters defined by the `ui_description_layer` for each control. It should no longer contain direct references to `BUTTON_AREA_HEIGHT`, specific control IDs for positioning, or fixed pixel calculations for relative placement.
-    4.  **Control "Panels" (Optional but Recommended):** Consider introducing a concept of "Panels" or "Containers" as describable UI elements (`PlatformCommand::CreatePanel`). Other controls could then be parented to these panels, and layout rules applied within panels. This simplifies complex layouts.
-*   **Rationale:**
-    *   Moves layout policy out of the `platform_layer` (View) and into the `ui_description_layer` (View Definition).
-    *   Makes the `platform_layer`'s `handle_wm_size` truly generic and driven by descriptive data.
-    *   Aligns with MVP by having the View (`platform_layer`) responsible for rendering based on instructions, not deciding layout policy itself.
-*   **Verification:**
-    *   UI resizes correctly according to the new descriptive layout rules.
-    *   `handle_wm_size` in `platform_layer` is significantly simplified and generic.
-    *   Code review confirms no application-specific layout logic remains in `platform_layer`.
+**Step A.II.3: Create `controls` Sub-Module and `*_handler.rs` Skeletons**
+    *   **Action a:** Create `src/platform_layer/controls/` directory and `mod.rs`.
+    *   **Action b:** Create empty or skeleton `menu_handler.rs`, `button_handler.rs`, `statusbar_handler.rs`.
+    *   **Action c:** Rename `control_treeview.rs` to `src/platform_layer/controls/treeview_handler.rs` and update references.
+    *   *Verification:* Compiles. App runs as before.
 
-### Step A.2: Review and Remove Residual UI-Specific Knowledge from `platform_layer` (View)
+**Step A.II.4: Migrate Control Logic to Handlers (Iteratively, one control type at a time)**
+    *   **For each control type (e.g., Button, then Menu, then StatusBar, then TreeView):**
+        *   **Action a (Command Handling):**
+            1.  Identify the function in `command_executor.rs` that handles its creation (e.g., `execute_create_button`).
+            2.  Move this function's implementation into the appropriate `*_handler.rs` (e.g., `button_handler::handle_create_button_command`).
+            3.  Update `command_executor.rs` (or `_execute_platform_command` directly) to call the new handler function.
+            *   *Verification:* Compiles. The specific control is still created correctly. App functional.
+        *   **Action b (Notification/Message Handling):**
+            1.  Identify the parts of `Win32ApiInternalState::handle_wm_command` or `handle_wm_notify` (in `window_common.rs`) that deal with this specific control's events.
+            2.  Move this logic into a new function within the control's `*_handler.rs` (e.g., `button_handler::handle_wm_command(...)`, `menu_handler::handle_wm_command(...)`). This function will take necessary parameters (like `wparam`, `lparam`, `window_id`, a reference to `Arc<Win32ApiInternalState>`, and a mutable ref to `NativeWindowData`).
+            3.  Modify `handle_wm_command`/`handle_wm_notify` in `window_common.rs` to call this new handler function from the control's module if the message pertains to that control.
+            *   *Verification:* Compiles. Events for that specific control (e.g., button clicks, menu selections) are still processed correctly. App functional.
+    *   **Note:** `NativeWindowData` fields like `menu_action_map`, `treeview_state` will now be primarily accessed and modified by their respective control handlers, though `NativeWindowData` itself still resides in `window_common.rs`.
 
-*   **Files:** Primarily `src/platform_layer/app.rs` and `src/platform_layer/window_common.rs`.
-*   **Action:**
-    *   Conduct a thorough review of the entire `platform_layer` for any remaining hardcoded assumptions about specific UI elements or application behavior that should ideally be driven by `PlatformCommand`s from the `ui_description_layer` or state changes from `app_logic` (Presenter).
-    *   Examples:
-        *   Are there any control IDs (other than for generic dialog components like `IDOK`) still hardcoded for specific behaviors within the platform layer?
-        *   Does the platform layer make assumptions about which controls *must* exist?
-        *   Any styling or default text/behavior not set via a command? (Status bar initial text is a good example of what *was* moved).
-    *   For each identified instance, determine if it can be parameterized or controlled via a new/modified `PlatformCommand` or if it's a truly generic platform behavior.
-*   **Rationale:** Ensures the `platform_layer` becomes as generic and reusable as possible, a core tenet of making it a "pure" View in MVP. The `platform_layer` should only know *how* to draw/manage generic UI components, not *what* specific application components exist or how they relate beyond structural descriptions.
-*   **Verification:** Code review and testing to confirm that changes maintain functionality while improving generality.
+---
 
-### Step A.3: Explore Advanced Layout Controls (Inspiration from XAML/WPF)
+**Sub-Phase A.III: Review and Future Exploration (Step A.5 & A.6 from previous plan)**
 
-*   **Goal:** Investigate and potentially implement foundational support for more declarative and flexible layout management, drawing inspiration from systems like WPF's XAML (e.g., `Grid`, `StackPanel`, `DockPanel`). This is a longer-term extension of Step A.1.
-*   **Action (High-Level Ideas):**
-    1.  **Define Layout Panel Types:** Introduce `PlatformCommand`s to create different types of layout panels (e.g., `CreateStackPanelCommand`, `CreateGridCommand`). These panels would be UI elements themselves.
-    2.  **Panel-Specific Properties:** Allow these panel commands to take properties (e.g., `Orientation` for `StackPanel`, `RowDefinitions`/`ColumnDefinitions` for `Grid`).
-    3.  **Child Control Attachment:** Allow other controls to be "children" of these panels, with panel-specific attached properties (e.g., `Grid.Row`, `Grid.Column`, `DockPanel.DockEdge`).
-    4.  **Layout Engine Enhancement:** The `platform_layer`'s layout engine (within `handle_wm_size` or a dedicated layout manager) would need to understand how to interpret these panel types and their children's layout properties.
-*   **Rationale:**
-    *   Provides a much more powerful and flexible way to define UIs compared to manual coordinate calculations or simple docking.
-    *   Further decouples UI design from imperative code.
-    *   Paves the way for potentially loading UI descriptions from external files (like XAML) in the distant future.
-*   **Verification:** Implementation of one or two simple layout panel types (e.g., a basic `StackPanel` or `DockPanel`) and demonstration that child controls are arranged correctly within them and respond to window resizing.
-*   **Note:** This is an ambitious step and might be broken down into smaller sub-phases. The initial focus should be on the descriptive capabilities needed for the current SourcePacker UI.
+**Step A.III.1: Review and Remove Residual UI-Specific Knowledge (A.5)**
+    *   **Action:** After all control logic is migrated, perform the thorough review as described previously.
+    *   *Verification:* Code review confirms increased generality. App functional.
+
+**Step A.III.2: Future Exploration: Advanced Layout and Deeper Decomposition (A.6)**
+    *   This remains a longer-term goal, to be approached after the core refactoring is stable. The "fully functional after each minor step" applies less directly here as it's about new features or major architectural shifts.
+
 
 ---
 
