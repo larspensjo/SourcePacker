@@ -173,7 +173,7 @@ impl MyAppLogic {
      * select or create a new profile, keeping the main window hidden until a profile
      * is active. Commands generated are enqueued.
      */
-    pub fn _on_ui_setup_complete(&mut self, window_id: WindowId) {
+    fn _on_ui_setup_complete(&mut self, window_id: WindowId) {
         self.main_window_id = Some(window_id);
         log::debug!(
             "Main window created (ID: {:?}). Attempting to load last profile.",

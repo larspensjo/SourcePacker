@@ -1,5 +1,3 @@
-// ===== File: C:\Users\larsp\src\source_packer\src\app_logic\handler_tests.rs =====
-
 use super::handler::*;
 
 use crate::core::{
@@ -465,20 +463,22 @@ fn setup_logic_with_mocks() -> (
     Arc<MockArchiver>,
     Arc<MockStateManager>,
 ) {
+    crate::initialize_logging();
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
     let mock_file_system_scanner_arc = Arc::new(MockFileSystemScanner::new());
     let mock_archiver_arc = Arc::new(MockArchiver::new());
     let mock_state_manager_arc = Arc::new(MockStateManager::new());
 
-    let mut logic = MyAppLogic::new(
+    let logic = MyAppLogic::new(
+        // No mut logic here
         Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
         Arc::clone(&mock_profile_manager_arc) as Arc<dyn ProfileManagerOperations>,
         Arc::clone(&mock_file_system_scanner_arc) as Arc<dyn FileSystemScannerOperations>,
         Arc::clone(&mock_archiver_arc) as Arc<dyn ArchiverOperations>,
         Arc::clone(&mock_state_manager_arc) as Arc<dyn StateManagerOperations>,
     );
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    // main_window_id is set when AppEvent::MainWindowUISetupComplete is processed
     (
         logic,
         mock_config_manager_arc,
@@ -512,7 +512,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         mock_profile_manager,
         mock_file_system_scanner,
         mock_archiver,
-        mock_state_manager,
+        _mock_state_manager,
     ) = setup_logic_with_mocks();
 
     let last_profile_name_to_load = "MyMockedStartupProfile";
@@ -545,7 +545,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -578,27 +580,17 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         "Expected SetControlEnabled (true) for save button. Got: {:?}", functional_cmds
     );
 
-    let profile_loaded_msg_count = functional_cmds.iter().filter(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, severity: MessageSeverity::Information, ..} if text.contains("Profile") && text.contains("loaded"))).count();
-    // There are two "profile loaded" messages: one from on_main_window_created itself ("Successfully loaded last profile...")
-    // and one from _activate_profile_and_show_window ("Profile '...' loaded.").
-    assert_eq!(
-        profile_loaded_msg_count, 2,
-        "Expected two 'profile loaded' status messages. Got: {:?}",
-        functional_cmds
-    );
-
     // Functional commands:
     // 1. Info (Successfully loaded last profile...)
     // 2. SetWindowTitle
     // 3. PopulateTreeView
     // 4. Info (Profile '...' loaded. - from _activate_profile_and_show_window)
-    // 5. Info (Archive: NotYetGenerated - from update_current_archive_status)
-    // 6. SetControlEnabled (true)
-    // 7. ShowWindow
+    // 5. SetControlEnabled (true)
+    // 6. ShowWindow
     assert_eq!(
         functional_cmds.len(),
-        7,
-        "Expected 7 functional commands for successful profile load. Got: {:?}",
+        6,
+        "Expected 6 functional commands for successful profile load. Got: {:?}",
         functional_cmds
     );
 }
@@ -618,9 +610,11 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&mock_profile.root_folder, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Mock this
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
@@ -633,15 +627,11 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
         functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )),
         "Expected SetControlEnabled (false) for save button. Got: {:?}", functional_cmds
     );
-    assert!(
-        functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Button 'Save to Archive' disabled"))),
-        "Expected status update for disabled button. Got: {:?}", functional_cmds
-    );
-    // Commands: Info(loaded), SetTitle, Populate, Info(profile loaded from activate), Info(archive status), SetCtrlEnabled(false), Info(button disabled), ShowWindow
+    // Commands: Info(loaded), SetTitle, Populate, Info(profile loaded from activate), SetCtrlEnabled(false), ShowWindow
     assert_eq!(
         functional_cmds.len(),
-        8,
-        "Expected 8 functional commands. Got: {:?}",
+        6,
+        "Expected 6 functional commands. Got: {:?}",
         functional_cmds
     );
 }
@@ -652,11 +642,12 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Expected: Info (No last profile found), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
         2,
@@ -685,11 +676,12 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
     let existing_profiles = vec!["ProfileA".to_string(), "ProfileB".to_string()];
     mock_profile_manager.set_list_profiles_result(Ok(existing_profiles.clone()));
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Expected: Info (No last profile found), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
         2,
@@ -707,11 +699,12 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
     mock_config_manager.set_load_last_profile_name_result(Err(config_error));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Expected: Error (Error loading last profile), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
         2,
@@ -745,11 +738,12 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
     mock_profile_manager.set_load_profile_result(last_profile_name, Err(profile_error));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
-    logic._on_ui_setup_complete(WindowId(1));
+    logic.handle_event(AppEvent::MainWindowUISetupComplete {
+        window_id: WindowId(1),
+    }); // Use the new event
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Expected: Error (Failed to load last profile), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
         2,
@@ -774,6 +768,7 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
 #[test]
 fn test_profile_selection_dialog_completed_cancelled_quits_app() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: WindowId(1),
         chosen_profile_name: None,
@@ -782,30 +777,24 @@ fn test_profile_selection_dialog_completed_cancelled_quits_app() {
     });
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
-    // Expected: Info (Profile selection cancelled), QuitApplication
     assert_eq!(
         functional_cmds.len(),
-        2, // << UPDATED FROM 1 to 2
-        "Expected 2 functional commands (Info + QuitApplication). Got: {:?}",
+        1, // Just QuitApplication
+        "Expected 1 functional command (QuitApplication). Got: {:?}",
         functional_cmds
     );
     assert!(matches!(
         functional_cmds[0],
-        PlatformCommand::UpdateStatusBarText {
-            severity: MessageSeverity::Information,
-            ..
-        }
-    ));
-    assert!(matches!(
-        functional_cmds[1],
         PlatformCommand::QuitApplication
     ));
 }
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() {
-    let (mut logic, mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
+    let (mut logic, _mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     let profile_name = "ChosenProfile";
     let profile_root = PathBuf::from("/chosen/root");
     let profile_archive_path = profile_root.join("chosen_archive.dat");
@@ -818,7 +807,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Ensure this is set
 
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: WindowId(1),
@@ -834,19 +823,21 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
         profile_name,
         profile_archive_path.display()
     );
-    // Commands: SetTitle, PopulateTree, Info(Profile '...' loaded), Info(Archive status), SetCtrlEnabled(true), ShowWindow
+    // Commands: SetTitle, PopulateTree, Info(Profile '...' loaded), SetCtrlEnabled(true), ShowWindow
     assert_eq!(
         functional_cmds.len(),
-        6,
-        "Expected 6 functional commands. Got: {:?}",
+        5,
+        "Expected 5 functional commands. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 7
+    );
     assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)));
 }
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates_selection() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     let profile_name = "FailingProfile";
     mock_profile_manager.set_load_profile_result(
         profile_name,
@@ -862,13 +853,12 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Error(Could not load profile), ShowProfileSelectionDialog
     assert_eq!(
         functional_cmds.len(),
         2,
         "Expected 2 functional commands. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 4
+    );
     assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Could not load profile"))));
     assert!(
         functional_cmds
@@ -880,6 +870,8 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
 #[test]
 fn test_profile_selection_dialog_completed_create_new_starts_flow() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: WindowId(1),
         chosen_profile_name: None,
@@ -889,13 +881,12 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: ShowInputDialog
     assert_eq!(
         functional_cmds.len(),
         1,
         "Expected 1 functional command. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 2
+    );
     match functional_cmds
         .iter()
         .find(|cmd| matches!(cmd, PlatformCommand::ShowInputDialog { .. }))
@@ -908,7 +899,7 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
         }
         _ => panic!(
             "Expected ShowInputDialog for new profile name. Got {:?}",
-            functional_cmds // Use filtered commands for panic message
+            functional_cmds
         ),
     }
     assert_eq!(
@@ -920,7 +911,9 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_valid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
+
     let profile_name = "MyNewProfile";
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
         window_id: WindowId(1),
@@ -934,13 +927,12 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
         logic.test_pending_new_profile_name().as_deref(),
         Some(profile_name)
     );
-    // Commands: ShowFolderPickerDialog (directly)
     assert_eq!(
         functional_cmds.len(),
         1,
         "Expected 1 functional command (ShowFolderPickerDialog). Got: {:?}",
         functional_cmds
-    ); // Adjusted from 2
+    );
     match functional_cmds
         .iter()
         .find(|cmd| matches!(cmd, PlatformCommand::ShowFolderPickerDialog { .. }))
@@ -948,7 +940,7 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
         Some(PlatformCommand::ShowFolderPickerDialog { title, .. }) => {
             assert!(title.contains("New Profile (2/2): Select Root Folder"));
         }
-        _ => panic!("Expected ShowFolderPickerDialog. Got {:?}", functional_cmds), // Changed from cmds
+        _ => panic!("Expected ShowFolderPickerDialog. Got {:?}", functional_cmds),
     }
     assert_eq!(
         logic.test_pending_action().as_ref().unwrap(),
@@ -959,7 +951,9 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_invalid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
+
     let invalid_name = "My/New/Profile";
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
         window_id: WindowId(1),
@@ -969,7 +963,6 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Info(dialog complete), Warning(Invalid name), ShowInputDialog (retry)
     assert_eq!(
         functional_cmds.len(),
         2,
@@ -987,8 +980,10 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For initiate_profile_selection
+    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
         window_id: WindowId(1),
         text: None,
@@ -997,23 +992,15 @@ fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Debug(Input dialog completed), Info(New profile name cancelled), Debug(Initiating profile selection), ShowProfileSelectionDialog
-    // Functional: Info(New profile name cancelled), ShowProfileSelectionDialog
+    // The "New profile name input cancelled..." is an app_info!
     assert_eq!(
         functional_cmds.len(),
-        2, // << UPDATED FROM 1 to 2
-        "Expected 2 functional commands (Info + ShowProfileSelectionDialog). Got: {:?}",
+        1,
+        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
         functional_cmds
     );
     assert!(matches!(
         functional_cmds[0],
-        PlatformCommand::UpdateStatusBarText {
-            severity: MessageSeverity::Information,
-            ..
-        }
-    ));
-    assert!(matches!(
-        functional_cmds[1],
         PlatformCommand::ShowProfileSelectionDialog { .. }
     ));
     assert!(logic.test_pending_action().is_none());
@@ -1023,12 +1010,15 @@ fn test_input_dialog_completed_for_new_profile_name_cancelled() {
 fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
     let (mut logic, _, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     let profile_name = "NewlyCreatedProfile";
     let profile_root = PathBuf::from("/newly/created/root");
     logic.test_set_pending_new_profile_name(Some(profile_name.to_string()));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Set this
+
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
         window_id: WindowId(1),
         path: Some(profile_root.clone()),
@@ -1037,13 +1027,13 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
     let functional_cmds = get_functional_commands(&cmds);
 
     let expected_title = format!("SourcePacker - [{}] - [No Archive Set]", profile_name);
-    // Key Commands: SetTitle, PopulateTree, Info(profile '...' created and loaded), Info(Archive status), SetCtrlEnabled(false), Info(Button disabled), ShowWindow
+    // Key Commands: SetTitle, PopulateTree, Info(profile '...' created and loaded), SetCtrlEnabled(false), ShowWindow
     assert_eq!(
         functional_cmds.len(),
-        7,
-        "Expected 7 functional commands. Got: {:?}",
+        5,
+        "Expected 5 functional commands. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 9
+    );
     assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)));
     assert!(functional_cmds.iter().any(|cmd| matches!(
         cmd,
@@ -1054,9 +1044,11 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
 #[test]
 fn test_folder_picker_dialog_completed_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
     logic.test_set_pending_new_profile_name(Some("TempName".to_string()));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For initiate_profile_selection
+    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
         window_id: WindowId(1),
         path: None,
@@ -1064,23 +1056,15 @@ fn test_folder_picker_dialog_completed_cancelled() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Debug(Folder picker completed), Info(Root folder selection cancelled), Debug(Initiating profile selection), ShowProfileSelectionDialog
-    // Functional: Info(Root folder selection cancelled), ShowProfileSelectionDialog
+    // The "Root folder selection cancelled..." is an app_info!
     assert_eq!(
         functional_cmds.len(),
-        2, // << UPDATED FROM 1 to 2
-        "Expected 2 functional commands (Info + ShowProfileSelectionDialog). Got: {:?}",
+        1,
+        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
         functional_cmds
     );
     assert!(matches!(
         functional_cmds[0],
-        PlatformCommand::UpdateStatusBarText {
-            severity: MessageSeverity::Information,
-            ..
-        }
-    ));
-    assert!(matches!(
-        functional_cmds[1],
         PlatformCommand::ShowProfileSelectionDialog { .. }
     ));
     assert!(logic.test_pending_action().is_none());
@@ -1090,6 +1074,8 @@ fn test_folder_picker_dialog_completed_cancelled() {
 #[test]
 fn test_initiate_profile_selection_failure_to_list_profiles() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1))); // This IS needed for app_error! to queue a command
+
     mock_profile_manager.set_list_profiles_result(Err(ProfileError::Io(io::Error::new(
         io::ErrorKind::PermissionDenied,
         "cannot access profiles dir",
@@ -1098,13 +1084,12 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Info(initiating selection), Error(failed to list)
     assert_eq!(
         functional_cmds.len(),
         1,
         "Expected 1 functional Error command. Got: {:?}",
         functional_cmds
-    ); // Debug message filtered out
+    );
     assert!(functional_cmds.iter().any(|cmd| matches!(
         cmd,
         PlatformCommand::UpdateStatusBarText {
@@ -1118,12 +1103,14 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
 fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let (
         mut logic,
-        _,
+        _mock_config_manager,
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
     ) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     let profile_to_load_name = "ProfileToLoadViaManager";
     let profile_root_for_scan = PathBuf::from("/mocked/profile/root/for/scan");
     let archive_path_for_loaded_profile = profile_root_for_scan.join("archive.dat");
@@ -1173,25 +1160,27 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
             .iter()
             .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
     );
-    // Key functional commands: SetTitle, PopulateTree, Status(Profile ... loaded and scanned), Status(archive), SetCtrlEnabled, ShowWindow
+    // Key functional commands: SetTitle, PopulateTree, Status(Profile ... loaded and scanned), SetCtrlEnabled, ShowWindow
     assert_eq!(
         functional_cmds.len(),
-        6,
-        "Expected 6 functional commands. Got: {:?}",
+        5,
+        "Expected 5 functional commands. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 7
+    );
+    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains("Profile 'ProfileToLoadViaManager' loaded and scanned"))));
 }
 
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     logic.handle_event(AppEvent::WindowCloseRequestedByUser {
         window_id: WindowId(1),
     });
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Expect CloseWindow command directly from handler
     assert_eq!(
         functional_cmds.len(),
         1,
@@ -1207,7 +1196,8 @@ fn test_handle_window_close_requested_generates_close_command() {
 #[test]
 fn test_menu_set_archive_path_cancelled() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    let main_window_id = logic.test_main_window_id().unwrap();
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
     logic.test_set_current_profile_cache(Some(Profile::new("Test".into(), PathBuf::from("."))));
     logic.test_set_pending_action(PendingAction::SettingArchivePath);
 
@@ -1218,31 +1208,33 @@ fn test_menu_set_archive_path_cancelled() {
     let cmds = logic.test_drain_commands();
     let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: Info(dialog complete), Info(Set archive path cancelled), SetControlEnabled(false), Info(button disabled)
+    // Command: SetControlEnabled(false)
+    // The "Set archive path cancelled" and "Button 'Save to Archive' disabled" messages
+    // are log::debug! and do not generate functional commands.
     assert_eq!(
         functional_cmds.len(),
-        3,
+        1,
         "Expected 3 functional commands. Got: {:?}",
         functional_cmds
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Set archive path cancelled."))));
     assert!(functional_cmds.iter().any(|cmd| matches!(
         cmd,
         PlatformCommand::SetControlEnabled { enabled: false, .. }
     )));
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Information, .. } if text.contains("Button 'Save to Archive' disabled"))));
 }
 
 #[test]
 fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let (
         mut logic,
-        _,
+        _mock_config_manager,
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
     ) = setup_logic_with_mocks();
+    logic.test_set_main_window_id(Some(WindowId(1)));
+
     let profile_name = "ProfileForStatusUpdateViaMockArchiver";
     let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_mock_archiver");
     let archive_file_for_profile = PathBuf::from("/mock/my_mock_archiver_archive.txt");
@@ -1278,7 +1270,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         6,
         "Expected 6 functional commands. Got: {:?}",
         functional_cmds
-    ); // Adjusted from 7
+    );
     assert!(
         functional_cmds
             .iter()

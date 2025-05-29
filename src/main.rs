@@ -38,21 +38,7 @@ use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, WriteLogger};
  *    application logic as the event handler.
  */
 fn main() -> PlatformResult<()> {
-    let log_file_path = "source_packer.log";
-    match File::create(log_file_path) {
-        Ok(file) => {
-            let config = ConfigBuilder::new().set_time_format_rfc3339().build();
-
-            if let Err(e) =
-                CombinedLogger::init(vec![WriteLogger::new(LevelFilter::Debug, config, file)])
-            {
-                eprintln!("Failed to initialize logger: {}", e);
-            }
-        }
-        Err(e) => {
-            eprintln!("Failed to create log file '{}': {}", log_file_path, e);
-        }
-    }
+    initialize_logging();
 
     log::debug!("Initialize Platform Layer");
 
@@ -127,4 +113,59 @@ fn main() -> PlatformResult<()> {
     }
 
     Ok(())
+}
+
+fn initialize_logging() {
+    #[cfg(not(test))]
+    {
+        // Production logger (to file)
+        let log_file_path = "source_packer.log";
+        match std::fs::File::create(log_file_path) {
+            Ok(file) => {
+                let config = simplelog::ConfigBuilder::new()
+                    .set_time_format_rfc3339()
+                    .build();
+                if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
+                    simplelog::LevelFilter::Debug,
+                    config,
+                    file,
+                )]) {
+                    eprintln!("Failed to initialize file logger: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to create log file '{}': {}", log_file_path, e);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    {
+        // Test logger (to stdout/stderr)
+        let config = simplelog::ConfigBuilder::new()
+            // .set_time_format_rfc3339() // Optional: keep same format
+            // .set_target_level(simplelog::LevelFilter::Error) // Hide target module path
+            // .set_thread_level(simplelog::LevelFilter::Error) // Hide thread ID
+            // .set_location_level(simplelog::LevelFilter::Error) // Hide file/line
+            .build();
+
+        // TermLogger is good for console output
+        // Use `CombinedLogger` if you still want some tests to log to a file OR if you want multiple terminal loggers
+        // For simple stdout, TermLogger is often enough.
+        if simplelog::TermLogger::init(
+            simplelog::LevelFilter::Debug, // Or a higher level like Info if Debug is too noisy
+            config,
+            simplelog::TerminalMode::Mixed, // Or ::Stdout
+            simplelog::ColorChoice::Auto,
+        )
+        .is_err()
+        {
+            // Fallback if TermLogger fails (e.g., no terminal)
+            let _ = simplelog::SimpleLogger::init(
+                simplelog::LevelFilter::Warn,
+                simplelog::Config::default(),
+            );
+            eprintln!("TermLogger failed, fell back to SimpleLogger for tests.");
+        }
+    }
 }
