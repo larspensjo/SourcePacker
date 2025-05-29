@@ -14,13 +14,6 @@ Whenever you want to change how your window looks like or population of controls
 
 **Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring**
 
-**Step A.I.5: Move Non-Dialog Command Implementations to `command_executor.rs`**
-    *   **Action (iterative, one command type at a time):**
-        *   For each non-dialog `_handle_..._impl` method in `Win32ApiInternalState` (e.g., `_handle_create_button_impl`, `_handle_create_main_menu_impl`, etc., but *not* `_handle_show_save_file_dialog_impl` yet):
-            1.  Move its implementation to a corresponding free function in `command_executor.rs` (e.g., `execute_create_button(...)`).
-            2.  Update the `_execute_platform_command` match arm in `app.rs` to call this new function.
-    *   *Verification (after each command type moved):* Compiles. App runs, and the specific functionality related to that command still works.
-
 **Step A.I.6: Create `dialog_handler.rs` and Move Dialog Command Implementations**
     *   **Action a:** Create the basic structure of `src/platform_layer/dialog_handler.rs`.
     *   **Action b (iterative, one dialog type at a time):**
