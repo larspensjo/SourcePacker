@@ -103,7 +103,7 @@ fn main() -> PlatformResult<()> {
     );
 
     // Pass the initial commands to the run loop for execution
-    let run_result = platform_interface.run(app_event_handler, initial_commands);
+    let run_result = platform_interface.main_event_loop(app_event_handler, initial_commands);
 
     match run_result {
         Ok(()) => log::debug!("Application exited cleanly."),

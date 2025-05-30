@@ -4,7 +4,7 @@ use windows::core::Error as WinError;
 ///
 /// This enum centralizes error handling for operations related to the native UI toolkit,
 /// such as window creation failures, invalid operations, or underlying OS errors.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PlatformError {
     /// An error originating from the Windows API.
     Win32(WinError),

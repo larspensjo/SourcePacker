@@ -49,7 +49,7 @@ pub(crate) fn get_hwnd_owner(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<HWND> {
-    let windows_guard = internal_state.window_map.read().map_err(|_| {
+    let windows_guard = internal_state.active_windows.read().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
     })?;
     windows_guard
@@ -146,7 +146,7 @@ where
     // Construct and send the event to the application logic.
     let event = event_constructor(window_id, path_result);
     if let Some(handler_arc) = internal_state
-        .event_handler
+        .application_event_handler
         .lock()
         .unwrap()
         .as_ref()
@@ -273,7 +273,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
     };
 
     if let Some(handler_arc) = internal_state
-        .event_handler
+        .application_event_handler
         .lock()
         .unwrap()
         .as_ref()
@@ -592,7 +592,7 @@ pub(crate) fn handle_show_input_dialog_command(
     };
 
     if let Some(handler_arc) = internal_state
-        .event_handler
+        .application_event_handler
         .lock()
         .unwrap()
         .as_ref()
@@ -709,7 +709,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
             path: None,
         };
         if let Some(handler_arc) = internal_state
-            .event_handler
+            .application_event_handler
             .lock()
             .unwrap()
             .as_ref()
@@ -727,7 +727,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
         path: path_result,
     };
     if let Some(handler_arc) = internal_state
-        .event_handler
+        .application_event_handler
         .lock()
         .unwrap()
         .as_ref()

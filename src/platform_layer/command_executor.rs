@@ -55,7 +55,7 @@ pub(crate) fn execute_define_layout(
         rules.len()
     );
 
-    let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
         PlatformError::OperationFailed(
             "Failed to lock windows map for execute_define_layout".into(),
         )
@@ -113,7 +113,7 @@ pub(crate) fn execute_update_status_bar_text(
 
     // Scope for the write lock on window_map
     {
-        let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
             PlatformError::OperationFailed("Failed to lock windows map for status update".into())
         })?;
 
@@ -199,9 +199,15 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
     );
 
     let handler_arc_opt = {
-        let event_handler_guard = internal_state.event_handler.lock().map_err(|_e| {
-            PlatformError::OperationFailed("Failed to lock internal event_handler field".into())
-        })?;
+        let event_handler_guard =
+            internal_state
+                .application_event_handler
+                .lock()
+                .map_err(|_e| {
+                    PlatformError::OperationFailed(
+                        "Failed to lock internal event_handler field".into(),
+                    )
+                })?;
         event_handler_guard
             .as_ref()
             .and_then(|weak_handler| weak_handler.upgrade())
@@ -239,7 +245,7 @@ pub(crate) fn execute_create_main_menu(
     let mut hwnd_owner_opt: Option<HWND> = None;
 
     {
-        let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
             PlatformError::OperationFailed(
                 "Failed to lock windows map for main menu creation (data population)".into(),
             )
@@ -359,7 +365,7 @@ pub(crate) fn execute_set_control_enabled(
     control_id: i32,
     enabled: bool,
 ) -> PlatformResult<()> {
-    let windows_guard = internal_state.window_map.read().map_err(|_| {
+    let windows_guard = internal_state.active_windows.read().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
     })?;
 
@@ -398,7 +404,7 @@ pub(crate) fn execute_create_button(
     control_id: i32,
     text: String,
 ) -> PlatformResult<()> {
-    let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
         PlatformError::OperationFailed("Failed to lock windows map for button creation".into())
     })?;
 
@@ -452,7 +458,7 @@ pub(crate) fn execute_create_status_bar(
     control_id: i32,
     initial_text: String,
 ) -> PlatformResult<()> {
-    let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
         PlatformError::OperationFailed("Failed to lock windows map for status bar creation".into())
     })?;
 
@@ -507,7 +513,7 @@ pub(crate) fn execute_create_treeview(
     window_id: WindowId,
     control_id: i32,
 ) -> PlatformResult<()> {
-    let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
         PlatformError::OperationFailed("Failed to lock windows map for TreeView creation".into())
     })?;
 

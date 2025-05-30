@@ -314,7 +314,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> LRESULT {
         let event_handler_opt = self
-            .event_handler
+            .application_event_handler
             .lock()
             .unwrap()
             .as_ref()
@@ -361,7 +361,7 @@ impl Win32ApiInternalState {
                 let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
                 let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
 
-                if let Some(windows_guard) = self.window_map.read().ok() {
+                if let Some(windows_guard) = self.active_windows.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         if Some(hwnd_static_ctrl_from_msg)
                             == window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
@@ -425,7 +425,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
         h_item: HTREEITEM,
     ) -> Option<AppEvent> {
-        let windows_guard = self.window_map.read().ok()?;
+        let windows_guard = self.active_windows.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
 
         let hwnd_treeview = window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)?;
@@ -527,7 +527,7 @@ impl Win32ApiInternalState {
         let client_width = loword_from_lparam(lparam);
         let client_height = hiword_from_lparam(lparam);
 
-        if let Some(windows_guard) = self.window_map.read().ok() {
+        if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
                 let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
                 let button_area_y_pos = treeview_height;
@@ -617,7 +617,7 @@ impl Win32ApiInternalState {
             // For menu: HIWORD(wParam) is 0.
             // For accelerator: HIWORD(wParam) is 1.
             if notification_code_raw == 0 || notification_code_raw == 1 {
-                if let Ok(windows_guard) = self.window_map.read() {
+                if let Ok(windows_guard) = self.active_windows.read() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         if let Some(action) = window_data.menu_action_map.get(&command_id) {
                             log::debug!(
@@ -705,10 +705,10 @@ impl Win32ApiInternalState {
         _lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
-        if let Some(mut windows_map_guard) = self.window_map.write().ok() {
+        if let Some(mut windows_map_guard) = self.active_windows.write().ok() {
             windows_map_guard.remove(&window_id);
         }
-        self.decrement_active_windows();
+        self.check_if_should_quit_after_window_close();
         Some(AppEvent::WindowDestroyed { window_id })
     }
 
@@ -780,7 +780,7 @@ impl Win32ApiInternalState {
                     }
                 }
 
-                if let Some(windows_guard) = self.window_map.read().ok() {
+                if let Some(windows_guard) = self.active_windows.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
                         // Check if the notification is from THE TreeView we manage for this window
                         if Some(hwnd_tv_from_notify)
@@ -885,7 +885,7 @@ pub(crate) fn set_window_title(
     window_id: WindowId,
     title: &str,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.window_map.read().ok() {
+    if let Some(windows_guard) = internal_state.active_windows.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             unsafe { SetWindowTextW(window_data.hwnd, &HSTRING::from(title))? };
             Ok(())
@@ -907,7 +907,7 @@ pub(crate) fn show_window(
     window_id: WindowId,
     show: bool,
 ) -> PlatformResult<()> {
-    if let Some(windows_guard) = internal_state.window_map.read().ok() {
+    if let Some(windows_guard) = internal_state.active_windows.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             let cmd = if show { SW_SHOW } else { SW_HIDE };
             unsafe { ShowWindow(window_data.hwnd, cmd) };
@@ -943,7 +943,7 @@ pub(crate) fn destroy_native_window(
     let hwnd_to_destroy: Option<HWND>;
     {
         let windows_read_guard = internal_state
-            .window_map
+            .active_windows
             .read()
             .map_err(|_| PlatformError::OperationFailed("Failed to acquire read lock".into()))?;
         hwnd_to_destroy = windows_read_guard.get(&window_id).map(|data| data.hwnd);

@@ -11,24 +11,17 @@ use super::{types::MenuItemConfig, window_common};
 use windows::{
     Win32::{
         Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, RECT, TRUE, WPARAM},
-        System::Com::{CoInitializeEx, CoUninitialize}, // Only CoInitializeEx and CoUninitialize remain
+        System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
-        UI::Controls::{
-            // Only common control initialization items remain
-            ICC_TREEVIEW_CLASSES,
-            INITCOMMONCONTROLSEX,
-            InitCommonControlsEx,
-        },
-        // UI::Shell items are all removed
-        UI::WindowsAndMessaging::*, // Main windowing messages and types remain
+        UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
+        UI::WindowsAndMessaging::*,
     },
-    core::{HSTRING, PCWSTR}, // PWSTR removed
+    core::{HSTRING, PCWSTR},
 };
 
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString, c_void};
-use std::os::windows::ffi::OsStringExt;
-use std::path::PathBuf; // Kept as some commands might still pass PathBufs
+use std::ffi::c_void;
+use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, RwLock, Weak,
     atomic::{AtomicUsize, Ordering},
@@ -44,26 +37,19 @@ use std::sync::{
  */
 pub(crate) struct Win32ApiInternalState {
     pub(crate) h_instance: HINSTANCE,
-    pub(crate) next_window_id_counter: AtomicUsize,
-    // Maps platform-agnostic `WindowId` to native `HWND` and associated window data.
-    pub(crate) window_map: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
-    // A weak reference to the event handler provided by the application logic.
-    // Stored to be accessible by the WndProc. Weak to avoid cycles if event_handler holds PlatformInterface.
-    pub(crate) event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
+    pub(crate) next_window_id_counter: AtomicUsize, // For generating unique WindowIds
+    // Central registry for all active windows, mapping WindowId to its native state.
+    pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
+    pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
     pub(crate) app_name_for_class: String,
-    // Keeps track of active top-level windows. When this count reaches zero,
-    // and `is_quitting` is true, the application exits.
-    active_windows_count: AtomicUsize,
-    is_quitting: AtomicUsize, // 0 = false, 1 = true (using usize for Atomic)
+    is_quitting: AtomicUsize, // 0 = false, 1 = true
 }
 
 impl Win32ApiInternalState {
     /*
      * Creates a new instance of `Win32ApiInternalState`.
-     * Initializes COM, common controls (specifically for TreeView), and
-     * retrieves the application instance handle (`HINSTANCE`).
-     * Returns a `PlatformResult` wrapping an `Arc` to the new state.
+     * Initializes COM, common controls, and retrieves the application instance handle.
      */
     fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
         unsafe {
@@ -93,50 +79,80 @@ impl Win32ApiInternalState {
             Ok(Arc::new(Self {
                 h_instance,
                 next_window_id_counter: AtomicUsize::new(1),
-                window_map: RwLock::new(HashMap::new()),
-                event_handler: Mutex::new(None),
+                active_windows: RwLock::new(HashMap::new()),
+                application_event_handler: Mutex::new(None),
                 app_name_for_class,
-                active_windows_count: AtomicUsize::new(0),
-                is_quitting: AtomicUsize::new(0),
+                is_quitting: AtomicUsize::new(0), // Initialize is_quitting
             }))
         }
     }
 
-    pub(crate) fn generate_window_id(&self) -> WindowId {
+    /*
+     * Generates a new unique `WindowId`.
+     */
+    pub(crate) fn generate_unique_window_id(&self) -> WindowId {
         WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub(crate) fn decrement_active_windows(&self) {
-        let prev_count = self.active_windows_count.fetch_sub(1, Ordering::Relaxed);
-        log::debug!(
-            "Platform: Active window count decremented, was {}, now {}.",
-            prev_count,
-            prev_count - 1
+    /*
+     * Called typically after a window is removed from the `active_windows` map
+     * (e.g., during WM_DESTROY processing). If no windows remain active and a quit
+     * has been signaled or if this was the last window, it posts WM_QUIT.
+     * The `is_quitting` flag ensures that if `QuitApplication` was called
+     * when multiple windows were open, the app quits when the *last* one closes.
+     */
+    pub(crate) fn check_if_should_quit_after_window_close(&self) {
+        let no_active_windows = self.active_windows.read().map_or_else(
+            |poisoned_err| {
+                log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}", poisoned_err);
+                // Decide on a safe default. If poisoned, it's hard to know the true state.
+                // Assuming not empty might prevent premature quit but could also lead to hanging if state is truly empty.
+                // For now, let's default to false (i.e., assume not empty) to be cautious about premature quitting.
+                false
+            },
+            |guard| guard.is_empty()
         );
-        if prev_count == 1 {
+
+        // Quit if no windows are left, OR if a quit was previously signaled and now no windows are left.
+        // The `is_quitting` flag handles cases where QuitApplication is called before the last window closes.
+        if no_active_windows {
             log::debug!(
-                "Platform: Last active window closed (or being destroyed), posting WM_QUIT."
+                "Platform: Last active window closed (or was already closed and quit signaled). Posting WM_QUIT."
             );
             unsafe { PostQuitMessage(0) };
         }
     }
 
+    /*
+     * If no windows are currently active, it posts WM_QUIT immediately.
+     * Otherwise, WM_QUIT will be posted when the last window closes.
+     */
     pub(crate) fn signal_quit_intent(&self) {
         self.is_quitting.store(1, Ordering::Relaxed);
-        if self.active_windows_count.load(Ordering::Relaxed) == 0 {
-            log::error!("Platform: Quit signaled with no active windows, posting WM_QUIT.");
+        let no_active_windows = self.active_windows.read().map_or_else(
+            |poisoned_err| {
+                 log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during signal_quit_intent: {:?}", poisoned_err);
+                 // Similar to above, default to a safe state.
+                 false
+            },
+            |guard| guard.is_empty()
+        );
+
+        if no_active_windows {
+            log::debug!(
+                "Platform: Quit signaled with no active windows, posting WM_QUIT immediately."
+            );
             unsafe { PostQuitMessage(0) };
+        } else {
+            log::debug!(
+                "Platform: Quit intent signaled. WM_QUIT will be posted when the last window closes."
+            );
         }
     }
 
-    // All _handle_..._dialog_impl methods have been moved to dialog_handler.rs
-
     /*
-     * Executes a single platform command directly.
-     * This method centralizes the handling of all platform commands, whether
-     * they originate from the initial setup or from event handling by MyAppLogic.
-     * It's called by the main run loop after dequeuing commands from MyAppLogic,
-     * and can also be called directly for initial UI setup commands.
+     * Executes a single platform command.
+     * Delegates to specific handlers in `command_executor` or `dialog_handler`.
      */
     fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
         log::debug!("Platform: Executing command: {:?}", command);
@@ -290,7 +306,6 @@ impl PlatformInterface {
     /*
      * Creates a new `PlatformInterface`.
      * Initializes the internal Win32 state and registers the main window class.
-     * Returns a `PlatformResult` wrapping the new interface.
      */
     pub fn new(app_name_for_class: String) -> PlatformResult<Self> {
         let internal_state = Win32ApiInternalState::new(app_name_for_class)?;
@@ -301,25 +316,37 @@ impl PlatformInterface {
         Ok(PlatformInterface { internal_state })
     }
 
+    /*
+     * A `WindowId` is generated and associated with the native window's state.
+     * The window is not shown until a `PlatformCommand::ShowWindow` is received.
+     */
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
-        let window_id = self.internal_state.generate_window_id();
+        let window_id = self.internal_state.generate_unique_window_id();
+
+        // Create preliminary data for the window map. HWND will be filled after creation.
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: HWND(std::ptr::null_mut()),
+            hwnd: HWND(std::ptr::null_mut()), // Invalid HWND initially
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
             status_bar_current_text: String::new(),
             status_bar_current_severity: MessageSeverity::None,
             menu_action_map: HashMap::new(),
-            next_menu_item_id_counter: 30000,
+            next_menu_item_id_counter: 30000, // Default starting ID for menu items
             layout_rules: None,
         };
+
+        // Insert preliminary data into the active_windows map.
         self.internal_state
-            .window_map
+            .active_windows
             .write()
-            .map_err(|_| {
+            .map_err(|e| {
+                log::error!(
+                    "Platform: Failed to lock active_windows for preliminary insert: {:?}",
+                    e
+                );
                 PlatformError::OperationFailed(
-                    "Failed to lock windows map for preliminary insert".into(),
+                    "Failed to lock active_windows map for preliminary insert".into(),
                 )
             })?
             .insert(window_id, preliminary_native_data);
@@ -327,6 +354,8 @@ impl PlatformInterface {
             "Platform: Inserted preliminary NativeWindowData for WindowId {:?}",
             window_id
         );
+
+        // Attempt to create the native window.
         let hwnd = match window_common::create_native_window(
             &self.internal_state,
             window_id,
@@ -336,16 +365,21 @@ impl PlatformInterface {
         ) {
             Ok(h) => h,
             Err(e) => {
-                self.internal_state
-                    .window_map
-                    .write()
-                    .unwrap()
-                    .remove(&window_id);
+                // If creation fails, attempt to remove the preliminary data.
+                // Log any error during removal but return the original creation error.
+                if let Ok(mut guard) = self.internal_state.active_windows.write() {
+                    guard.remove(&window_id);
+                } else {
+                    log::error!(
+                        "Platform: Failed to lock active_windows for cleanup after window creation failure for WinID {:?}",
+                        window_id
+                    );
+                }
                 log::debug!(
-                    "Platform: Removed preliminary NativeWindowData for WindowId {:?} due to creation failure.",
+                    "Platform: Removed (or attempted to remove) preliminary NativeWindowData for WindowId {:?} due to creation failure.",
                     window_id
                 );
-                return Err(e);
+                return Err(e); // Return the original creation error
             }
         };
         log::debug!(
@@ -353,62 +387,90 @@ impl PlatformInterface {
             hwnd,
             window_id
         );
-        match self.internal_state.window_map.write() {
+
+        // Update the NativeWindowData with the actual HWND.
+        match self.internal_state.active_windows.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.hwnd = hwnd;
                     log::debug!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}. Status HWND is {:?}.",
+                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}.",
                         window_id,
-                        window_data.get_control_hwnd(window_common::ID_STATUS_BAR_CTRL)
                     );
                 } else {
+                    // This should ideally not happen if insert succeeded and no other thread removed it.
                     log::error!(
                         "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
                         window_id
                     );
+                    // Attempt to destroy the orphaned window if possible.
+                    if !hwnd.is_invalid() {
+                        unsafe {
+                            DestroyWindow(hwnd).ok();
+                        }
+                    }
                     return Err(PlatformError::WindowCreationFailed(
                         "Failed to update HWND for preliminary window data: entry missing"
                             .to_string(),
                     ));
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                log::error!(
+                    "Platform: Failed to lock active_windows for HWND update: {:?}",
+                    e
+                );
+                // Attempt to destroy the orphaned window if possible.
+                if !hwnd.is_invalid() {
+                    unsafe {
+                        DestroyWindow(hwnd).ok();
+                    }
+                }
                 return Err(PlatformError::OperationFailed(
-                    "Failed to lock windows map for HWND update".into(),
+                    "Failed to lock active_windows map for HWND update".into(),
                 ));
             }
         }
-        self.internal_state
-            .active_windows_count
-            .fetch_add(1, Ordering::Relaxed);
         Ok(window_id)
     }
 
+    /*
+     * Executes a single platform command via the internal state.
+     */
     pub fn execute_command(&self, command: PlatformCommand) -> PlatformResult<()> {
         self.internal_state._execute_platform_command(command)
     }
 
     /*
-     * Starts the platform's main event loop.
-     * This method takes ownership of the `event_handler` (e.g., MyAppLogic) and
-     * continuously processes messages. Before checking for OS messages, it drains
-     * and executes any commands enqueued in the event handler. It only returns
-     * when the application is quitting (e.g., after `WM_QUIT` is posted).
+     * Takes the application's event handler and a list of initial commands.
+     * Processes initial commands, then enters the message loop, dequeuing and
+     * executing commands from the event handler before processing OS messages.
+     * Returns when the application quits.
      */
-    pub fn run(
+    pub fn main_event_loop(
         &self,
-        event_handler: Arc<Mutex<dyn PlatformEventHandler>>,
+        event_handler_param: Arc<Mutex<dyn PlatformEventHandler>>,
         initial_commands_to_execute: Vec<PlatformCommand>,
     ) -> PlatformResult<()> {
-        *self.internal_state.event_handler.lock().unwrap() = Some(Arc::downgrade(&event_handler));
+        // Store a weak reference to the application's event handler.
+        *self
+            .internal_state
+            .application_event_handler
+            .lock()
+            .map_err(|e| {
+                log::error!(
+                    "Platform: Failed to lock application_event_handler to set it: {:?}",
+                    e
+                );
+                PlatformError::OperationFailed("Failed to set application event handler".into())
+            })? = Some(Arc::downgrade(&event_handler_param));
 
         log::debug!(
             "Platform: run() called. Processing {} initial UI commands before event loop.",
             initial_commands_to_execute.len()
         );
 
-        // Execute initial UI setup commands before starting the message loop.
+        // Execute initial UI setup commands.
         for command in initial_commands_to_execute {
             log::trace!("Platform: Executing initial command: {:?}", command);
             if let Err(e) = self.internal_state._execute_platform_command(command) {
@@ -421,28 +483,33 @@ impl PlatformInterface {
         }
         log::debug!("Platform: Initial UI commands processed successfully.");
 
-        let app_logic_ref = event_handler;
+        // Keep a strong reference to the event handler for the duration of the run loop.
+        let app_logic_ref_for_loop = event_handler_param;
         unsafe {
             let mut msg = MSG::default();
             loop {
-                // Reset current highest severity for windows before processing new commands/events
-                if let Ok(mut windows_map_guard) = self.internal_state.window_map.write() {
+                // Reset status bar severity display state for all windows.
+                if let Ok(mut windows_map_guard) = self.internal_state.active_windows.write() {
                     for (_id, window_data) in windows_map_guard.iter_mut() {
                         window_data.status_bar_current_severity = MessageSeverity::Information;
                         if window_data.status_bar_current_text.is_empty() {
                             window_data.status_bar_current_severity = MessageSeverity::None;
                         }
                     }
+                } else {
+                    log::warn!(
+                        "Platform: Failed to lock active_windows to reset status bar severity state."
+                    );
                 }
 
+                // Process commands from the application logic queue.
                 loop {
-                    // Step 1: Dequeue a command.
                     let command_to_execute: Option<PlatformCommand> = {
-                        match app_logic_ref.lock() {
+                        match app_logic_ref_for_loop.lock() {
                             Ok(mut logic_guard) => logic_guard.try_dequeue_command(),
                             Err(e) => {
                                 log::error!(
-                                    "Platform: Failed to lock MyAppLogic to dequeue command: {:?}. Skipping command processing for this cycle.",
+                                    "Platform: Failed to lock application logic to dequeue command: {:?}. Skipping command processing for this cycle.",
                                     e
                                 );
                                 None
@@ -450,20 +517,20 @@ impl PlatformInterface {
                         }
                     };
 
-                    // Step 2: Execute the command if one was dequeued.
                     if let Some(command) = command_to_execute {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
                             log::error!("Platform: Error executing command from queue: {:?}", e);
+                            // Continue processing other commands/messages.
                         }
                     } else {
-                        // No more commands in the queue.
-                        break;
+                        break; // No more commands in the queue.
                     }
                 }
 
                 // Process Windows messages.
                 let result = GetMessageW(&mut msg, None, 0, 0);
                 if result.0 > 0 {
+                    // Message other than WM_QUIT
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 } else if result.0 == 0 {
@@ -477,15 +544,17 @@ impl PlatformInterface {
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
-                    if self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
-                        && self
-                            .internal_state
-                            .active_windows_count
-                            .load(Ordering::Relaxed)
-                            == 0
-                    {
+                    // Check if we are already in a quit sequence and no windows are left.
+                    let should_still_break =
+                        self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
+                            && self
+                                .internal_state
+                                .active_windows
+                                .read()
+                                .map_or(false, |g| g.is_empty());
+                    if should_still_break {
                         log::debug!(
-                            "Platform: GetMessageW error during intended quit sequence, treating as clean exit."
+                            "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
                         );
                         break;
                     }
@@ -496,31 +565,38 @@ impl PlatformInterface {
                 }
             }
         }
-        // Application quit
-        if let Ok(mut handler_guard) = app_logic_ref.lock() {
+        // Application quit: notify the application logic.
+        if let Ok(mut handler_guard) = app_logic_ref_for_loop.lock() {
             handler_guard.on_quit();
         } else {
-            log::error!("Platform: Failed to lock MyAppLogic for on_quit call.");
+            log::error!("Platform: Failed to lock application logic for on_quit call.");
         }
-        *self.internal_state.event_handler.lock().unwrap() = None;
+        match self.internal_state.application_event_handler.lock() {
+            Ok(mut guard) => *guard = None,
+            Err(e) => {
+                log::error!(
+                    "Platform: Failed to lock application_event_handler to clear it (poisoned): {:?}",
+                    e
+                );
+                // If this fails due to poisoning, the program is exiting anyway.
+                // We can't easily "fix" the poisoned lock at this stage for this specific operation.
+            }
+        }
         log::debug!("Platform: Message loop exited cleanly.");
         Ok(())
     }
 }
 
-// All dialog-specific structs (like InputDialogData) and their associated procs/helpers
-// have been moved to dialog_handler.rs.
-
 #[cfg(test)]
 mod app_tests {
     use super::*;
+    // use crate::platform_layer::window_common::HWND_INVALID; // Not directly used in these tests
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use std::path::PathBuf;
 
-    // This helper was specific to app.rs, but its functionality is now in dialog_handler.rs.
-    // For tests that might have relied on it being in app.rs scope, it's kept here.
-    // In a real scenario, tests would be updated or new ones created for dialog_handler.
+    // This test helper remains for historical reasons or if other parts of app_tests use it.
+    // The actual pathbuf_from_buf used by dialogs is now in dialog_handler.rs.
     pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
         let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
         let path_os_string = OsString::from_wide(&buffer[..len]);

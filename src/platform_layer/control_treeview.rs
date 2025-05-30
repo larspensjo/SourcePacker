@@ -152,7 +152,7 @@ pub(crate) fn populate_treeview(
 
     // Phase 1: Lock, get HWND, take tv_state
     {
-        let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
             PlatformError::OperationFailed(
                 "Failed to lock windows map for populate_treeview (phase 1)".into(),
             )
@@ -209,7 +209,7 @@ pub(crate) fn populate_treeview(
                 // Re-acquire lock to put state back.
                 {
                     let mut windows_map_guard =
-                        internal_state.window_map.write().map_err(|_| {
+                        internal_state.active_windows.write().map_err(|_| {
                             PlatformError::OperationFailed(
                                 "Failed to lock windows map for populate_treeview (error recovery)"
                                     .into(),
@@ -243,7 +243,7 @@ pub(crate) fn populate_treeview(
 
     // Phase 3: Lock, put tv_state back
     {
-        let mut windows_map_guard = internal_state.window_map.write().map_err(|_| {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
             PlatformError::OperationFailed(
                 "Failed to lock windows map for populate_treeview (phase 3)".into(),
             )
@@ -276,7 +276,7 @@ pub(crate) fn update_treeview_item_visual_state(
     let h_item_native: HTREEITEM;
 
     {
-        let windows_guard = internal_state.window_map.read().map_err(|_| {
+        let windows_guard = internal_state.active_windows.read().map_err(|_| {
             PlatformError::OperationFailed(
                 "Failed to acquire read lock for windows map (update visual)".into(),
             )
@@ -368,7 +368,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
 
     let tv_state_exists;
     {
-        let windows_guard = internal_state.window_map.read().ok()?;
+        let windows_guard = internal_state.active_windows.read().ok()?;
         let window_data = windows_guard.get(&window_id)?;
         tv_state_exists = window_data.treeview_state.is_some();
     }
