@@ -481,13 +481,20 @@ impl MyAppLogic {
                 self.main_window_id
             );
 
-            self.main_window_id = None; // Clear the main window ID to avoid trying to send a status bar update
+            // Only clear state directly and exclusively tied to the main window's UI object.
+            // Other application-level state (profile data, file cache, pending actions)
+            // is intentionally preserved as it might be needed by on_quit() or if the
+            // application logic were to support, for example, re-opening a main window
+            // without a full app restart (though currently it doesn't).
+            // For pending_action/pending_new_profile_name, if the main window is destroyed,
+            // any associated dialogs are implicitly cancelled or would target a non-existent parent.
+            // current_archive_status is a cache for UI display; its value is not critical after UI destruction.
 
-            // Clear other state associated with the UI or current session.
-            self.current_archive_status = None;
-            self.path_to_tree_item_id.clear();
-            self.pending_action = None;
-            self.pending_new_profile_name = None;
+            self.main_window_id = None;
+            self.path_to_tree_item_id.clear(); // This maps paths to UI TreeItemIds in the now-destroyed window.
+            // self.next_tree_item_id_counter could also be reset if it's strictly per-window instance.
+            // If it's global unique IDs, then don't reset. Current use seems per-window tree build.
+            self.next_tree_item_id_counter = 1; // Reset for a potential future window, if any.
         }
     }
 
