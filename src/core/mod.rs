@@ -1,17 +1,18 @@
+/*
+ * This module consolidates the core, platform-agnostic logic of the application.
+ * It re-exports key data structures and core functionalities (including abstractions
+ * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
+ * `ArchiverOperations`, and `StateManagerOperations`) for file system operations,
+ * profile management, configuration, archiving, and state management. It also
+ * includes utilities for token estimation.
+ */
 pub mod archiver;
 pub mod config;
 pub mod file_system;
 pub mod models;
 pub mod profiles;
 pub mod state_manager;
-
-/*
- * This module consolidates the core, platform-agnostic logic of the application.
- * It re-exports key data structures and core functionalities (including abstractions
- * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
- * `ArchiverOperations`, and `StateManagerOperations`) for file system operations,
- * profile management, configuration, archiving, and state management.
- */
+pub mod tokenizer_utils;
 
 // Re-export key structures and enums
 pub use models::{ArchiveStatus, FileNode, FileState, Profile};
@@ -32,4 +33,6 @@ pub use config::{
     ConfigError, ConfigManagerOperations, CoreConfigManager as CoreConfigManagerForConfig,
 };
 
-pub use state_manager::{CoreStateManager, StateManagerOperations}; // New exports
+pub use state_manager::{CoreStateManager, StateManagerOperations};
+
+pub use tokenizer_utils::estimate_tokens_simple_whitespace;

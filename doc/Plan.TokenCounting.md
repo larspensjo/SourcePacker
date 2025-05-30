@@ -14,16 +14,6 @@
 
 **Goal:** Create the foundational token counting logic and integrate it into `MyAppLogic` to calculate token counts internally, without yet displaying them in the UI.
 
-### Step 1.1: Create `tokenizer_utils` Module and Simple Estimator
-*   **Action a:** Create a new module file: `src/core/tokenizer_utils.rs`.
-*   **Action b:** In `src/core/mod.rs`, add `pub mod tokenizer_utils;` and re-export relevant items if any (likely just the function initially).
-*   **Action c:** In `tokenizer_utils.rs`, define a public function `estimate_tokens_simple_whitespace(content: &str) -> usize` that counts words based on whitespace separation.
-*   **Action d:** Add basic unit tests in `tokenizer_utils.rs` for `estimate_tokens_simple_whitespace`.
-*   **Verification:**
-    *   Project compiles.
-    *   Unit tests for `tokenizer_utils` pass.
-    *   Application runs as before (no visible changes).
-
 ### Step 1.2: Integrate Token Calculation into `MyAppLogic`
 *   **Action a:** In `src/app_logic/handler.rs` (`MyAppLogic` struct):
     *   Add a new field: `current_token_count: usize`. Initialize to `0`.
