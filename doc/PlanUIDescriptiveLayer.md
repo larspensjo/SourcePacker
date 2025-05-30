@@ -12,19 +12,7 @@ Whenever you want to change how your window looks like or population of controls
 
 **Goal:** Further refine the separation of concerns according to MVP principles, focusing on making the `platform_layer` a truly generic View. This involves ensuring all UI-specific knowledge (beyond what's needed to render generic controls and translate events) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter). This phase also focuses on restructuring the `platform_layer` code (primarily `app.rs` and `window_common.rs`) for better maintainability and implements a generic layout mechanism.
 
-**Sub-Phase A.I: Laying Groundwork for Generic Layout & Initial Restructuring**
-
-**Step A.I.6: Create `dialog_handler.rs` and Move Dialog Command Implementations**
-    *   **Action a:** Create the basic structure of `src/platform_layer/dialog_handler.rs`.
-    *   **Action b (iterative, one dialog type at a time):**
-        *   For each dialog-related `_handle_..._impl` method in `Win32ApiInternalState` (or if already moved, in `command_executor.rs`):
-            1.  Move its implementation (and any helper structs/functions like `_show_common_file_dialog`, `InputDialogData`, etc.) to a corresponding free function in `dialog_handler.rs`.
-            2.  Update the `_execute_platform_command` match arm (or the call in `command_executor.rs`) to call this new function from `dialog_handler.rs`.
-    *   *Verification (after each dialog type moved):* Compiles. App runs, and dialog functionality still works.
-
----
-
-**Sub-Phase A.II: Implementing Generic Layout & Control Handler Modules (Steps A.3 & A.4 from previous plan)**
+**Sub-Phase A.II: Implementing Generic Layout & Control Handler Modules**
 
 **Step A.II.1: Implement Generic `handle_wm_size` (Side-by-Side or Flagged)**
     *   **Action a:** In `Win32ApiInternalState::handle_wm_size` (`window_common.rs`), add logic to check if `layout_rules` are present in `NativeWindowData`.
@@ -62,7 +50,7 @@ Whenever you want to change how your window looks like or population of controls
 
 ---
 
-**Sub-Phase A.III: Review and Future Exploration (Step A.5 & A.6 from previous plan)**
+**Sub-Phase A.III: Review and Future Exploration**
 
 **Step A.III.1: Review and Remove Residual UI-Specific Knowledge (A.5)**
     *   **Action:** After all control logic is migrated, perform the thorough review as described previously.
