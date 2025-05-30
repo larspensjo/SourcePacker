@@ -14,16 +14,6 @@ Whenever you want to change how your window looks like or population of controls
 
 **Sub-Phase A.II: Implementing Generic Layout & Control Handler Modules**
 
-**Step A.II.1: Implement Generic `handle_wm_size` (Side-by-Side or Flagged)**
-    *   **Action a:** In `Win32ApiInternalState::handle_wm_size` (`window_common.rs`), add logic to check if `layout_rules` are present in `NativeWindowData`.
-    *   **Action b:** If rules are present, implement the new generic layout logic that iterates through controls and applies these rules.
-    *   **Action c (Crucial for stability):** Initially, the *old* hardcoded layout logic in `handle_wm_size` should *still run*. You might:
-        *   Have the new logic run *after* the old one (it might override positions if controls are the same). This is simpler but could be messy.
-        *   Or, introduce a temporary flag (e.g., in `NativeWindowData` or even a global atomic for initial testing) to switch between old and new `WM_SIZE` logic. This is safer.
-        *   Or, if the layout rules only target the existing known controls (TreeView, Button, Statusbar), you can carefully replace the old logic for *just those controls* with the new rule-based calculations one by one, ensuring the constants like `BUTTON_AREA_HEIGHT` are only used by the `ui_description_layer` when it generates the rules.
-    *   **Goal:** Transition to the new `WM_SIZE` behavior for the existing controls *without breaking the layout*.
-    *   *Verification:* Compiles. App runs. The layout of TreeView, Button area, and Status Bar is now determined by the rules sent from `ui_description_layer` and applied by the new generic part of `handle_wm_size`. The old hardcoded positioning for these specific elements is no longer active.
-
 **Step A.II.2: Remove Old Hardcoded Layout from `handle_wm_size`**
     *   **Action:** Once Step A.II.1 is verified, remove the old, hardcoded layout logic for TreeView, Button area, and Status Bar from `handle_wm_size`. The constants like `BUTTON_AREA_HEIGHT` should only be referenced (if needed) by the `ui_description_layer` when it defines the layout rules.
     *   *Verification:* Compiles. App runs. Layout is correct and entirely driven by `PlatformCommand::DefineLayout`. `handle_wm_size` is now generic.

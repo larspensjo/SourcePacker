@@ -9,8 +9,8 @@ use super::app::Win32ApiInternalState;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, CheckState, LayoutRule, MenuAction, MessageSeverity, PlatformCommand, TreeItemId,
-    WindowId,
+    AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformCommand,
+    TreeItemId, WindowId,
 };
 
 use windows::{
@@ -50,9 +50,12 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 pub const BUTTON_AREA_HEIGHT: i32 = 50;
 pub const STATUS_BAR_HEIGHT: i32 = 25;
 pub(crate) const BUTTON_X_PADDING: i32 = 10;
-const BUTTON_Y_PADDING_IN_AREA: i32 = 10;
-const BUTTON_WIDTH: i32 = 150;
+const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // Used by old logic, new logic uses rule margins
+pub(crate) const BUTTON_WIDTH: i32 = 150;
 pub(crate) const BUTTON_HEIGHT: i32 = 30;
+
+// A constant for an invalid HWND, useful for initializing or comparisons.
+pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
 
 /*
  * Holds native data associated with a specific window managed by the platform layer.
@@ -116,6 +119,21 @@ impl NativeWindowData {
         self.next_menu_item_id_counter += 1;
         id
     }
+
+    // Helper to check if rules for the main three controls are present.
+    // Used by handle_wm_size to decide which layout logic path to take.
+    fn has_main_layout_rules(&self) -> bool {
+        self.layout_rules.as_ref().map_or(false, |rules| {
+            let has_statusbar_rule = rules.iter().any(|r| r.control_id == ID_STATUS_BAR_CTRL);
+            let has_button_rule = rules
+                .iter()
+                .any(|r| r.control_id == ID_BUTTON_GENERATE_ARCHIVE);
+            let has_treeview_rule = rules
+                .iter()
+                .any(|r| r.control_id == control_treeview::ID_TREEVIEW_CTRL);
+            has_statusbar_rule && has_button_rule && has_treeview_rule
+        })
+    }
 }
 
 // Context passed to `CreateWindowExW` via `lpCreateParams`.
@@ -151,7 +169,7 @@ pub(crate) fn register_window_class(
         .is_ok()
         {
             // Class already registered
-            log::error!(
+            log::debug!(
                 "Platform: Window class '{}' already registered.",
                 internal_state.app_name_for_class
             );
@@ -341,6 +359,8 @@ impl Win32ApiInternalState {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
             }
             WM_NCDESTROY => {
+                // Important: GWLP_USERDATA is cleaned up in facade_wnd_proc_router after this call.
+                // No further access to Win32ApiInternalState should happen for this HWND after this.
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
             }
             WM_PAINT => {
@@ -400,8 +420,10 @@ impl Win32ApiInternalState {
                     log::error!("Platform: Failed to lock event handler in handle_window_message.");
                 }
             } else {
-                log::error!(
-                    "Platform: Event handler not available in handle_window_message (Will be fixeed in Phase 8)."
+                log::warn!(
+                    // Changed to warn as this might be expected during shutdown
+                    "Platform: Event handler not available in handle_window_message for event {:?}.",
+                    event
                 );
             }
         }
@@ -511,11 +533,11 @@ impl Win32ApiInternalState {
 
     /*
      * Handles the WM_SIZE message for a window.
-     * This is called when the window's size changes. It's responsible for
-     * resizing and repositioning child controls like the TreeView, buttons,
-     * and status bar to fit the new window dimensions. It uses the generic
-     * `get_control_hwnd` method on `NativeWindowData` to retrieve control handles.
-     * It also generates an `AppEvent::WindowResized`.
+     * This is called when the window's size changes.
+     * If `layout_rules` are present in `NativeWindowData` for the main controls
+     * (TreeView, Button, Status Bar), it uses new logic to position these controls
+     * based on the rules. Otherwise, it falls back to the original hardcoded layout logic.
+     * It generates an `AppEvent::WindowResized`.
      */
     fn handle_wm_size(
         self: &Arc<Self>,
@@ -529,58 +551,184 @@ impl Win32ApiInternalState {
 
         if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
-                let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
-                let button_area_y_pos = treeview_height;
-                let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
+                if window_data.has_main_layout_rules() {
+                    log::trace!(
+                        "Platform: WM_SIZE for WinID {:?} using new rule-based layout. Client: {}x{}",
+                        window_id,
+                        client_width,
+                        client_height
+                    );
+                    // New rule-based layout logic
+                    let rules_map: HashMap<i32, &LayoutRule> = window_data
+                        .layout_rules
+                        .as_ref()
+                        .unwrap() // Safe due to has_main_layout_rules check
+                        .iter()
+                        .map(|r| (r.control_id, r))
+                        .collect();
 
-                // Resize TreeView using its control ID
-                if let Some(hwnd_tv) =
-                    window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
-                {
-                    if !hwnd_tv.is_invalid() {
-                        unsafe {
-                            let _ = MoveWindow(
-                                hwnd_tv,
-                                0,
-                                0,
-                                client_width,
-                                treeview_height.max(0),
-                                true,
-                            );
+                    let mut current_available_bottom = client_height;
+                    let mut current_available_top = 0; // Assuming top-most point is 0
+
+                    // 1. Status Bar (Order 0, Docks Bottom)
+                    if let Some(rule) = rules_map.get(&ID_STATUS_BAR_CTRL) {
+                        if rule.dock_style == DockStyle::Bottom {
+                            let height = rule.fixed_size.unwrap_or(STATUS_BAR_HEIGHT);
+                            let margin_top = rule.margin.0;
+                            let margin_right = rule.margin.1;
+                            let margin_bottom = rule.margin.2;
+                            let margin_left = rule.margin.3;
+
+                            let x = 0 + margin_left;
+                            let width = client_width - margin_left - margin_right;
+                            let y = current_available_bottom - height - margin_bottom;
+
+                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
+                                if !hwnd_ctrl.is_invalid() {
+                                    unsafe {
+                                        let _ = MoveWindow(
+                                            hwnd_ctrl,
+                                            x,
+                                            y,
+                                            width.max(0),
+                                            height.max(0),
+                                            true,
+                                        );
+                                    }
+                                }
+                            }
+                            current_available_bottom = y - margin_top;
                         }
                     }
-                }
 
-                // Resize Button
-                if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE) {
-                    if !hwnd_btn.is_invalid() {
-                        let btn_x_pos = BUTTON_X_PADDING;
-                        let btn_y_pos = button_area_y_pos + BUTTON_Y_PADDING_IN_AREA;
-                        unsafe {
-                            let _ = MoveWindow(
-                                hwnd_btn,
-                                btn_x_pos,
-                                btn_y_pos,
-                                BUTTON_WIDTH,
-                                BUTTON_HEIGHT,
-                                true,
-                            );
+                    // 2. Button's conceptual panel (Order 1, Docks Bottom)
+                    // The rule's fixed_size is the panel height. Button is placed within.
+                    if let Some(rule) = rules_map.get(&ID_BUTTON_GENERATE_ARCHIVE) {
+                        if rule.dock_style == DockStyle::Bottom {
+                            let panel_h = rule.fixed_size.unwrap_or(BUTTON_AREA_HEIGHT);
+                            let panel_y_top = current_available_bottom - panel_h; // Top of the button panel area
+
+                            // Button's margins are relative to this panel
+                            let btn_margin_top = rule.margin.0;
+                            let btn_margin_right = rule.margin.1; // Not used for width if BUTTON_WIDTH is fixed
+                            let btn_margin_bottom = rule.margin.2;
+                            let btn_margin_left = rule.margin.3;
+
+                            let btn_x = 0 + btn_margin_left; // Assuming panel starts at x=0
+                            let btn_y = panel_y_top + btn_margin_top;
+                            // Button height is determined by panel height minus its vertical margins within the panel
+                            let btn_h = panel_h - btn_margin_top - btn_margin_bottom;
+                            let btn_w = BUTTON_WIDTH; // Width is still a constant for now
+
+                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
+                                if !hwnd_ctrl.is_invalid() {
+                                    unsafe {
+                                        MoveWindow(
+                                            hwnd_ctrl,
+                                            btn_x,
+                                            btn_y,
+                                            btn_w.max(0),
+                                            btn_h.max(0),
+                                            true,
+                                        );
+                                    }
+                                }
+                            }
+                            current_available_bottom = panel_y_top; // Update available space for elements above
                         }
                     }
-                }
 
-                // Resize Status Bar
-                if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
-                    if !hwnd_status.is_invalid() {
-                        unsafe {
-                            let _ = MoveWindow(
-                                hwnd_status,
-                                0,
-                                status_bar_y_pos,
-                                client_width,
-                                STATUS_BAR_HEIGHT.max(0),
-                                true,
-                            );
+                    // 3. TreeView (Order 10, Fills remaining space)
+                    if let Some(rule) = rules_map.get(&control_treeview::ID_TREEVIEW_CTRL) {
+                        if rule.dock_style == DockStyle::Fill {
+                            let margin_top = rule.margin.0;
+                            let margin_right = rule.margin.1;
+                            let margin_bottom = rule.margin.2;
+                            let margin_left = rule.margin.3;
+
+                            let x = 0 + margin_left;
+                            let y = current_available_top + margin_top;
+                            let width = client_width - margin_left - margin_right;
+                            let height = current_available_bottom - y - margin_bottom; // current_available_bottom is now top of button panel
+
+                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
+                                if !hwnd_ctrl.is_invalid() {
+                                    unsafe {
+                                        let _ = MoveWindow(
+                                            hwnd_ctrl,
+                                            x,
+                                            y,
+                                            width.max(0),
+                                            height.max(0),
+                                            true,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Original hardcoded layout logic
+                    log::trace!(
+                        "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
+                        window_id,
+                        client_width,
+                        client_height
+                    );
+                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
+                    let button_area_y_pos = treeview_height;
+                    let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
+
+                    // Resize TreeView
+                    if let Some(hwnd_tv) =
+                        window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
+                    {
+                        if !hwnd_tv.is_invalid() {
+                            unsafe {
+                                let _ = MoveWindow(
+                                    hwnd_tv,
+                                    0,
+                                    0,
+                                    client_width,
+                                    treeview_height.max(0),
+                                    true,
+                                );
+                            }
+                        }
+                    }
+
+                    // Resize Button
+                    if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE)
+                    {
+                        if !hwnd_btn.is_invalid() {
+                            let btn_x_pos = BUTTON_X_PADDING;
+                            let btn_y_pos = button_area_y_pos + BUTTON_Y_PADDING_IN_AREA;
+                            unsafe {
+                                let _ = MoveWindow(
+                                    hwnd_btn,
+                                    btn_x_pos,
+                                    btn_y_pos,
+                                    BUTTON_WIDTH,
+                                    BUTTON_HEIGHT,
+                                    true,
+                                );
+                            }
+                        }
+                    }
+
+                    // Resize Status Bar
+                    if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
+                        if !hwnd_status.is_invalid() {
+                            unsafe {
+                                let _ = MoveWindow(
+                                    hwnd_status,
+                                    0,
+                                    status_bar_y_pos,
+                                    client_width,
+                                    STATUS_BAR_HEIGHT.max(0),
+                                    true,
+                                );
+                            }
                         }
                     }
                 }
@@ -610,82 +758,76 @@ impl Win32ApiInternalState {
     ) -> Option<AppEvent> {
         let command_id = loword_from_wparam(wparam); // This is the menu ID or control ID (as i32)
         let notification_code_raw = highord_from_wparam(wparam); // Notification code or 0/1 for menu/accel (as i32)
-        let menu_item_or_accelerator = (lparam.0 == 0);
+        let hwnd_control_lparam = HWND(lparam.0 as *mut c_void); // HWND of control if msg from control
 
-        if menu_item_or_accelerator {
-            // It's a Menu item or an Accelerator command.
-            // For menu: HIWORD(wParam) is 0.
-            // For accelerator: HIWORD(wParam) is 1.
-            if notification_code_raw == 0 || notification_code_raw == 1 {
-                if let Ok(windows_guard) = self.active_windows.read() {
-                    if let Some(window_data) = windows_guard.get(&window_id) {
-                        if let Some(action) = window_data.menu_action_map.get(&command_id) {
-                            log::debug!(
-                                "Platform: Menu/Accelerator action {:?} (ID {}) triggered for window {:?}.",
-                                action,
-                                command_id,
-                                window_id
-                            );
-                            return Some(AppEvent::MenuActionClicked {
-                                window_id,
-                                action: *action,
-                            });
-                        } else {
-                            log::warn!(
-                                "Platform: WM_COMMAND (lparam=0) for unknown menu/accelerator ID {} received for window {:?}.",
-                                command_id,
-                                window_id
-                            );
-                        }
+        // Determine if it's a menu/accelerator or control notification
+        // For menu: lparam is 0, HIWORD(wparam) is 0.
+        // For accelerator: lparam is 0, HIWORD(wparam) is 1.
+        // For control: lparam is HWND of control.
+        if lparam.0 == 0 && (notification_code_raw == 0 || notification_code_raw == 1) {
+            // Menu item or Accelerator
+            if let Ok(windows_guard) = self.active_windows.read() {
+                if let Some(window_data) = windows_guard.get(&window_id) {
+                    if let Some(action) = window_data.menu_action_map.get(&command_id) {
+                        log::debug!(
+                            "Platform: Menu/Accelerator action {:?} (ID {}) triggered for window {:?}.",
+                            action,
+                            command_id,
+                            window_id
+                        );
+                        return Some(AppEvent::MenuActionClicked {
+                            window_id,
+                            action: *action,
+                        });
+                    } else {
+                        log::warn!(
+                            "Platform: WM_COMMAND (Menu/Accel) for unknown ID {} received for window {:?}.",
+                            command_id,
+                            window_id
+                        );
                     }
-                } else {
-                    log::error!(
-                        "Platform: Failed to get read lock for menu_action_map lookup for lparam=0 command."
-                    );
                 }
             } else {
-                // This case should ideally not happen if lparam is 0.
-                log::warn!(
-                    "Platform: WM_COMMAND (lparam=0) with unexpected notification_code {} for ID {} in window {:?}.",
-                    notification_code_raw,
-                    command_id,
-                    window_id
+                log::error!(
+                    "Platform: Failed to get read lock for menu_action_map lookup for Menu/Accel command."
                 );
             }
-        } else {
-            // It's a Control notification. lparam is the HWND of the control.
-            // HIWORD(wParam) is the control-specific notification code (e.g., BN_CLICKED for buttons).
-            // LOWORD(wParam) is the ID of the control.
+        } else if lparam.0 != 0 {
+            // Control notification
+            let control_id_from_wparam = command_id; // LOWORD(wparam) is control ID
+            let control_notification_code = notification_code_raw as u32;
 
-            let hwnd_control = HWND(lparam.0 as *mut c_void);
-            let control_notification_code = notification_code_raw as u32; // Cast to u32 for comparison with BN_CLICKED etc.
-
-            // Handle button clicks
-            // BN_CLICKED is defined as 0 in windows::Win32::UI::WindowsAndMessaging
             if control_notification_code == BN_CLICKED {
-                if command_id == ID_BUTTON_GENERATE_ARCHIVE {
+                if control_id_from_wparam == ID_BUTTON_GENERATE_ARCHIVE {
                     log::debug!(
                         "Platform: Button ID {} (HWND {:?}) clicked for window {:?}.",
-                        command_id,
-                        hwnd_control,
+                        control_id_from_wparam,
+                        hwnd_control_lparam,
                         window_id
                     );
                     return Some(AppEvent::ButtonClicked {
                         window_id,
-                        control_id: command_id,
+                        control_id: control_id_from_wparam,
                     });
                 } else {
-                    // Potentially other buttons, if any, would be checked here.
                     log::warn!(
                         "Platform: WM_COMMAND (BN_CLICKED) for unhandled control ID {} (HWND {:?}) in window {:?}.",
-                        command_id,
-                        hwnd_control,
+                        control_id_from_wparam,
+                        hwnd_control_lparam,
                         window_id
                     );
                 }
             }
-            // Future: Handle other control notifications here if needed (e.g., EN_CHANGE from an edit box)
-            // else if control_notification_code == EN_CHANGE && command_id == SOME_EDIT_ID { ... }
+            // Potentially handle other control notifications here in the future
+        } else {
+            // Unhandled WM_COMMAND variant
+            log::warn!(
+                "Platform: Unhandled WM_COMMAND variant: command_id={}, notification_code={}, lparam={:?} for window {:?}",
+                command_id,
+                notification_code_raw,
+                lparam,
+                window_id
+            );
         }
         None
     }
@@ -693,10 +835,9 @@ impl Win32ApiInternalState {
     /*
      * Handles the WM_DESTROY message for a window.
      * This is called when the window is being destroyed (after `WM_CLOSE` but before
-     * `WM_NCDESTROY`). It removes the window's data from the internal `window_map`
-     * and decrements the `active_windows_count`. If this count reaches zero,
-     * it posts a `WM_QUIT` message to terminate the application's message loop.
-     * It also generates an `AppEvent::WindowDestroyed`.
+     * `WM_NCDESTROY`). It removes the window's data from the internal `active_windows` map.
+     * `check_if_should_quit_after_window_close` is then called to determine if `WM_QUIT`
+     * should be posted. It generates an `AppEvent::WindowDestroyed`.
      */
     fn handle_wm_destroy(
         self: &Arc<Self>,
@@ -705,10 +846,29 @@ impl Win32ApiInternalState {
         _lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
-        if let Some(mut windows_map_guard) = self.active_windows.write().ok() {
-            windows_map_guard.remove(&window_id);
+        log::debug!(
+            "Platform: WM_DESTROY for WindowId {:?}. Removing from active_windows.",
+            window_id
+        );
+        if let Ok(mut windows_map_guard) = self.active_windows.write() {
+            if windows_map_guard.remove(&window_id).is_some() {
+                log::debug!(
+                    "Platform: Successfully removed WindowId {:?} from active_windows.",
+                    window_id
+                );
+            } else {
+                log::warn!(
+                    "Platform: WindowId {:?} not found in active_windows during WM_DESTROY.",
+                    window_id
+                );
+            }
+        } else {
+            log::error!(
+                "Platform: Failed to lock active_windows for write during WM_DESTROY for WindowId {:?}.",
+                window_id
+            );
         }
-        self.check_if_should_quit_after_window_close();
+        self.check_if_should_quit_after_window_close(); // This will post WM_QUIT if it's the last window or quit was signaled.
         Some(AppEvent::WindowDestroyed { window_id })
     }
 
@@ -745,7 +905,7 @@ impl Win32ApiInternalState {
     fn handle_wm_notify(
         self: &Arc<Self>,
         hwnd: HWND,
-        _wparam: WPARAM,
+        _wparam: WPARAM, // This is the control ID sending the message, but NMHDR also has it.
         lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
@@ -761,6 +921,7 @@ impl Win32ApiInternalState {
 
         match nmhdr.code {
             NM_CLICK => {
+                // IMPORTANT: NMMOUSE doesn't give a reliable nmtv.pt. Only solution I have found is to manually call GetCursorPos+ScreenToClient.
                 let hwnd_tv_from_notify = nmhdr.hwndFrom;
                 if hwnd_tv_from_notify.is_invalid() {
                     return None;
@@ -782,7 +943,6 @@ impl Win32ApiInternalState {
 
                 if let Some(windows_guard) = self.active_windows.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
-                        // Check if the notification is from THE TreeView we manage for this window
                         if Some(hwnd_tv_from_notify)
                             != window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
                         {
@@ -793,7 +953,6 @@ impl Win32ApiInternalState {
                             );
                             return None;
                         }
-                        // Ensure treeview_state exists (though HWND is now from controls map)
                         if window_data.treeview_state.is_none() {
                             log::warn!(
                                 "Platform: NM_CLICK received for TreeView, but no treeview_state for WinID {:?}",
@@ -822,9 +981,9 @@ impl Win32ApiInternalState {
                         if h_item_hit.0 != 0 && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0 {
                             unsafe {
                                 PostMessageW(
-                                    Some(hwnd),
+                                    Some(hwnd), // Post to parent window
                                     WM_APP_TREEVIEW_CHECKBOX_CLICKED,
-                                    WPARAM(h_item_hit.0 as usize),
+                                    WPARAM(h_item_hit.0 as usize), // Pass HTREEITEM as WPARAM
                                     LPARAM(0),
                                 )
                                 .unwrap_or_else(|e| {
@@ -837,9 +996,10 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
-                return None;
+                return None; // NM_CLICK itself doesn't directly yield an AppEvent here.
             }
             TVN_ITEMCHANGEDW => {
+                // For TVN_ITEMCHANGEDW, lparam is a pointer to NMTREEVIEWW
                 return control_treeview::handle_treeview_itemchanged_notification(
                     self, window_id, lparam,
                 );
@@ -852,7 +1012,7 @@ impl Win32ApiInternalState {
     fn handle_wm_app_treeview_checkbox_clicked(
         self: &Arc<Self>,
         _hwnd: HWND,
-        wparam: WPARAM,
+        wparam: WPARAM, // Contains HTREEITEM
         _lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
@@ -930,37 +1090,92 @@ pub(crate) fn send_close_message(
     window_id: WindowId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "Platform: send_close_message received for WindowId {:?}, proceeding to destroy.",
+        "Platform: send_close_message received for WindowId {:?}, attempting to destroy native window.",
         window_id
     );
+    // This will trigger WM_DESTROY and subsequently WM_NCDESTROY if successful.
     destroy_native_window(internal_state, window_id)
 }
 
+/*
+ * Attempts to destroy the native window associated with the given `WindowId`.
+ * This function retrieves the HWND from the `active_windows` map and calls
+ * `DestroyWindow`. Errors are logged. This is typically called in response to a
+ * `PlatformCommand::CloseWindow` or when the application is quitting and needs
+ * to clean up windows.
+ */
 pub(crate) fn destroy_native_window(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
     let hwnd_to_destroy: Option<HWND>;
     {
+        // Scope for the read lock to get the HWND.
         let windows_read_guard = internal_state
             .active_windows
             .read()
-            .map_err(|_| PlatformError::OperationFailed("Failed to acquire read lock".into()))?;
+            .map_err(|e| {
+                log::error!("Platform: Failed to acquire read lock on active_windows for destroy_native_window (WinID {:?}): {:?}", window_id, e);
+                PlatformError::OperationFailed(format!("Failed to lock active_windows for read (destroy_native_window): {}", e))
+            })?;
+
         hwnd_to_destroy = windows_read_guard.get(&window_id).map(|data| data.hwnd);
-    }
+
+        if hwnd_to_destroy.is_none() {
+            log::warn!(
+                "Platform: Attempted to destroy native window for WindowId {:?}, but it was not found in active_windows map.",
+                window_id
+            );
+            // It might have already been destroyed and removed. Consider this not an error.
+            return Ok(());
+        }
+    } // Read lock released.
 
     if let Some(hwnd) = hwnd_to_destroy {
         if !hwnd.is_invalid() {
+            log::debug!(
+                "Platform: Calling DestroyWindow for HWND {:?} (WindowId {:?})",
+                hwnd,
+                window_id
+            );
             unsafe {
                 if DestroyWindow(hwnd).is_err() {
-                    let err = GetLastError();
-                    if err.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
-                        log::error!("DestroyWindow failed: {:?}", err);
+                    let last_error = GetLastError();
+                    // ERROR_INVALID_WINDOW_HANDLE can occur if the window is already being destroyed
+                    // or was destroyed by other means. Don't treat as critical error.
+                    if last_error.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
+                        log::error!(
+                            "Platform: DestroyWindow for HWND {:?} (WindowId {:?}) failed: {:?}. Potential resource leak or unexpected state.",
+                            hwnd,
+                            window_id,
+                            last_error
+                        );
+                        // Depending on strictness, this could be an Err result.
+                        // For now, just logging, as the window might be gone.
+                    } else {
+                        log::debug!(
+                            "Platform: DestroyWindow for HWND {:?} (WindowId {:?}) reported invalid handle, likely already destroyed.",
+                            hwnd,
+                            window_id
+                        );
                     }
+                } else {
+                    log::debug!(
+                        "Platform: DestroyWindow call succeeded for HWND {:?} (WindowId {:?}). WM_DESTROY should follow.",
+                        hwnd,
+                        window_id
+                    );
                 }
             }
+        } else {
+            log::warn!(
+                "Platform: HWND for WindowId {:?} was invalid before DestroyWindow call.",
+                window_id
+            );
         }
     }
+    // If hwnd_to_destroy was None, it means the window was already removed from the map,
+    // so no action is needed. This is considered success.
     Ok(())
 }
 
@@ -972,29 +1187,55 @@ pub(crate) fn destroy_native_window(
  * This function assumes the `severity` has already been processed and stored.
  */
 pub(crate) fn update_status_bar_text_impl(
-    window_data: &mut NativeWindowData,
+    window_data: &mut NativeWindowData, // Needs mutable access to update its state if necessary
     text: &str,
-    _severity: MessageSeverity,
+    _severity: MessageSeverity, // Passed to potentially update window_data if logic changes
 ) -> PlatformResult<()> {
-    let hwnd_status_opt = window_data
-        .get_control_hwnd(ID_STATUS_BAR_CTRL)
-        .or(window_data.get_control_hwnd(ID_STATUS_BAR_CTRL));
+    // This function is called by command_executor, which already updates
+    // window_data.status_bar_current_text and status_bar_current_severity.
+    // So, here we just need to update the control's visual text.
+    // The severity for coloring is handled in WM_CTLCOLORSTATIC using window_data's stored severity.
+
+    let hwnd_status_opt = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL);
 
     if let Some(hwnd_status) = hwnd_status_opt {
-        unsafe {
-            if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
-                return Err(PlatformError::OperationFailed(format!(
-                    "SetWindowTextW for status bar failed: {:?}",
-                    GetLastError()
-                )));
+        if !hwnd_status.is_invalid() {
+            unsafe {
+                if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
+                    let err = GetLastError();
+                    log::error!(
+                        "Platform: SetWindowTextW for status bar (HWND {:?}, WinID {:?}) failed: {:?}",
+                        hwnd_status,
+                        window_data.id,
+                        err
+                    );
+                    return Err(PlatformError::OperationFailed(format!(
+                        "SetWindowTextW for status bar failed: {:?}",
+                        err
+                    )));
+                }
+                // InvalidateRect is important to ensure WM_CTLCOLORSTATIC is triggered for color updates.
+                InvalidateRect(Some(hwnd_status), None, true);
             }
-            InvalidateRect(Some(hwnd_status), None, true);
+            Ok(())
+        } else {
+            log::warn!(
+                "Platform: Status bar HWND for WindowId {:?} is invalid. Cannot update text.",
+                window_data.id
+            );
+            Err(PlatformError::InvalidHandle(format!(
+                "Status bar HWND invalid for WindowId {:?}",
+                window_data.id
+            )))
         }
-        Ok(())
     } else {
-        Err(PlatformError::InvalidHandle(format!(
-            "Status bar HWND not found for WindowId {:?}",
-            window_data.id
-        )))
+        log::warn!(
+            "Platform: Status bar HWND not found for WindowId {:?}. Cannot update text: '{}'",
+            window_data.id,
+            text
+        );
+        // This might not be an error if the status bar hasn't been created yet,
+        // but command execution order should ideally prevent this.
+        Ok(()) // Or Err if status bar is mandatory
     }
 }
