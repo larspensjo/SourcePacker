@@ -123,8 +123,16 @@ fn initialize_logging() {
         let log_file_path = "source_packer.log";
         match std::fs::File::create(log_file_path) {
             Ok(file) => {
-                let config = simplelog::ConfigBuilder::new()
-                    .set_time_format_rfc3339()
+                let mut config_builder = ConfigBuilder::new();
+
+                if let Err(err) = config_builder.set_time_offset_to_local() {
+                    eprintln!("Warning: Failed to set local time offset: {:?}", err);
+                    // Ignore for now
+                }
+
+                let config = config_builder
+                    .set_thread_level(LevelFilter::Off)
+                    .set_location_level(LevelFilter::Debug)
                     .build();
                 if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
                     simplelog::LevelFilter::Debug,
@@ -143,11 +151,16 @@ fn initialize_logging() {
     #[cfg(test)]
     {
         // Test logger (to stdout/stderr)
-        let config = simplelog::ConfigBuilder::new()
-            // .set_time_format_rfc3339() // Optional: keep same format
-            // .set_target_level(simplelog::LevelFilter::Error) // Hide target module path
-            // .set_thread_level(simplelog::LevelFilter::Error) // Hide thread ID
-            // .set_location_level(simplelog::LevelFilter::Error) // Hide file/line
+        let mut config_builder = ConfigBuilder::new();
+
+        if let Err(err) = config_builder.set_time_offset_to_local() {
+            eprintln!("Warning: Failed to set local time offset: {:?}", err);
+            // Ignore for now
+        }
+
+        let config = config_builder
+            .set_thread_level(LevelFilter::Off)
+            .set_location_level(LevelFilter::Debug)
             .build();
 
         // TermLogger is good for console output
