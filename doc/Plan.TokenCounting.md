@@ -14,40 +14,6 @@
 
 **Goal:** Create the foundational token counting logic and integrate it into `MyAppLogic` to calculate token counts internally, without yet displaying them in the UI.
 
-### Step 1.2: Integrate Token Calculation into `MyAppLogic`
-*   **Action a:** In `src/app_logic/handler.rs` (`MyAppLogic` struct):
-    *   Add a new field: `current_token_count: usize`. Initialize to `0`.
-*   **Action b:** Create a new private helper method in `MyAppLogic`, for example, `_recalculate_and_log_token_count`. This method will:
-    *   Iterate through `self.file_nodes_cache`.
-    *   For each `FileNode` that is a file and has `FileState::Selected`:
-        *   Read its content using `std::fs::read_to_string`.
-        *   Use `crate::core::tokenizer_utils::estimate_tokens_simple_whitespace` to count tokens in the content.
-        *   Sum these counts.
-        *   Log any file read errors but continue counting for other files.
-    *   Store the total sum in `self.current_token_count`.
-    *   Log the final calculated token count, number of files processed, and number of failed reads using `log::debug!`.
-*   **Action c:** Call this new token calculation method at the end of:
-    *   `handle_treeview_item_toggled` (after `update_current_archive_status`).
-    *   `_activate_profile_and_show_window` (after scan and state application).
-    *   `handle_menu_refresh_file_list_clicked` (after scan and state application).
-*   **Verification:**
-    *   Project compiles.
-    *   Application runs. When selecting/deselecting files, or loading/refreshing profiles, debug logs show the updated token count. No UI changes yet.
-
-### Step 1.3: Unit Test `MyAppLogic` Token Calculation
-*   **Action:** In `src/app_logic/handler_tests.rs`:
-    *   Add tests for `MyAppLogic` to verify `current_token_count` is updated correctly.
-    *   These tests will need to:
-        *   Set up `MyAppLogic` with mock dependencies.
-        *   Populate `file_nodes_cache` with `FileNode`s, some marked as `Selected`.
-        *   Use `tempfile` to create actual temporary files with known content for selected nodes in the test setup to allow `std::fs::read_to_string` to work.
-        *   Simulate events like `TreeViewItemToggledByUser`.
-        *   Assert `logic.current_token_count` has the expected value.
-        *   Assert no *token-count-specific* UI `PlatformCommand`s are generated yet.
-*   **Verification:**
-    *   New unit tests pass.
-    *   Application runs as before.
-
 ---
 
 ## Phase 2: Basic UI Display in Existing Status Bar

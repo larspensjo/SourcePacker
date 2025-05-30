@@ -1627,4 +1627,9 @@ impl MyAppLogic {
     pub(crate) fn test_current_token_count(&self) -> usize {
         self.current_token_count
     }
+
+    // Test helper to call the private token recalculation method
+    pub(crate) fn test_recalculate_and_log_token_count(&mut self) {
+        self._recalculate_and_log_token_count();
+    }
 }
