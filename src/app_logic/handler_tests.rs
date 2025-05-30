@@ -15,8 +15,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime; // Still needed for FileNode in token tests
 use tempfile::{NamedTempFile, tempdir};
 
 /*
@@ -27,6 +26,7 @@ use tempfile::{NamedTempFile, tempdir};
  * dequeuing), and error paths.
  */
 
+// --- Mock Structures (ConfigManager, ProfileManager, FileSystemScanner, Archiver, StateManager) ---
 struct MockConfigManager {
     load_last_profile_name_result: Mutex<Result<Option<String>, ConfigError>>,
     saved_profile_name: Mutex<Option<(String, String)>>,
@@ -463,7 +463,7 @@ fn setup_logic_with_mocks() -> (
     Arc<MockArchiver>,
     Arc<MockStateManager>,
 ) {
-    crate::initialize_logging();
+    crate::initialize_logging(); // Ensure logging is initialized for tests
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
     let mock_file_system_scanner_arc = Arc::new(MockFileSystemScanner::new());
@@ -471,14 +471,12 @@ fn setup_logic_with_mocks() -> (
     let mock_state_manager_arc = Arc::new(MockStateManager::new());
 
     let logic = MyAppLogic::new(
-        // No mut logic here
         Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
         Arc::clone(&mock_profile_manager_arc) as Arc<dyn ProfileManagerOperations>,
         Arc::clone(&mock_file_system_scanner_arc) as Arc<dyn FileSystemScannerOperations>,
         Arc::clone(&mock_archiver_arc) as Arc<dyn ArchiverOperations>,
         Arc::clone(&mock_state_manager_arc) as Arc<dyn StateManagerOperations>,
     );
-    // main_window_id is set when AppEvent::MainWindowUISetupComplete is processed
     (
         logic,
         mock_config_manager_arc,
@@ -489,19 +487,12 @@ fn setup_logic_with_mocks() -> (
     )
 }
 
-// Helper to filter out debug status messages for command counting
-fn get_functional_commands(cmds: &[PlatformCommand]) -> Vec<&PlatformCommand> {
-    cmds.iter()
-        .filter(|cmd| {
-            !matches!(
-                cmd,
-                PlatformCommand::UpdateStatusBarText {
-                    severity: MessageSeverity::Debug,
-                    ..
-                }
-            )
-        })
-        .collect()
+// Helper to check for specific commands, optionally checking properties.
+fn find_command<'a, F>(cmds: &'a [PlatformCommand], mut predicate: F) -> Option<&'a PlatformCommand>
+where
+    F: FnMut(&PlatformCommand) -> bool,
+{
+    cmds.iter().find(|&cmd| predicate(cmd))
 }
 
 #[test]
@@ -523,7 +514,8 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         .set_load_last_profile_name_result(Ok(Some(last_profile_name_to_load.to_string())));
 
     let mut selected_paths_for_profile = HashSet::new();
-    selected_paths_for_profile.insert(startup_profile_root.join("mock_startup_file.txt"));
+    let mock_file_path = startup_profile_root.join("mock_startup_file.txt");
+    selected_paths_for_profile.insert(mock_file_path.clone());
 
     let mock_loaded_profile = Profile {
         name: last_profile_name_to_load.to_string(),
@@ -535,21 +527,47 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     mock_profile_manager
         .set_load_profile_result(last_profile_name_to_load, Ok(mock_loaded_profile.clone()));
 
-    let mock_scan_result = vec![FileNode::new(
-        startup_profile_root.join("mock_startup_file.txt"),
-        "mock_startup_file.txt".into(),
+    // Create a temp file for the token counter to read
+    let temp_dir = tempdir().unwrap();
+    let (concrete_file_path, _temp_file_guard) =
+        create_temp_file_with_content(&temp_dir, "startup_content", "token test"); // 2 tokens
+
+    // Update mock_scan_result to use the concrete path for the FileNode
+    // And ensure the FileNode path matches what's in selected_paths_for_profile if it's supposed to be selected
+    // For this test, assume mock_startup_file.txt is the one we count tokens for.
+    // We need to make sure the Profile's selected_paths uses the temp file path if that's what scan_directory returns.
+    // Let's adjust: Profile selects 'concrete_file_path', and scanner returns a FileNode for it.
+
+    let mut profile_selected_paths = HashSet::new();
+    profile_selected_paths.insert(concrete_file_path.clone());
+
+    let mock_loaded_profile_with_temp_file = Profile {
+        name: last_profile_name_to_load.to_string(),
+        root_folder: temp_dir.path().to_path_buf(), // Profile root is now temp_dir
+        selected_paths: profile_selected_paths,
+        deselected_paths: HashSet::new(),
+        archive_path: Some(startup_archive_path.clone()), // Archive path can remain conceptual
+    };
+    mock_profile_manager.set_load_profile_result(
+        last_profile_name_to_load,
+        Ok(mock_loaded_profile_with_temp_file.clone()),
+    );
+
+    let mock_scan_result_nodes = vec![FileNode::new(
+        concrete_file_path.clone(),   // Path to the actual temp file
+        "startup_content.txt".into(), // Name can be different from path
         false,
     )];
+
     mock_file_system_scanner
-        .set_scan_directory_result(&startup_profile_root, Ok(mock_scan_result.clone()));
+        .set_scan_directory_result(temp_dir.path(), Ok(mock_scan_result_nodes.clone()));
 
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
@@ -565,6 +583,11 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
             .unwrap(),
         &startup_archive_path
     );
+    assert_eq!(
+        logic.test_current_token_count(),
+        2,
+        "Token count should be 2 from selected temp file"
+    );
 
     let expected_title = format!(
         "SourcePacker - [{}] - [{}]",
@@ -572,26 +595,34 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         startup_archive_path.display()
     );
     assert!(
-        functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)),
-        "Expected SetWindowTitle with profile and archive path. Got: {:?}", functional_cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
+        "Expected SetWindowTitle with correct title. Got: {:?}", cmds
     );
     assert!(
-        functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: true, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )),
-        "Expected SetControlEnabled (true) for save button. Got: {:?}", functional_cmds
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::PopulateTreeView { .. }
+        ))
+        .is_some(),
+        "Expected PopulateTreeView command. Got: {:?}",
+        cmds
     );
-
-    // Functional commands:
-    // 1. Info (Successfully loaded last profile...)
-    // 2. SetWindowTitle
-    // 3. PopulateTreeView
-    // 4. Info (Profile '...' loaded. - from _activate_profile_and_show_window)
-    // 5. SetControlEnabled (true)
-    // 6. ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        6,
-        "Expected 6 functional commands for successful profile load. Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some(),
+        "Expected ShowWindow command. Got: {:?}",
+        cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: true, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "Expected SetControlEnabled (true) for save button. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 2" && *severity == MessageSeverity::Information )).is_some(),
+        "Expected 'Tokens: 2' status bar update. Got: {:?}", cmds
     );
 }
 
@@ -600,39 +631,52 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
     let (mut logic, mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
     let profile_name = "ProfileSansArchive";
+    let profile_root = PathBuf::from("/sans/archive"); // Conceptual path
+
     mock_config_manager.set_load_last_profile_name_result(Ok(Some(profile_name.to_string())));
     let mock_profile = Profile {
         name: profile_name.to_string(),
-        root_folder: PathBuf::from("/sans/archive"),
-        selected_paths: HashSet::new(),
+        root_folder: profile_root.clone(),
+        selected_paths: HashSet::new(), // No files selected, so token count should be 0
         deselected_paths: HashSet::new(),
         archive_path: None,
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
-    mock_fs_scanner.set_scan_directory_result(&mock_profile.root_folder, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Mock this
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files scanned
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
+
+    assert_eq!(
+        logic.test_current_token_count(),
+        0,
+        "Token count should be 0 with no selected files"
+    );
 
     let expected_title = format!("SourcePacker - [{}] - [No Archive Set]", profile_name);
     assert!(
-        functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)),
-        "Expected SetWindowTitle indicating no archive path. Got: {:?}", functional_cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
+        "Expected SetWindowTitle indicating no archive path. Got: {:?}", cmds
     );
     assert!(
-        functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )),
-        "Expected SetControlEnabled (false) for save button. Got: {:?}", functional_cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "Expected SetControlEnabled (false) for save button. Got: {:?}", cmds
     );
-    // Commands: Info(loaded), SetTitle, Populate, Info(profile loaded from activate), SetCtrlEnabled(false), ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        6,
-        "Expected 6 functional commands. Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some(),
+        "Expected ShowWindow command. Got: {:?}",
+        cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some(),
+        "Expected 'Tokens: 0' status bar update. Got: {:?}", cmds
     );
 }
 
@@ -644,28 +688,26 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
-    );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity: MessageSeverity::Information, text, .. } if text.contains("No last profile name found"))));
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::ShowProfileSelectionDialog {
-            emphasize_create_new: true,
-            ..
-        }
-    )));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
     assert!(
-        !cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog {
+                emphasize_create_new: true,
+                ..
+            }
+        ))
+        .is_some()
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_none()
     );
 }
 
@@ -678,18 +720,18 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::ShowProfileSelectionDialog { emphasize_create_new: false, available_profiles: ap, .. } if *ap == existing_profiles)).is_some());
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_none()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity: MessageSeverity::Information, text, .. } if text.contains("No last profile name found"))));
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::ShowProfileSelectionDialog { emphasize_create_new: false, available_profiles, .. } if *available_profiles == existing_profiles)));
 }
 
 #[test]
@@ -701,28 +743,26 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
-    );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity: MessageSeverity::Error, text, .. } if text.contains("Error loading last profile name"))));
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::ShowProfileSelectionDialog {
-            emphasize_create_new: true,
-            ..
-        }
-    )));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Error && text.contains("Error loading last profile name"))).is_some());
     assert!(
-        !cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog {
+                emphasize_create_new: true,
+                ..
+            }
+        ))
+        .is_some()
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_none()
     );
 }
 
@@ -740,28 +780,26 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
-    }); // Use the new event
+    });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
-    );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity: MessageSeverity::Error, text, .. } if text.contains("Failed to load last profile") && text.contains(last_profile_name))));
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::ShowProfileSelectionDialog {
-            emphasize_create_new: true,
-            ..
-        }
-    )));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Error && text.contains("Failed to load last profile") && text.contains(last_profile_name))).is_some());
     assert!(
-        !cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog {
+                emphasize_create_new: true,
+                ..
+            }
+        ))
+        .is_some()
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_none()
     );
 }
 
@@ -776,24 +814,20 @@ fn test_profile_selection_dialog_completed_cancelled_quits_app() {
         user_cancelled: true,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
-    assert_eq!(
-        functional_cmds.len(),
-        1, // Just QuitApplication
-        "Expected 1 functional command (QuitApplication). Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::QuitApplication)).is_some(),
+        "Expected QuitApplication command. Got: {:?}",
+        cmds
     );
-    assert!(matches!(
-        functional_cmds[0],
-        PlatformCommand::QuitApplication
-    ));
+    assert_eq!(cmds.len(), 1, "Expected only QuitApplication command."); // Specific enough for this case
 }
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() {
     let (mut logic, _mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let profile_name = "ChosenProfile";
     let profile_root = PathBuf::from("/chosen/root");
@@ -801,208 +835,209 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
     let mock_profile = Profile {
         name: profile_name.to_string(),
         root_folder: profile_root.clone(),
-        selected_paths: HashSet::new(),
+        selected_paths: HashSet::new(), // Expect Tokens: 0
         deselected_paths: HashSet::new(),
         archive_path: Some(profile_archive_path.clone()),
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Ensure this is set
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         chosen_profile_name: Some(profile_name.to_string()),
         create_new_requested: false,
         user_cancelled: false,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
+
+    assert_eq!(
+        logic.test_current_profile_name().as_deref(),
+        Some(profile_name)
+    );
+    assert_eq!(logic.test_current_token_count(), 0);
 
     let expected_title = format!(
         "SourcePacker - [{}] - [{}]",
         profile_name,
         profile_archive_path.display()
     );
-    // Commands: SetTitle, PopulateTree, Info(Profile '...' loaded), SetCtrlEnabled(true), ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        5,
-        "Expected 5 functional commands. Got: {:?}",
-        functional_cmds
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some());
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::PopulateTreeView { .. }
+        ))
+        .is_some()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)));
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some()
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::SetControlEnabled { enabled: true, .. }
+        ))
+        .is_some()
+    );
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
 }
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates_selection() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let profile_name = "FailingProfile";
     mock_profile_manager.set_load_profile_result(
         profile_name,
         Err(ProfileError::ProfileNotFound(profile_name.to_string())),
     );
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         chosen_profile_name: Some(profile_name.to_string()),
         create_new_requested: false,
         user_cancelled: false,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
-    );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Could not load profile"))));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text.contains("Could not load profile"))).is_some());
     assert!(
-        functional_cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowProfileSelectionDialog { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog { .. }
+        ))
+        .is_some()
     );
 }
 
 #[test]
 fn test_profile_selection_dialog_completed_create_new_starts_flow() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         chosen_profile_name: None,
         create_new_requested: true,
         user_cancelled: false,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional command. Got: {:?}",
-        functional_cmds
+    let input_dialog_cmd = find_command(&cmds, |cmd| {
+        matches!(cmd, PlatformCommand::ShowInputDialog { .. })
+    });
+    assert!(
+        input_dialog_cmd.is_some(),
+        "Expected ShowInputDialog command"
     );
-    match functional_cmds
-        .iter()
-        .find(|cmd| matches!(cmd, PlatformCommand::ShowInputDialog { .. }))
+    if let Some(PlatformCommand::ShowInputDialog {
+        title, context_tag, ..
+    }) = input_dialog_cmd
     {
-        Some(PlatformCommand::ShowInputDialog {
-            title, context_tag, ..
-        }) => {
-            assert!(title.contains("New Profile (1/2): Name"));
-            assert_eq!(context_tag.as_deref(), Some("NewProfileName"));
-        }
-        _ => panic!(
-            "Expected ShowInputDialog for new profile name. Got {:?}",
-            functional_cmds
-        ),
+        assert!(title.contains("New Profile (1/2): Name"));
+        assert_eq!(context_tag.as_deref(), Some("NewProfileName"));
     }
     assert_eq!(
-        logic.test_pending_action().as_ref().unwrap(),
-        &PendingAction::CreatingNewProfileGetName
+        logic.test_pending_action().as_ref(),
+        Some(&PendingAction::CreatingNewProfileGetName)
     );
 }
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_valid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
 
     let profile_name = "MyNewProfile";
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         text: Some(profile_name.to_string()),
         context_tag: Some("NewProfileName".to_string()),
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
     assert_eq!(
         logic.test_pending_new_profile_name().as_deref(),
         Some(profile_name)
     );
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional command (ShowFolderPickerDialog). Got: {:?}",
-        functional_cmds
+    let folder_picker_cmd = find_command(&cmds, |cmd| {
+        matches!(cmd, PlatformCommand::ShowFolderPickerDialog { .. })
+    });
+    assert!(
+        folder_picker_cmd.is_some(),
+        "Expected ShowFolderPickerDialog command"
     );
-    match functional_cmds
-        .iter()
-        .find(|cmd| matches!(cmd, PlatformCommand::ShowFolderPickerDialog { .. }))
-    {
-        Some(PlatformCommand::ShowFolderPickerDialog { title, .. }) => {
-            assert!(title.contains("New Profile (2/2): Select Root Folder"));
-        }
-        _ => panic!("Expected ShowFolderPickerDialog. Got {:?}", functional_cmds),
+    if let Some(PlatformCommand::ShowFolderPickerDialog { title, .. }) = folder_picker_cmd {
+        assert!(title.contains("New Profile (2/2): Select Root Folder"));
     }
     assert_eq!(
-        logic.test_pending_action().as_ref().unwrap(),
-        &PendingAction::CreatingNewProfileGetRoot
+        logic.test_pending_action().as_ref(),
+        Some(&PendingAction::CreatingNewProfileGetRoot)
     );
 }
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_invalid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
 
     let invalid_name = "My/New/Profile";
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         text: Some(invalid_name.to_string()),
         context_tag: Some("NewProfileName".to_string()),
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        2,
-        "Expected 2 functional commands. Got: {:?}",
-        functional_cmds
-    );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Warning, .. } if text.contains("Invalid profile name"))));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Warning && text.contains("Invalid profile name"))).is_some());
     assert!(
-        functional_cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowInputDialog { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowInputDialog { .. }
+        ))
+        .is_some()
+    );
+    // Pending action should remain CreatingNewProfileGetName or similar to re-prompt
+    assert_eq!(
+        logic.test_pending_action().as_ref(),
+        Some(&PendingAction::CreatingNewProfileGetName)
     );
 }
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
 
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         text: None,
         context_tag: Some("NewProfileName".to_string()),
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    // The "New profile name input cancelled..." is an app_info!
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog { .. }
+        ))
+        .is_some()
     );
-    assert!(matches!(
-        functional_cmds[0],
-        PlatformCommand::ShowProfileSelectionDialog { .. }
-    ));
     assert!(logic.test_pending_action().is_none());
 }
 
@@ -1010,63 +1045,84 @@ fn test_input_dialog_completed_for_new_profile_name_cancelled() {
 fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
     let (mut logic, _, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let profile_name = "NewlyCreatedProfile";
     let profile_root = PathBuf::from("/newly/created/root");
     logic.test_set_pending_new_profile_name(Some(profile_name.to_string()));
-    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
-    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // Set this
+    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot); // Set before event
+
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files, so Tokens: 0
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         path: Some(profile_root.clone()),
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
+
+    assert_eq!(
+        logic.test_current_profile_name().as_deref(),
+        Some(profile_name)
+    );
+    assert!(
+        mock_profile_manager
+            .get_save_profile_calls()
+            .iter()
+            .any(|(p, _)| p.name == profile_name)
+    );
+    assert_eq!(logic.test_current_token_count(), 0);
 
     let expected_title = format!("SourcePacker - [{}] - [No Archive Set]", profile_name);
-    // Key Commands: SetTitle, PopulateTree, Info(profile '...' created and loaded), SetCtrlEnabled(false), ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        5,
-        "Expected 5 functional commands. Got: {:?}",
-        functional_cmds
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some());
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::PopulateTreeView { .. }
+        ))
+        .is_some()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)));
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::SetControlEnabled { enabled: false, .. }
-    )));
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some()
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::SetControlEnabled { enabled: false, .. }
+        ))
+        .is_some()
+    );
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("New profile '{}' created and loaded.", profile_name)))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
 }
 
 #[test]
 fn test_folder_picker_dialog_completed_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
     logic.test_set_pending_new_profile_name(Some("TempName".to_string()));
-    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot); // Set before event
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
 
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         path: None,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    // The "Root folder selection cancelled..." is an app_info!
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional command (ShowProfileSelectionDialog). Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog { .. }
+        ))
+        .is_some()
     );
-    assert!(matches!(
-        functional_cmds[0],
-        PlatformCommand::ShowProfileSelectionDialog { .. }
-    ));
     assert!(logic.test_pending_action().is_none());
     assert!(logic.test_pending_new_profile_name().is_none());
 }
@@ -1074,52 +1130,58 @@ fn test_folder_picker_dialog_completed_cancelled() {
 #[test]
 fn test_initiate_profile_selection_failure_to_list_profiles() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1))); // This IS needed for app_error! to queue a command
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     mock_profile_manager.set_list_profiles_result(Err(ProfileError::Io(io::Error::new(
         io::ErrorKind::PermissionDenied,
         "cannot access profiles dir",
     ))));
-    logic.initiate_profile_selection_or_creation(WindowId(1));
+    logic.initiate_profile_selection_or_creation(main_window_id);
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional Error command. Got: {:?}",
-        functional_cmds
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text,.. } if *severity == MessageSeverity::Error && text.contains("Failed to list profiles"))).is_some());
+    // No dialog should be shown if listing fails catastrophically
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowProfileSelectionDialog { .. }
+        ))
+        .is_none()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::UpdateStatusBarText {
-            severity: MessageSeverity::Error,
-            ..
-        }
-    )));
 }
 
 #[test]
 fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let (
         mut logic,
-        _mock_config_manager,
+        mock_config_manager, // get_saved_profile_name used here
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
     ) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let profile_to_load_name = "ProfileToLoadViaManager";
     let profile_root_for_scan = PathBuf::from("/mocked/profile/root/for/scan");
     let archive_path_for_loaded_profile = profile_root_for_scan.join("archive.dat");
     let profile_json_path_from_dialog =
         PathBuf::from(format!("/dummy/path/to/{}.json", profile_to_load_name));
+
+    // Temp file for token counting
+    let temp_dir = tempdir().unwrap();
+    let (concrete_file_path, _temp_file_guard) =
+        create_temp_file_with_content(&temp_dir, "opened_content", "opened file tokens"); // 3 tokens
+
+    let mut selected_paths = HashSet::new();
+    selected_paths.insert(concrete_file_path.clone());
+
     let mock_loaded_profile = Profile {
         name: profile_to_load_name.to_string(),
-        root_folder: profile_root_for_scan.clone(),
-        selected_paths: HashSet::new(),
+        root_folder: temp_dir.path().to_path_buf(), // Use temp_dir as root
+        selected_paths,
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_path_for_loaded_profile.clone()),
     };
@@ -1127,70 +1189,77 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         &profile_json_path_from_dialog,
         Ok(mock_loaded_profile.clone()),
     );
-    mock_file_system_scanner_arc.set_scan_directory_result(&profile_root_for_scan, Ok(vec![]));
+    let scanned_nodes = vec![FileNode::new(
+        concrete_file_path.clone(),
+        "opened_content.txt".into(),
+        false,
+    )];
+    mock_file_system_scanner_arc.set_scan_directory_result(temp_dir.path(), Ok(scanned_nodes));
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
     let event = AppEvent::FileOpenProfileDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         result: Some(profile_json_path_from_dialog.clone()),
     };
     logic.handle_event(event);
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
     assert_eq!(
         logic.test_current_profile_name().as_deref(),
         Some(profile_to_load_name)
     );
+    assert_eq!(
+        mock_config_manager.get_saved_profile_name(),
+        Some((
+            APP_NAME_FOR_PROFILES.to_string(),
+            profile_to_load_name.to_string()
+        ))
+    );
+    assert_eq!(logic.test_current_token_count(), 3);
 
     let expected_title = format!(
         "SourcePacker - [{}] - [{}]",
         profile_to_load_name,
         archive_path_for_loaded_profile.display()
     );
-    assert!(functional_cmds.iter().any(
-        |cmd| matches!(cmd, PlatformCommand::SetWindowTitle {title, ..} if title == &expected_title)
-    ));
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::SetControlEnabled { enabled: true, .. }
-    )));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle {title, ..} if title == &expected_title)).is_some());
     assert!(
-        functional_cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::PopulateTreeView { .. }
+        ))
+        .is_some()
     );
-    // Key functional commands: SetTitle, PopulateTree, Status(Profile ... loaded and scanned), SetCtrlEnabled, ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        5,
-        "Expected 5 functional commands. Got: {:?}",
-        functional_cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains("Profile 'ProfileToLoadViaManager' loaded and scanned"))));
+    assert!(
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::SetControlEnabled { enabled: true, .. }
+        ))
+        .is_some()
+    );
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("Profile '{}' loaded and scanned.", profile_to_load_name)))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 3" && *severity == MessageSeverity::Information )).is_some());
 }
 
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     logic.handle_event(AppEvent::WindowCloseRequestedByUser {
-        window_id: WindowId(1),
+        window_id: main_window_id,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
-
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected 1 functional command (CloseWindow). Got: {:?}",
-        functional_cmds
-    );
-    assert!(matches!(
-        functional_cmds[0],
-        PlatformCommand::CloseWindow { .. }
-    ));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::CloseWindow { window_id: id, .. } if *id == main_window_id )).is_some());
+    assert_eq!(cmds.len(), 1);
 }
 
 #[test]
@@ -1206,21 +1275,30 @@ fn test_menu_set_archive_path_cancelled() {
         result: None,
     });
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    // Command: SetControlEnabled(false)
-    // The "Set archive path cancelled" and "Button 'Save to Archive' disabled" messages
-    // are log::debug! and do not generate functional commands.
+    // Only SetControlEnabled(false) is expected as a functional command.
+    // Log messages for cancellation are debug.
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC)).is_some());
+    // Check that no other unexpected functional commands were generated.
+    // The `get_functional_commands` can be useful here if we adapt it, or filter manually.
+    let functional_cmds = cmds
+        .into_iter()
+        .filter(|cmd| {
+            !matches!(
+                cmd,
+                PlatformCommand::UpdateStatusBarText {
+                    severity: MessageSeverity::Debug,
+                    ..
+                }
+            )
+        })
+        .collect::<Vec<_>>();
     assert_eq!(
         functional_cmds.len(),
         1,
-        "Expected 3 functional commands. Got: {:?}",
+        "Expected only SetControlEnabled(false). Got: {:?}",
         functional_cmds
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(
-        cmd,
-        PlatformCommand::SetControlEnabled { enabled: false, .. }
-    )));
 }
 
 #[test]
@@ -1233,7 +1311,8 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         mock_archiver_arc,
         _,
     ) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let profile_name = "ProfileForStatusUpdateViaMockArchiver";
     let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_mock_archiver");
@@ -1243,7 +1322,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let mock_profile_to_load = Profile {
         name: profile_name.to_string(),
         root_folder: root_folder_for_profile.clone(),
-        selected_paths: HashSet::new(),
+        selected_paths: HashSet::new(), // Tokens: 0
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_for_profile.clone()),
     };
@@ -1257,28 +1336,26 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     )));
 
     let event = AppEvent::FileOpenProfileDialogCompleted {
-        window_id: WindowId(1),
+        window_id: main_window_id,
         result: Some(profile_json_path_from_dialog.clone()),
     };
     logic.handle_event(event);
     let cmds = logic.test_drain_commands();
-    let functional_cmds = get_functional_commands(&cmds);
 
-    // Commands: SetTitle, PopulateTree, Status(Profile loaded and scanned), Status(archive Error), SetCtrlEnabled, ShowWindow
-    assert_eq!(
-        functional_cmds.len(),
-        6,
-        "Expected 6 functional commands. Got: {:?}",
-        functional_cmds
-    );
     assert!(
-        functional_cmds
-            .iter()
-            .any(|cmd| matches!(cmd, PlatformCommand::ShowWindow { .. }))
+        find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::ShowWindow { .. }
+        ))
+        .is_some()
     );
-    assert!(functional_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity: MessageSeverity::Error, .. } if text.contains("Archive: ErrorChecking"))));
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text.contains("Archive: ErrorChecking"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
+    // Other commands like SetWindowTitle, PopulateTreeView, SetControlEnabled are also expected.
 }
 
+// --- Token Counting Specific Tests (already updated for Step 2.2) ---
+// Helper function to create a temporary file with content and return its path and the NamedTempFile guard.
 fn create_temp_file_with_content(
     dir: &tempfile::TempDir,
     filename_prefix: &str,
@@ -1293,15 +1370,6 @@ fn create_temp_file_with_content(
     (temp_file.path().to_path_buf(), temp_file)
 }
 
-/*
- * Verifies that `current_token_count` is correctly updated when a tree item's
- * selection state is toggled, triggering a recalculation.
- * It sets up a `MyAppLogic` instance with mock dependencies, populates its
- * `file_nodes_cache` with `FileNode`s pointing to temporary files with known content,
- * and simulates `TreeViewItemToggledByUser` events. The test then asserts that
- * `logic.current_token_count` reflects the sum of tokens from selected files
- * and that no token-specific UI commands (like "Tokens: X") are generated yet.
- */
 #[test]
 fn test_token_count_updates_on_tree_item_toggle() {
     let (mut logic, _, _, _, _, _mock_state_manager) = setup_logic_with_mocks();
@@ -1337,21 +1405,17 @@ fn test_token_count_updates_on_tree_item_toggle() {
     logic.test_path_to_tree_item_id_insert(&file1_path, node1_item_id);
     logic.test_path_to_tree_item_id_insert(&file2_path, node2_item_id);
 
-    // Manually call recalculate for an initial state.
-    // current_token_count is 0 by default in MyAppLogic::new.
-    // This call will update it.
-    logic.test_recalculate_and_log_token_count();
+    // Call the public method to update tokens and request display
+    logic._update_token_count_and_request_display();
     assert_eq!(
         logic.test_current_token_count(),
         2,
         "Initial count should be for file1 only"
     );
     let initial_cmds = logic.test_drain_commands();
-    // At this stage (Step 1.3), _recalculate_and_log_token_count only logs,
-    // it does not generate PlatformCommands for the status bar.
     assert!(
-        !initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, ..} if text.starts_with("Token count updated:") || text.starts_with("Tokens:"))),
-        "No token-specific UI commands should be generated by _recalculate_and_log_token_count yet. Got: {:?}", initial_cmds
+        initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 2" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 2' status bar update. Got: {:?}", initial_cmds
     );
 
     // Simulate toggling file2 to Selected
@@ -1367,12 +1431,11 @@ fn test_token_count_updates_on_tree_item_toggle() {
         "Count should be 2 (file1) + 3 (file2) = 5"
     );
     let cmds_after_toggle1 = logic.test_drain_commands();
-    // The handle_treeview_item_toggled calls _recalculate_and_log_token_count,
-    // which only logs at this stage. Other parts of handle_treeview_item_toggled
-    // might generate status updates (e.g., for archive status), but not for tokens.
+    // Other commands might be generated by TreeViewItemToggledByUser (e.g. UpdateTreeItemVisualState, archive status).
+    // We specifically look for the token update.
     assert!(
-        !cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, ..} if text.starts_with("Token count updated:") || text.starts_with("Tokens:"))),
-        "No token-specific UI commands should be generated yet. Got: {:?}", cmds_after_toggle1
+        cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 5" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 5' status bar update after toggle. Got: {:?}", cmds_after_toggle1
     );
 
     // Simulate toggling file1 to Deselected
@@ -1389,20 +1452,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
     );
     let cmds_after_toggle2 = logic.test_drain_commands();
     assert!(
-        !cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, ..} if text.starts_with("Token count updated:") || text.starts_with("Tokens:"))),
-        "No token-specific UI commands should be generated yet. Got: {:?}", cmds_after_toggle2
+        cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 3' status bar update after second toggle. Got: {:?}", cmds_after_toggle2
     );
 }
 
 /*
- * Verifies that `current_token_count` is correctly calculated when a profile is
- * activated (which involves scanning files and applying profile states).
- * It uses a `MockFileSystemScanner` to return `FileNode`s pointing to temporary
- * files with known content, and a `MockProfileManager` to load a profile that
- * selects some of these files. The test simulates the `MainWindowUISetupComplete`
- * event, which triggers profile activation and subsequent token calculation.
- * It asserts the final `current_token_count` and checks that no token-specific
- * UI commands are generated.
+ * Verifies that `current_token_count` is correctly calculated and displayed when a profile is
+ * activated.
  */
 #[test]
 fn test_token_count_updates_on_profile_activation() {
@@ -1462,29 +1519,23 @@ fn test_token_count_updates_on_profile_activation() {
     );
 
     let cmds = logic.test_drain_commands();
-    // _activate_profile_and_show_window calls _recalculate_and_log_token_count,
-    // which only logs at this stage. Other app_info! calls in _activate_profile_and_show_window
-    // *will* generate status updates, but not for the token count itself.
+    // _activate_profile_and_show_window calls _update_token_count_and_request_display.
+    // Other app_info! calls in _activate_profile_and_show_window will also generate status updates.
     assert!(
-        !cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, ..} if text.starts_with("Token count updated:") || text.starts_with("Tokens:"))),
-        "No token-specific UI commands should be generated yet. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 3' status bar update on profile activation. Got: {:?}", cmds
     );
 }
 
 /*
- * Verifies that `_recalculate_and_log_token_count` correctly sums tokens from
- * readable selected files while gracefully skipping unreadable selected files.
- * It sets up `file_nodes_cache` with one readable temporary file and one
- * `FileNode` pointing to a non-existent path, both marked as selected.
- * It then directly calls the (test-exposed) token calculation method and
- * asserts that `current_token_count` only reflects the tokens from the readable file.
- * Log messages for the failure are expected but not explicitly asserted here.
+ * Verifies that `_update_token_count_and_request_display` correctly sums tokens
+ * from readable selected files, skips unreadable ones, and requests display.
  */
 #[test]
-fn test_token_count_handles_file_read_errors_gracefully() {
+fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id)); // Set for consistency if app_error! macros were used internally in tested path
+    logic.test_set_main_window_id(Some(main_window_id));
 
     let temp_dir = tempdir().unwrap();
     let (readable_file_path, _temp_readable_guard) =
@@ -1509,7 +1560,7 @@ fn test_token_count_handles_file_read_errors_gracefully() {
     ];
     logic.test_set_file_nodes_cache(file_nodes);
 
-    logic.test_recalculate_and_log_token_count();
+    logic._update_token_count_and_request_display();
 
     assert_eq!(
         logic.test_current_token_count(),
@@ -1518,10 +1569,8 @@ fn test_token_count_handles_file_read_errors_gracefully() {
     );
 
     let cmds = logic.test_drain_commands();
-    // At this stage (Step 1.3), _recalculate_and_log_token_count only logs,
-    // it does not generate PlatformCommands for the status bar.
     assert!(
-        !cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, ..} if text.starts_with("Token count updated:") || text.starts_with("Tokens:"))),
-        "No token-specific UI commands should be generated by _recalculate_and_log_token_count yet. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 4" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 4' status bar update, even with file read errors. Got: {:?}", cmds
     );
 }
