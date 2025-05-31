@@ -4,8 +4,10 @@
  * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
  * `ArchiverOperations`, and `StateManagerOperations`) for file system operations,
  * profile management, configuration, archiving, and state management. It also
- * includes utilities for token estimation.
+ * includes utilities for token estimation and the newly added `AppSessionData`
+ * for managing session state.
  */
+pub mod app_session_data;
 pub mod archiver;
 pub mod config;
 pub mod file_system;
@@ -36,3 +38,5 @@ pub use config::{
 pub use state_manager::{CoreStateManager, StateManagerOperations};
 
 pub use tokenizer_utils::estimate_tokens_simple_whitespace;
+
+pub use app_session_data::AppSessionData;
