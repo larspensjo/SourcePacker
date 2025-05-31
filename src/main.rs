@@ -16,6 +16,7 @@ use std::fs::File;
 use std::sync::{Arc, Mutex};
 
 use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, WriteLogger};
+use time::macros::format_description;
 
 /*
  * This is the main entry point for the SourcePacker application.
@@ -136,6 +137,9 @@ fn initialize_logging() {
                 let config = config_builder
                     .set_thread_level(LevelFilter::Off)
                     .set_location_level(LevelFilter::Debug)
+                    .set_time_format_custom(format_description!(
+                        "[hour]:[minute]:[second].[subsecond digits:3]"
+                    ))
                     .build();
                 if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
                     simplelog::LevelFilter::Debug,

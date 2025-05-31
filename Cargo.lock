@@ -549,6 +549,7 @@ dependencies = [
  "simplelog",
  "tempfile",
  "tiktoken-rs",
+ "time",
  "walkdir",
  "windows",
 ]
