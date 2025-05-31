@@ -257,8 +257,12 @@ impl MyAppLogic {
 
                 let status_text = format!("Archive: {:?}", status);
                 match status {
-                    ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text),
-                    _ => log::debug!("{}", status_text), // Log directly, app_info! uses ui_state
+                    ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text), // This will queue a command
+                    _ => {
+                        // Log to debug as before, but also send to UI as Information
+                        log::debug!("{}", status_text);
+                        app_info!(self, "{}", status_text); // This will queue an UpdateStatusBarText command
+                    }
                 };
             } else {
                 ui_state_mut.current_archive_status_for_ui = None;
@@ -948,8 +952,10 @@ impl MyAppLogic {
         // This needs to be called when `self.ui_state` is not already exclusively borrowed.
         self.update_current_archive_status(); // This will internally get `&mut self.ui_state` if Some.
 
-        // Update token count and request display (internally gets `&mut self.app_session_data` and calls `app_info!`)
-        self._update_token_count_and_request_display();
+        // Token count has been updated by activate_and_populate_data.
+        // Now, just queue the UI update for the token count using the cached value.
+        let token_count_for_display = self.app_session_data.cached_current_token_count;
+        app_info!(self, "Tokens: {}", token_count_for_display);
 
         // Display the overall status message from loading/scanning
         // This must happen AFTER any mutable borrows of self.ui_state needed by the macros are done,
@@ -959,8 +965,6 @@ impl MyAppLogic {
         } else {
             app_error!(self, "{}", final_status_message);
         }
-        // The `app_info!` for tokens is now inside `_update_token_count_and_request_display`.
-        // The `app_info!/app_error!` for archive status is inside `update_current_archive_status`.
 
         // Update save button state
         self._update_save_to_archive_button_state(window_id);
