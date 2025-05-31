@@ -259,9 +259,7 @@ impl MyAppLogic {
                 match status {
                     ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text), // This will queue a command
                     _ => {
-                        // Log to debug as before, but also send to UI as Information
                         log::debug!("{}", status_text);
-                        app_info!(self, "{}", status_text); // This will queue an UpdateStatusBarText command
                     }
                 };
             } else {
