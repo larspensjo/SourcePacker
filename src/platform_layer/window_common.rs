@@ -552,7 +552,7 @@ impl Win32ApiInternalState {
         if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
                 if window_data.has_main_layout_rules() {
-                    log::trace!(
+                    log::debug!(
                         "Platform: WM_SIZE for WinID {:?} using new rule-based layout. Client: {}x{}",
                         window_id,
                         client_width,
@@ -669,7 +669,7 @@ impl Win32ApiInternalState {
                     }
                 } else {
                     // Original hardcoded layout logic
-                    log::trace!(
+                    log::debug!(
                         "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
                         window_id,
                         client_width,

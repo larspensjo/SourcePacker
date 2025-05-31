@@ -24,7 +24,7 @@ use std::path::Path;
  *   or an `io::Error` if an error occurred.
  */
 pub fn calculate_sha256_checksum(file_path: &Path) -> io::Result<String> {
-    log::trace!(
+    log::debug!(
         "ChecksumUtils: Calculating SHA256 checksum for: {:?}",
         file_path
     );
@@ -52,7 +52,7 @@ pub fn calculate_sha256_checksum(file_path: &Path) -> io::Result<String> {
 
     let hash_bytes = hasher.finalize();
     let hex_checksum = format!("{:x}", hash_bytes);
-    log::trace!(
+    log::debug!(
         "ChecksumUtils: Calculated checksum {} for {:?}",
         hex_checksum,
         file_path

@@ -63,7 +63,7 @@ pub(crate) fn execute_define_layout(
 
     if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
         window_data.layout_rules = Some(rules);
-        log::trace!(
+        log::debug!(
             "CommandExecutor: Stored layout rules for WinID {:?}",
             window_id
         );
@@ -318,7 +318,7 @@ unsafe fn add_menu_item_recursive_impl(
         if let Some(action) = item_config.action {
             let generated_id = window_data.generate_menu_item_id();
             window_data.menu_action_map.insert(generated_id, action);
-            log::trace!(
+            log::debug!(
                 "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
                 action,
                 generated_id,

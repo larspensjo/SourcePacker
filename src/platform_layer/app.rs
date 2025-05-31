@@ -472,7 +472,7 @@ impl PlatformInterface {
 
         // Execute initial UI setup commands.
         for command in initial_commands_to_execute {
-            log::trace!("Platform: Executing initial command: {:?}", command);
+            log::debug!("Platform: Executing initial command: {:?}", command);
             if let Err(e) = self.internal_state._execute_platform_command(command) {
                 log::error!(
                     "Platform: Error executing initial UI command: {:?}. Halting initialization.",
