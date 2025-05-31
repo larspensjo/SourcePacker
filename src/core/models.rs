@@ -33,6 +33,7 @@ pub struct FileNode {
     pub is_dir: bool,
     pub state: FileState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
+    pub checksum: Option<String>,
 }
 
 impl FileNode {
@@ -48,6 +49,7 @@ impl FileNode {
             is_dir,
             state: FileState::default(), // Initial state is Unknown
             children: Vec::new(),
+            checksum: None,
         }
     }
 }
@@ -132,6 +134,7 @@ mod tests {
         assert_eq!(n.is_dir, false);
         assert_eq!(n.state, FileState::Unknown);
         assert!(n.children.is_empty());
+        assert!(n.checksum.is_none());
     }
 
     #[test]

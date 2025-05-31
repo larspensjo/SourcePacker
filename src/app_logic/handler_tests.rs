@@ -563,6 +563,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         selected_paths: selected_paths_for_profile.clone(),
         deselected_paths: HashSet::new(),
         archive_path: Some(startup_archive_path.clone()),
+        file_details: HashMap::new(),
     };
     mock_profile_manager
         .set_load_profile_result(last_profile_name_to_load, Ok(mock_loaded_profile.clone()));
@@ -582,6 +583,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         selected_paths: profile_selected_paths,
         deselected_paths: HashSet::new(),
         archive_path: Some(startup_archive_path.clone()),
+        file_details: HashMap::new(),
     };
     mock_profile_manager.set_load_profile_result(
         last_profile_name_to_load,
@@ -682,6 +684,7 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: None,
+        file_details: HashMap::new(),
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
@@ -891,6 +894,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(profile_archive_path.clone()),
+        file_details: HashMap::new(),
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files, so token count = 0
@@ -1244,6 +1248,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         selected_paths,
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_path_for_loaded_profile.clone()),
+        file_details: HashMap::new(),
     };
     mock_profile_manager_arc.set_load_profile_from_path_result(
         &profile_json_path_from_dialog,
@@ -1386,6 +1391,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_for_profile.clone()),
+        file_details: HashMap::new(),
     };
     mock_profile_manager_arc.set_load_profile_from_path_result(
         &profile_json_path_from_dialog,
@@ -1456,6 +1462,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
             is_dir: false,
             state: FileState::Selected,
             children: Vec::new(),
+            checksum: None,
         },
         FileNode {
             path: file2_path.clone(),
@@ -1463,6 +1470,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
             is_dir: false,
             state: FileState::Deselected,
             children: Vec::new(),
+            checksum: None,
         },
     ];
     logic.test_set_file_nodes_cache(file_nodes);
@@ -1552,6 +1560,7 @@ fn test_token_count_updates_on_profile_activation() {
         selected_paths,
         deselected_paths: HashSet::new(),
         archive_path: None,
+        file_details: HashMap::new(),
     };
 
     mock_config_manager.set_load_last_profile_name_result(Ok(Some(profile_name.to_string())));
@@ -1564,6 +1573,7 @@ fn test_token_count_updates_on_profile_activation() {
             is_dir: false,
             state: FileState::Unknown,
             children: Vec::new(),
+            checksum: None,
         },
         FileNode {
             path: file_b_path.clone(),
@@ -1571,6 +1581,7 @@ fn test_token_count_updates_on_profile_activation() {
             is_dir: false,
             state: FileState::Unknown,
             children: Vec::new(),
+            checksum: None,
         },
     ];
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(scanned_nodes));
@@ -1613,6 +1624,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
             is_dir: false,
             state: FileState::Selected,
             children: Vec::new(),
+            checksum: None,
         },
         FileNode {
             path: unreadable_file_path.clone(),
@@ -1620,6 +1632,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
             is_dir: false,
             state: FileState::Selected,
             children: Vec::new(),
+            checksum: None,
         },
     ];
     logic.test_set_file_nodes_cache(file_nodes);

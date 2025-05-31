@@ -261,6 +261,7 @@ impl ProfileManagerOperations for CoreProfileManager {
 #[cfg(test)]
 mod profile_tests {
     use super::*;
+    use std::collections::HashMap;
     use std::collections::HashSet;
     use std::fs;
     use tempfile::TempDir;
@@ -457,6 +458,7 @@ mod profile_tests {
             selected_paths: selected.clone(),
             deselected_paths: HashSet::new(),
             archive_path: Some(PathBuf::from("/mock/archive.txt")),
+            file_details: HashMap::new(),
         };
 
         manager.save_profile(&original_profile, app_name_for_test)?;
@@ -486,6 +488,7 @@ mod profile_tests {
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
             archive_path: None,
+            file_details: HashMap::new(),
         };
 
         manager.save_profile(&profile_to_save, app_name_for_test)?;

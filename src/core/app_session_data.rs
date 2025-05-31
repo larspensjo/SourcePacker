@@ -411,6 +411,7 @@ mod tests {
                 selected_paths: HashSet::new(),
                 deselected_paths: HashSet::new(),
                 archive_path: Some(PathBuf::from("/old/archive.zip")),
+                file_details: HashMap::new(),
             }),
             file_nodes_cache: vec![
                 FileNode {
@@ -419,6 +420,7 @@ mod tests {
                     is_dir: false,
                     state: FileState::Selected,
                     children: Vec::new(),
+                    checksum: None,
                 },
                 FileNode {
                     path: PathBuf::from("/old/root/file2.txt"),
@@ -426,6 +428,7 @@ mod tests {
                     is_dir: false,
                     state: FileState::Deselected,
                     children: Vec::new(),
+                    checksum: None,
                 },
             ],
             root_path_for_scan: PathBuf::from("/new/root"), // Simulating root change before save-as
@@ -497,6 +500,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Selected,
                 children: Vec::new(),
+                checksum: None,
             },
             FileNode {
                 path: file2_path.clone(),
@@ -504,6 +508,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Selected,
                 children: Vec::new(),
+                checksum: None,
             },
             FileNode {
                 path: file3_path.clone(),
@@ -511,6 +516,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Deselected,
                 children: Vec::new(),
+                checksum: None,
             },
             FileNode {
                 // Folder with a selected child
@@ -524,7 +530,9 @@ mod tests {
                     is_dir: false,
                     state: FileState::Selected,
                     children: Vec::new(),
+                    checksum: None,
                 }],
+                checksum: None,
             },
         ];
         let count = session_data.update_token_count(&mock_token_counter);
@@ -549,6 +557,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Selected,
                 children: Vec::new(),
+                checksum: None,
             },
             FileNode {
                 path: non_existent_path.clone(),
@@ -556,6 +565,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Selected,
                 children: Vec::new(),
+                checksum: None,
             },
         ];
         let count = session_data.update_token_count(&mock_token_counter);
@@ -589,6 +599,7 @@ mod tests {
             is_dir: false,
             state: FileState::Unknown, // State manager will update this
             children: Vec::new(),
+            checksum: None,
         }];
         mock_scanner
             .set_scan_directory_result(temp_dir.path(), Ok(nodes_for_scanner_to_return.clone()));

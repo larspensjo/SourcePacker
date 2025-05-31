@@ -99,6 +99,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Unknown,
                 children: vec![],
+                checksum: None,
             },
             FileNode {
                 path: PathBuf::from("/root/dir1"),
@@ -112,6 +113,7 @@ mod tests {
                         is_dir: false,
                         state: FileState::Unknown,
                         children: vec![],
+                        checksum: None,
                     },
                     FileNode {
                         path: PathBuf::from("/root/dir1/subdir"),
@@ -124,9 +126,12 @@ mod tests {
                             is_dir: false,
                             state: FileState::Unknown,
                             children: vec![],
+                            checksum: None,
                         }],
+                        checksum: None,
                     },
                 ],
+                checksum: None,
             },
             FileNode {
                 path: PathBuf::from("/root/file4.ext"), // Different extension
@@ -134,6 +139,7 @@ mod tests {
                 is_dir: false,
                 state: FileState::Unknown,
                 children: vec![],
+                checksum: None,
             },
         ]
     }

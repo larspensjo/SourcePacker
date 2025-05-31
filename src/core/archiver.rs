@@ -151,7 +151,8 @@ impl ArchiverOperations for CoreArchiver {
             Err(e) => {
                 log::error!(
                     "Error getting archive timestamp for {:?}: {}",
-                    archive_path, e
+                    archive_path,
+                    e
                 );
                 return ArchiveStatus::ErrorChecking(Some(e.kind()));
             }
@@ -251,6 +252,7 @@ mod tests {
             is_dir,
             state,
             children,
+            checksum: None,
         }
     }
 

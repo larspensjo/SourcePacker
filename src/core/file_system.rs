@@ -1,4 +1,5 @@
 use super::models::FileNode;
+use crate::core::checksum_utils;
 use ignore::WalkBuilder;
 use std::collections::HashMap;
 use std::io;
@@ -143,7 +144,23 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
 
-            let node = FileNode::new(path.clone(), name, is_dir);
+            let mut node = FileNode::new(path.clone(), name, is_dir);
+
+            if !is_dir {
+                // Calculate checksum only for files
+                match checksum_utils::calculate_sha256_checksum(&path) {
+                    Ok(checksum_str) => node.checksum = Some(checksum_str),
+                    Err(e) => {
+                        log::warn!(
+                            "FileSystemScanner: Failed to calculate checksum for file {:?}: {}",
+                            path,
+                            e
+                        );
+                        node.checksum = None; // Ensure it's None on error
+                    }
+                }
+            }
+
             nodes_map.insert(path.clone(), node);
             entry_paths_in_discovery_order.push(path);
         }
@@ -169,7 +186,8 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                             // So, we re-insert it into nodes_map to be collected as a top-level node.
                             log::error!(
                                 "FileSystemScanner: Parent {:?} not found in map for child {:?}. Re-inserting child as potential top-level.",
-                                parent_path, child_path_ref
+                                parent_path,
+                                child_path_ref
                             );
                             nodes_map.insert(child_path_ref.clone(), child_node_owned);
                         }
@@ -528,5 +546,43 @@ mod tests {
         let result = test_scan_with_scanner(&scanner, non_existent_path);
         log::debug!("--- Scan finished for test_invalid_root_path ---");
         assert!(matches!(result, Err(FileSystemError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_scan_populates_checksums_for_files() -> Result<()> {
+        let dir = tempdir()?;
+        let file1_path = dir.path().join("file1.txt");
+        let file2_path = dir.path().join("file2.txt");
+        let subdir_path = dir.path().join("subdir");
+        fs::create_dir(&subdir_path)?;
+        let file_in_subdir_path = subdir_path.join("file3.txt");
+
+        fs::write(&file1_path, "content1")?;
+        fs::write(&file2_path, "content2")?;
+        fs::write(&file_in_subdir_path, "content3")?;
+
+        let scanner = CoreFileSystemScanner::new();
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
+
+        let file1_node = nodes.iter().find(|n| n.path == file1_path).unwrap();
+        assert!(file1_node.checksum.is_some());
+        assert_eq!(
+            file1_node.checksum.as_ref().unwrap(),
+            &checksum_utils::calculate_sha256_checksum(&file1_path).unwrap()
+        );
+
+        let file2_node = nodes.iter().find(|n| n.path == file2_path).unwrap();
+        assert!(file2_node.checksum.is_some());
+
+        let subdir_node = nodes.iter().find(|n| n.path == subdir_path).unwrap();
+        assert!(subdir_node.is_dir);
+        assert!(subdir_node.checksum.is_none()); // Directories should not have checksums
+        let file3_node = subdir_node
+            .children
+            .iter()
+            .find(|n| n.path == file_in_subdir_path)
+            .unwrap();
+        assert!(file3_node.checksum.is_some());
+        Ok(())
     }
 }

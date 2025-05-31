@@ -9,6 +9,7 @@
  */
 pub mod app_session_data;
 pub mod archiver;
+pub mod checksum_utils;
 pub mod config;
 pub mod file_system;
 pub mod models;
