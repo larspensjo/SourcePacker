@@ -117,36 +117,6 @@ impl MyAppLogic {
         }
     }
 
-    // This method's logic will be moved to MainWindowUiState in Phase 3.
-    // For now, it accesses fields through self.ui_state.
-    fn generate_tree_item_id(&mut self) -> TreeItemId {
-        let ui_state = self
-            .ui_state
-            .as_mut()
-            .expect("UI state must exist to generate tree item ID");
-        let id = ui_state.next_tree_item_id_counter;
-        ui_state.next_tree_item_id_counter += 1;
-        TreeItemId(id)
-    }
-
-    // This method's logic will be moved to MainWindowUiState in Phase 3.
-    // For now, it accesses fields through self.ui_state and self.app_session_data.
-    pub(crate) fn build_tree_item_descriptors_recursive(&mut self) -> Vec<TreeItemDescriptor> {
-        let ui_state = self
-            .ui_state
-            .as_mut()
-            .expect("UI state must exist to build tree item descriptors");
-        // Clear map and reset counter which are now in ui_state
-        ui_state.path_to_tree_item_id.clear();
-        ui_state.next_tree_item_id_counter = 1;
-
-        return Self::build_tree_item_descriptors_recursive_internal(
-            &self.app_session_data.file_nodes_cache, // Read from app_session_data
-            &mut ui_state.path_to_tree_item_id,      // Mutate ui_state
-            &mut ui_state.next_tree_item_id_counter, // Mutate ui_state
-        );
-    }
-
     // This helper remains static for now. It's called by the above method.
     fn build_tree_item_descriptors_recursive_internal(
         nodes: &[FileNode],
