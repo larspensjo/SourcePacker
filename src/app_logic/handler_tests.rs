@@ -4,6 +4,7 @@ use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
     CoreConfigManagerForConfig, FileNode, FileState, FileSystemError, FileSystemScannerOperations,
     Profile, ProfileError, ProfileManagerOperations, StateManagerOperations,
+    TokenCounterOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -15,7 +16,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime; // Still needed for FileNode in token tests
+use std::time::SystemTime;
 use tempfile::{NamedTempFile, tempdir};
 
 /*
@@ -455,6 +456,40 @@ impl StateManagerOperations for MockStateManager {
 }
 // --- End MockStateManager ---
 
+// --- MockTokenCounter for testing ---
+struct MockTokenCounter {
+    // Maps content string to a specific token count
+    counts_for_content: Mutex<HashMap<String, usize>>,
+    default_count: usize,
+}
+
+impl MockTokenCounter {
+    fn new(default_count: usize) -> Self {
+        MockTokenCounter {
+            counts_for_content: Mutex::new(HashMap::new()),
+            default_count,
+        }
+    }
+
+    fn set_count_for_content(&self, content: &str, count: usize) {
+        self.counts_for_content
+            .lock()
+            .unwrap()
+            .insert(content.to_string(), count);
+    }
+}
+
+impl TokenCounterOperations for MockTokenCounter {
+    fn count_tokens(&self, content: &str) -> usize {
+        *self
+            .counts_for_content
+            .lock()
+            .unwrap()
+            .get(content)
+            .unwrap_or(&self.default_count)
+    }
+}
+
 fn setup_logic_with_mocks() -> (
     MyAppLogic,
     Arc<MockConfigManager>,
@@ -462,6 +497,7 @@ fn setup_logic_with_mocks() -> (
     Arc<MockFileSystemScanner>,
     Arc<MockArchiver>,
     Arc<MockStateManager>,
+    Arc<MockTokenCounter>,
 ) {
     crate::initialize_logging(); // Ensure logging is initialized for tests
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
@@ -469,12 +505,14 @@ fn setup_logic_with_mocks() -> (
     let mock_file_system_scanner_arc = Arc::new(MockFileSystemScanner::new());
     let mock_archiver_arc = Arc::new(MockArchiver::new());
     let mock_state_manager_arc = Arc::new(MockStateManager::new());
+    let mock_token_counter_arc = Arc::new(MockTokenCounter::new(1)); // Default to 1 token if not specified
 
     let logic = MyAppLogic::new(
         Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
         Arc::clone(&mock_profile_manager_arc) as Arc<dyn ProfileManagerOperations>,
         Arc::clone(&mock_file_system_scanner_arc) as Arc<dyn FileSystemScannerOperations>,
         Arc::clone(&mock_archiver_arc) as Arc<dyn ArchiverOperations>,
+        Arc::clone(&mock_token_counter_arc) as Arc<dyn TokenCounterOperations>,
         Arc::clone(&mock_state_manager_arc) as Arc<dyn StateManagerOperations>,
     );
     (
@@ -484,6 +522,7 @@ fn setup_logic_with_mocks() -> (
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         mock_state_manager_arc,
+        mock_token_counter_arc,
     )
 }
 
@@ -504,6 +543,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         mock_file_system_scanner,
         mock_archiver,
         _mock_state_manager,
+        mock_token_counter,
     ) = setup_logic_with_mocks();
 
     let last_profile_name_to_load = "MyMockedStartupProfile";
@@ -527,26 +567,21 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     mock_profile_manager
         .set_load_profile_result(last_profile_name_to_load, Ok(mock_loaded_profile.clone()));
 
-    // Create a temp file for the token counter to read
+    let file_content_for_tokens = "token test content";
     let temp_dir = tempdir().unwrap();
     let (concrete_file_path, _temp_file_guard) =
-        create_temp_file_with_content(&temp_dir, "startup_content", "token test"); // 2 tokens by tiktoken simple
-
-    // Update mock_scan_result to use the concrete path for the FileNode
-    // And ensure the FileNode path matches what's in selected_paths_for_profile if it's supposed to be selected
-    // For this test, assume mock_startup_file.txt is the one we count tokens for.
-    // We need to make sure the Profile's selected_paths uses the temp file path if that's what scan_directory returns.
-    // Let's adjust: Profile selects 'concrete_file_path', and scanner returns a FileNode for it.
+        create_temp_file_with_content(&temp_dir, "startup_content", file_content_for_tokens);
+    mock_token_counter.set_count_for_content(file_content_for_tokens, 5); // Expect 5 tokens
 
     let mut profile_selected_paths = HashSet::new();
     profile_selected_paths.insert(concrete_file_path.clone());
 
     let mock_loaded_profile_with_temp_file = Profile {
         name: last_profile_name_to_load.to_string(),
-        root_folder: temp_dir.path().to_path_buf(), // Profile root is now temp_dir
+        root_folder: temp_dir.path().to_path_buf(),
         selected_paths: profile_selected_paths,
         deselected_paths: HashSet::new(),
-        archive_path: Some(startup_archive_path.clone()), // Archive path can remain conceptual
+        archive_path: Some(startup_archive_path.clone()),
     };
     mock_profile_manager.set_load_profile_result(
         last_profile_name_to_load,
@@ -554,10 +589,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
 
     let mock_scan_result_nodes = vec![FileNode::new(
-        concrete_file_path.clone(),   // Path to the actual temp file
-        "startup_content.txt".into(), // Name can be different from path
-        false,                        // is_dir
-                                      // state will be applied by state_manager based on profile
+        concrete_file_path.clone(),
+        "startup_content.txt".into(),
+        false,
     )];
 
     mock_file_system_scanner
@@ -586,8 +620,8 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
     assert_eq!(
         logic.test_current_token_count(),
-        3, // "token test" is 3 tokens by tiktoken (e.g. "token", " test", <|endoftext|>)
-        "Token count should be 3 from selected temp file"
+        5,
+        "Token count should be 5 from selected temp file as per mock"
     );
 
     let expected_title = format!(
@@ -621,29 +655,36 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: true, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "Expected SetControlEnabled (true) for save button. Got: {:?}", cmds
     );
-    assert!( // Corrected expected token count in status message
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 3" && *severity == MessageSeverity::Information )).is_some(),
-        "Expected 'Tokens: 3' status bar update. Got: {:?}", cmds
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 5" && *severity == MessageSeverity::Information )).is_some(),
+        "Expected 'Tokens: 5' status bar update. Got: {:?}", cmds
     );
 }
 
 #[test]
 fn test_on_main_window_created_loads_profile_no_archive_path() {
-    let (mut logic, mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
-        setup_logic_with_mocks();
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager,
+        mock_fs_scanner,
+        mock_archiver,
+        _,
+        _,
+    ) = setup_logic_with_mocks();
     let profile_name = "ProfileSansArchive";
-    let profile_root = PathBuf::from("/sans/archive"); // Conceptual path
+    let profile_root = PathBuf::from("/sans/archive");
 
     mock_config_manager.set_load_last_profile_name_result(Ok(Some(profile_name.to_string())));
     let mock_profile = Profile {
         name: profile_name.to_string(),
         root_folder: profile_root.clone(),
-        selected_paths: HashSet::new(), // No files selected, so token count should be 0
+        selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: None,
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
-    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files scanned
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
@@ -683,7 +724,8 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
 
 #[test]
 fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
-    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _, _) =
+        setup_logic_with_mocks();
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
 
@@ -714,7 +756,8 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
 
 #[test]
 fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_initiate_flow() {
-    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _, _) =
+        setup_logic_with_mocks();
     mock_config_manager.set_load_last_profile_name_result(Ok(None));
     let existing_profiles = vec!["ProfileA".to_string(), "ProfileB".to_string()];
     mock_profile_manager.set_list_profiles_result(Ok(existing_profiles.clone()));
@@ -737,7 +780,8 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
 
 #[test]
 fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_flow() {
-    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _, _) =
+        setup_logic_with_mocks();
     let config_error = ConfigError::Io(io::Error::new(io::ErrorKind::Other, "config load failure"));
     mock_config_manager.set_load_last_profile_name_result(Err(config_error));
     mock_profile_manager.set_list_profiles_result(Ok(Vec::new()));
@@ -769,7 +813,8 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
 
 #[test]
 fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
-    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, mock_config_manager, mock_profile_manager, _, _, _, _) =
+        setup_logic_with_mocks();
     let last_profile_name = "ExistingButFailsToLoadProfile";
     mock_config_manager.set_load_last_profile_name_result(Ok(Some(last_profile_name.to_string())));
     let profile_error = ProfileError::Io(io::Error::new(
@@ -806,8 +851,8 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
 
 #[test]
 fn test_profile_selection_dialog_completed_cancelled_quits_app() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id_and_init_ui_state(WindowId(1)); // Ensures ui_state exists
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
+    logic.test_set_main_window_id_and_init_ui_state(WindowId(1));
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: WindowId(1),
         chosen_profile_name: None,
@@ -825,8 +870,15 @@ fn test_profile_selection_dialog_completed_cancelled_quits_app() {
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() {
-    let (mut logic, _mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
-        setup_logic_with_mocks();
+    let (
+        mut logic,
+        _mock_config_manager,
+        mock_profile_manager,
+        mock_fs_scanner,
+        mock_archiver,
+        _,
+        _mock_token_counter,
+    ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -836,12 +888,12 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
     let mock_profile = Profile {
         name: profile_name.to_string(),
         root_folder: profile_root.clone(),
-        selected_paths: HashSet::new(), // Expect Tokens: 0
+        selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(profile_archive_path.clone()),
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
-    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files, so token count = 0
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
@@ -890,7 +942,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
 
 #[test]
 fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates_selection() {
-    let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, mock_profile_manager, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -899,7 +951,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
         profile_name,
         Err(ProfileError::ProfileNotFound(profile_name.to_string())),
     );
-    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
+    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: main_window_id,
         chosen_profile_name: Some(profile_name.to_string()),
@@ -920,7 +972,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
 
 #[test]
 fn test_profile_selection_dialog_completed_create_new_starts_flow() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -954,7 +1006,7 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_valid() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
@@ -989,7 +1041,7 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_invalid() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
@@ -1018,11 +1070,11 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
 
 #[test]
 fn test_input_dialog_completed_for_new_profile_name_cancelled() {
-    let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, mock_profile_manager, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
+    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
 
     logic.handle_event(AppEvent::GenericInputDialogCompleted {
         window_id: main_window_id,
@@ -1043,8 +1095,15 @@ fn test_input_dialog_completed_for_new_profile_name_cancelled() {
 
 #[test]
 fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
-    let (mut logic, _, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
-        setup_logic_with_mocks();
+    let (
+        mut logic,
+        _,
+        mock_profile_manager,
+        mock_fs_scanner,
+        mock_archiver,
+        _,
+        _mock_token_counter,
+    ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -1053,7 +1112,7 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
     logic.test_set_pending_new_profile_name(Some(profile_name.to_string()));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
 
-    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files, so Tokens: 0
+    mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
 
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
@@ -1103,12 +1162,12 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
 
 #[test]
 fn test_folder_picker_dialog_completed_cancelled() {
-    let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, mock_profile_manager, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_new_profile_name(Some("TempName".to_string()));
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
-    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
+    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
 
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
         window_id: main_window_id,
@@ -1129,7 +1188,7 @@ fn test_folder_picker_dialog_completed_cancelled() {
 
 #[test]
 fn test_initiate_profile_selection_failure_to_list_profiles() {
-    let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, mock_profile_manager, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -1159,6 +1218,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
+        mock_token_counter,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
@@ -1170,8 +1230,10 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         PathBuf::from(format!("/dummy/path/to/{}.json", profile_to_load_name));
 
     let temp_dir = tempdir().unwrap();
+    let file_content_for_tokens = "opened file tokens content";
     let (concrete_file_path, _temp_file_guard) =
-        create_temp_file_with_content(&temp_dir, "opened_content", "opened file tokens"); // 3 tokens by tiktoken
+        create_temp_file_with_content(&temp_dir, "opened_content", file_content_for_tokens);
+    mock_token_counter.set_count_for_content(file_content_for_tokens, 7);
 
     let mut selected_paths = HashSet::new();
     selected_paths.insert(concrete_file_path.clone());
@@ -1190,7 +1252,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let scanned_nodes = vec![FileNode::new(
         concrete_file_path.clone(),
         "opened_content.txt".into(),
-        false, // is_dir
+        false,
     )];
     mock_file_system_scanner_arc.set_scan_directory_result(temp_dir.path(), Ok(scanned_nodes));
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
@@ -1213,7 +1275,11 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
             profile_to_load_name.to_string()
         ))
     );
-    assert_eq!(logic.test_current_token_count(), 3);
+    assert_eq!(
+        logic.test_current_token_count(),
+        7,
+        "Token count should be 7 as per mock"
+    );
 
     let expected_title = format!(
         "SourcePacker - [{}] - [{}]",
@@ -1243,12 +1309,12 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         .is_some()
     );
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("Profile '{}' loaded and scanned.", profile_to_load_name)))).is_some());
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 3" && *severity == MessageSeverity::Information )).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 7" && *severity == MessageSeverity::Information )).is_some());
 }
 
 #[test]
 fn test_handle_window_close_requested_generates_close_command() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -1262,7 +1328,7 @@ fn test_handle_window_close_requested_generates_close_command() {
 
 #[test]
 fn test_menu_set_archive_path_cancelled() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_current_profile_cache(Some(Profile::new("Test".into(), PathBuf::from("."))));
@@ -1304,6 +1370,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
+        _mock_token_counter,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
@@ -1316,7 +1383,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let mock_profile_to_load = Profile {
         name: profile_name.to_string(),
         root_folder: root_folder_for_profile.clone(),
-        selected_paths: HashSet::new(), // Tokens: 0
+        selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_for_profile.clone()),
     };
@@ -1324,7 +1391,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         &profile_json_path_from_dialog,
         Ok(mock_profile_to_load.clone()),
     );
-    mock_file_system_scanner_arc.set_scan_directory_result(&root_folder_for_profile, Ok(vec![]));
+    mock_file_system_scanner_arc.set_scan_directory_result(&root_folder_for_profile, Ok(vec![])); // Token count will be 0
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::ErrorChecking(Some(
         io::ErrorKind::NotFound,
     )));
@@ -1363,15 +1430,21 @@ fn create_temp_file_with_content(
 
 #[test]
 fn test_token_count_updates_on_tree_item_toggle() {
-    let (mut logic, _, _, _, _, _mock_state_manager) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _mock_state_manager, mock_token_counter) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let temp_dir = tempdir().unwrap();
+    let content1 = "hello world";
+    let content2 = "another example test";
+
     let (file1_path, _temp_file1_guard) =
-        create_temp_file_with_content(&temp_dir, "file1", "hello world"); // 2 tokens by tiktoken
+        create_temp_file_with_content(&temp_dir, "file1", content1);
     let (file2_path, _temp_file2_guard) =
-        create_temp_file_with_content(&temp_dir, "file2", "another example test"); // 3 tokens by tiktoken
+        create_temp_file_with_content(&temp_dir, "file2", content2);
+
+    mock_token_counter.set_count_for_content(content1, 2);
+    mock_token_counter.set_count_for_content(content2, 3);
 
     let node1_item_id = TreeItemId(101);
     let node2_item_id = TreeItemId(102);
@@ -1400,7 +1473,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
     assert_eq!(
         logic.test_current_token_count(),
         2,
-        "Initial count should be for file1 only"
+        "Initial count should be for file1 only (2 tokens)"
     );
     let initial_cmds = logic.test_drain_commands();
     assert!(
@@ -1445,17 +1518,29 @@ fn test_token_count_updates_on_tree_item_toggle() {
 
 #[test]
 fn test_token_count_updates_on_profile_activation() {
-    let (mut logic, mock_config_manager, mock_profile_manager, mock_fs_scanner, _, _) =
-        setup_logic_with_mocks();
+    let (
+        mut logic,
+        mock_config_manager,
+        mock_profile_manager,
+        mock_fs_scanner,
+        _,
+        _,
+        mock_token_counter,
+    ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
 
     let temp_dir = tempdir().unwrap();
+    let content_a = "alpha beta gamma";
+    let content_b = "delta epsilon";
     let (file_a_path, _temp_file_a_guard) =
-        create_temp_file_with_content(&temp_dir, "fileA", "alpha beta gamma"); // 3 tokens
+        create_temp_file_with_content(&temp_dir, "fileA", content_a);
     let (file_b_path, _temp_file_b_guard) =
-        create_temp_file_with_content(&temp_dir, "fileB", "delta epsilon"); // 2 tokens
+        create_temp_file_with_content(&temp_dir, "fileB", content_b);
 
-    let profile_name = "TestProfileForTokens";
+    mock_token_counter.set_count_for_content(content_a, 10);
+    mock_token_counter.set_count_for_content(content_b, 5);
+
+    let profile_name = "TestProfileForTokenActivation";
     let profile_root = temp_dir.path().to_path_buf();
 
     let mut selected_paths = HashSet::new();
@@ -1496,27 +1581,30 @@ fn test_token_count_updates_on_profile_activation() {
 
     assert_eq!(
         logic.test_current_token_count(),
-        3,
-        "Token count should be for file_a (3 tokens)"
+        10,
+        "Token count should be for file_a (10 tokens as per mock)"
     );
 
     let cmds = logic.test_drain_commands();
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 3' status bar update on profile activation. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 10" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 10' status bar update on profile activation. Got: {:?}", cmds
     );
 }
 
 #[test]
 fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
-    let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, _, _, mock_token_counter) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let temp_dir = tempdir().unwrap();
+    let readable_content = "one two three four";
     let (readable_file_path, _temp_readable_guard) =
-        create_temp_file_with_content(&temp_dir, "readable", "one two three four"); // 4 tokens
-    let unreadable_file_path = temp_dir.path().join("non_existent_file.txt"); // This file won't exist
+        create_temp_file_with_content(&temp_dir, "readable", readable_content);
+    let unreadable_file_path = temp_dir.path().join("non_existent_file.txt");
+
+    mock_token_counter.set_count_for_content(readable_content, 12);
 
     let file_nodes = vec![
         FileNode {
@@ -1540,13 +1628,13 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
 
     assert_eq!(
         logic.test_current_token_count(),
-        4,
-        "Token count should only include readable_file.txt (4 tokens)"
+        12,
+        "Token count should only include readable_file.txt (12 tokens as per mock)"
     );
 
     let cmds = logic.test_drain_commands();
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 4" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 4' status bar update, even with file read errors. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 12" && *severity == MessageSeverity::Information)),
+        "Expected 'Tokens: 12' status bar update, even with file read errors. Got: {:?}", cmds
     );
 }
