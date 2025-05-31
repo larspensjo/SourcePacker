@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize}; // For Profile serialization
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 
@@ -53,6 +53,17 @@ impl FileNode {
 }
 
 /*
+ * Stores the checksum and token count for a single file.
+ * This structure is used within the `Profile` to cache token count information,
+ * allowing for faster token calculation by avoiding re-processing of unchanged files.
+ */
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FileTokenDetails {
+    pub checksum: String,
+    pub token_count: usize,
+}
+
+/*
  * Represents a user profile, storing selection states and configurations for a specific root folder.
  * This structure is serialized to/from JSON for persistence. It now includes an `archive_path`
  * to associate the profile directly with its output archive, and no longer contains whitelist patterns.
@@ -67,6 +78,10 @@ pub struct Profile {
     pub selected_paths: HashSet<PathBuf>,
     pub deselected_paths: HashSet<PathBuf>,
     pub archive_path: Option<PathBuf>,
+    /* Stores cached token counts and checksums for files.
+     * The `#[serde(default)]` attribute ensures that profiles saved before this field existed can still be loaded. */
+    #[serde(default)]
+    pub file_details: HashMap<PathBuf, FileTokenDetails>,
 }
 
 impl Profile {
@@ -81,7 +96,8 @@ impl Profile {
             root_folder,
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
-            archive_path: None, // New profiles start without an archive path
+            archive_path: None,
+            file_details: HashMap::new(),
         }
     }
 }
@@ -103,7 +119,7 @@ pub enum ArchiveStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileNode, FileState, Profile};
+    use super::{FileNode, FileState, FileTokenDetails, Profile};
     use std::io;
     use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
 
@@ -129,5 +145,23 @@ mod tests {
         assert!(profile.selected_paths.is_empty());
         assert!(profile.deselected_paths.is_empty());
         assert_eq!(profile.archive_path, None);
+    }
+
+    #[test]
+    fn test_profile_serialization_with_file_details() {
+        let mut profile = Profile::new("TestProfile".to_string(), PathBuf::from("/test/root"));
+        profile.file_details.insert(
+            PathBuf::from("/test/root/file1.txt"),
+            FileTokenDetails {
+                checksum: "cs1".to_string(),
+                token_count: 100,
+            },
+        );
+        let serialized = serde_json::to_string(&profile).unwrap();
+        assert!(serialized.contains("file_details"));
+        assert!(serialized.contains("file1.txt"));
+        assert!(serialized.contains("cs1"));
+        let deserialized: Profile = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.file_details.len(), 1);
     }
 }

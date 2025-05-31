@@ -95,6 +95,7 @@ impl AppSessionData {
                 .current_profile_cache // Use app_session_data
                 .as_ref()
                 .and_then(|p| p.archive_path.clone()),
+            file_details: std::collections::HashMap::new(), // Initialize with an empty map for now
         }
     }
 
