@@ -84,7 +84,8 @@ fn main() -> PlatformResult<()> {
     log::debug!("Describe and Create Static UI Structure");
 
     // Get initial UI commands from the description layer
-    let mut initial_commands = ui_description_layer::describe_main_window_layout(main_window_id);
+    let mut initial_commands =
+        ui_description_layer::build_main_window_static_layout(main_window_id);
     log::debug!(
         "main: Received {} initial UI description commands.",
         initial_commands.len()

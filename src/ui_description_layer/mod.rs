@@ -17,12 +17,15 @@ use crate::platform_layer::{
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
  * for the main application window. This includes creating the main menu, TreeView,
- * status bar, and other foundational UI elements like buttons. It also now includes
+ * status bar, and other foundational UI elements like buttons. It also includes
  * `DefineLayout` commands to specify how these controls should be positioned and resized.
  * These commands are processed by the platform layer to construct the native UI.
  * Menu items use `MenuAction` for semantic identification.
+ *
+ * This function is intended to be called only once per window, during the initial
+ * construction of the main window.
  */
-pub fn describe_main_window_layout(window_id: WindowId) -> Vec<PlatformCommand> {
+pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     log::debug!("ui_description_layer: describe_main_window_layout called.");
 
     let mut commands = Vec::new();
@@ -149,7 +152,7 @@ mod tests {
     #[test]
     fn test_describe_main_window_layout_generates_create_main_menu_command() {
         let dummy_window_id = WindowId(1);
-        let commands = describe_main_window_layout(dummy_window_id);
+        let commands = build_main_window_static_layout(dummy_window_id);
         let main_menu_cmd = commands.iter().find_map(|cmd| {
             if let PlatformCommand::CreateMainMenu {
                 window_id: _,
@@ -224,7 +227,7 @@ mod tests {
     #[test]
     fn test_describe_main_window_layout_generates_create_treeview_command() {
         let dummy_window_id = WindowId(1);
-        let commands = describe_main_window_layout(dummy_window_id);
+        let commands = build_main_window_static_layout(dummy_window_id);
         assert!(
             commands.iter().any(|cmd| matches!(
                 cmd,
@@ -238,7 +241,7 @@ mod tests {
     #[test]
     fn test_describe_main_window_layout_generates_create_button_command() {
         let dummy_window_id = WindowId(1);
-        let commands = describe_main_window_layout(dummy_window_id);
+        let commands = build_main_window_static_layout(dummy_window_id);
 
         let create_button_command = commands.iter().find_map(|cmd| {
             if let PlatformCommand::CreateButton {
@@ -271,7 +274,7 @@ mod tests {
     #[test]
     fn test_describe_main_window_layout_generates_create_status_bar_command() {
         let dummy_window_id = WindowId(1);
-        let commands = describe_main_window_layout(dummy_window_id);
+        let commands = build_main_window_static_layout(dummy_window_id);
 
         let create_status_bar_command = commands.iter().find_map(|cmd| {
             if let PlatformCommand::CreateStatusBar {
@@ -304,7 +307,7 @@ mod tests {
     #[test]
     fn test_describe_main_window_layout_generates_define_layout_command() {
         let dummy_window_id = WindowId(1);
-        let commands = describe_main_window_layout(dummy_window_id);
+        let commands = build_main_window_static_layout(dummy_window_id);
 
         let define_layout_command = commands.iter().find_map(|cmd| {
             if let PlatformCommand::DefineLayout { window_id, rules } = cmd {
