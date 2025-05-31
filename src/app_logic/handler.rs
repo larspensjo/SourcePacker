@@ -252,57 +252,6 @@ impl MyAppLogic {
         }
     }
 
-    // This helper remains static for now.
-    fn gather_selected_deselected_paths_recursive(
-        nodes: &[FileNode],
-        selected: &mut HashSet<PathBuf>,
-        deselected: &mut HashSet<PathBuf>,
-    ) {
-        for node in nodes {
-            match node.state {
-                FileState::Selected => {
-                    selected.insert(node.path.clone());
-                }
-                FileState::Deselected => {
-                    deselected.insert(node.path.clone());
-                }
-                FileState::Unknown => {}
-            }
-            if node.is_dir && !node.children.is_empty() {
-                Self::gather_selected_deselected_paths_recursive(
-                    &node.children,
-                    selected,
-                    deselected,
-                );
-            }
-        }
-    }
-
-    // This method will largely move to AppSessionData in Phase 2.
-    // For now, it reads from self.app_session_data.
-    fn create_profile_from_current_state(&self, new_profile_name: String) -> Profile {
-        let mut selected_paths = HashSet::new();
-        let mut deselected_paths = HashSet::new();
-
-        Self::gather_selected_deselected_paths_recursive(
-            &self.app_session_data.file_nodes_cache, // Use app_session_data
-            &mut selected_paths,
-            &mut deselected_paths,
-        );
-
-        Profile {
-            name: new_profile_name,
-            root_folder: self.app_session_data.root_path_for_scan.clone(), // Use app_session_data
-            selected_paths,
-            deselected_paths,
-            archive_path: self
-                .app_session_data
-                .current_profile_cache // Use app_session_data
-                .as_ref()
-                .and_then(|p| p.archive_path.clone()),
-        }
-    }
-
     fn refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
         // Ensure we are operating on the correct window, though window_id is passed.
         // This check is more for internal consistency if ui_state could be None.
@@ -428,73 +377,10 @@ impl MyAppLogic {
     /*
      * Recalculates the estimated token count for all currently selected files and
      * requests the UI to display this count.
-     * Data is read from `app_session_data.file_nodes_cache` and result stored
-     * in `app_session_data.current_token_count`. UI update is requested if UI state exists.
      */
     pub(crate) fn _update_token_count_and_request_display(&mut self) {
-        log::debug!("Recalculating token count for selected files and requesting display.");
-        let mut total_tokens: usize = 0;
-        let mut files_processed_for_tokens: usize = 0;
-        let mut files_failed_to_read_for_tokens: usize = 0;
-
-        // Helper function to recursively traverse the file node tree
-        fn count_tokens_recursive_inner(
-            nodes: &[FileNode], // Operates on FileNode slice
-            current_total_tokens: &mut usize,
-            files_processed: &mut usize,
-            files_failed: &mut usize,
-        ) {
-            for node in nodes {
-                if !node.is_dir && node.state == FileState::Selected {
-                    *files_processed += 1;
-                    match fs::read_to_string(&node.path) {
-                        Ok(content) => {
-                            let tokens_in_file =
-                                crate::core::estimate_tokens_simple_whitespace(&content);
-                            *current_total_tokens += tokens_in_file;
-                        }
-                        Err(e) => {
-                            *files_failed += 1;
-                            log::warn!(
-                                "TokenCount: Failed to read file {:?} for token counting: {}",
-                                node.path,
-                                e
-                            );
-                        }
-                    }
-                }
-                if node.is_dir {
-                    count_tokens_recursive_inner(
-                        &node.children,
-                        current_total_tokens,
-                        files_processed,
-                        files_failed,
-                    );
-                }
-            }
-        }
-
-        count_tokens_recursive_inner(
-            &self.app_session_data.file_nodes_cache, // Use app_session_data
-            &mut total_tokens,
-            &mut files_processed_for_tokens,
-            &mut files_failed_to_read_for_tokens,
-        );
-
-        self.app_session_data.current_token_count = total_tokens; // Store in app_session_data
-        log::debug!(
-            "Token count updated internally: {} tokens from {} selected files ({} files failed to read).",
-            self.app_session_data.current_token_count,
-            files_processed_for_tokens,
-            files_failed_to_read_for_tokens
-        );
-
-        // Status message macro will use ui_state to get window_id if available
-        app_info!(
-            self,
-            "Tokens: {}",
-            self.app_session_data.current_token_count
-        );
+        let token_count = self.app_session_data.update_token_count();
+        app_info!(self, "Tokens: {}", token_count);
     }
 
     fn handle_window_close_requested(&mut self, window_id: WindowId) {
@@ -863,9 +749,10 @@ impl MyAppLogic {
                                     );
                                 } else {
                                     // create_profile_from_current_state uses app_session_data
-                                    let new_profile = self.create_profile_from_current_state(
-                                        profile_name_str.clone(),
-                                    );
+                                    let new_profile =
+                                        self.app_session_data.create_profile_from_session_state(
+                                            profile_name_str.clone(),
+                                        );
                                     let profile_name_clone = new_profile.name.clone();
                                     match self
                                         .profile_manager
@@ -1034,76 +921,94 @@ impl MyAppLogic {
      */
     fn _activate_profile_and_show_window(
         &mut self,
-        window_id: WindowId, // Confirmed main window ID
+        window_id: WindowId, // This is the main window's ID, confirmed by caller
         profile_to_activate: Profile,
-        operation_status_message: String,
+        initial_operation_status_message: String,
     ) {
-        // Ensure we are operating on the main window
         assert!(
             self.ui_state
                 .as_ref()
                 .map_or(false, |s| s.window_id == window_id),
-            "_activate_profile_and_show_window called with mismatching window ID or no UI state."
+            "Mismatched window ID or no UI state for _activate_profile_and_show_window"
         );
+        self.app_session_data.activate_profile(profile_to_activate);
 
-        // Update AppSessionData
-        self.app_session_data.current_profile_name = Some(profile_to_activate.name.clone());
-        self.app_session_data.root_path_for_scan = profile_to_activate.root_folder.clone();
-        self.app_session_data.current_profile_cache = Some(profile_to_activate.clone());
-
-        log::debug!(
-            "Activating profile '{}'. Scanning directory: {:?}",
-            self.app_session_data.current_profile_name.as_ref().unwrap(),
-            self.app_session_data.root_path_for_scan
-        );
-
-        self._update_window_title_with_profile_and_archive(window_id);
-
-        let mut final_status_message = operation_status_message;
-        let mut final_status_severity = MessageSeverity::Information;
-
-        match self
+        let mut scan_was_successful = true;
+        let final_status_message = match self
             .file_system_scanner
             .scan_directory(&self.app_session_data.root_path_for_scan)
         {
             Ok(nodes) => {
-                self.app_session_data.file_nodes_cache = nodes; // Update app_session_data
-                log::debug!(
-                    "Scanned {} top-level nodes for active profile.",
-                    self.app_session_data.file_nodes_cache.len()
-                );
+                self.app_session_data.file_nodes_cache = nodes;
                 self.state_manager.apply_profile_to_tree(
-                    &mut self.app_session_data.file_nodes_cache, // Mutate app_session_data
-                    &profile_to_activate,
+                    &mut self.app_session_data.file_nodes_cache,
+                    self.app_session_data
+                        .current_profile_cache
+                        .as_ref()
+                        .unwrap(), // Safe: just set
                 );
-                log::debug!(
-                    "Applied active profile '{}' to the scanned tree.",
-                    profile_to_activate.name
-                );
+                initial_operation_status_message // Use the message passed in
             }
             Err(e) => {
-                let err_msg_scan = format!(
-                    "Failed to scan directory {:?} for profile '{}': {}",
-                    self.app_session_data.root_path_for_scan, profile_to_activate.name, e
-                );
-                final_status_message = err_msg_scan;
-                final_status_severity = MessageSeverity::Error;
-                self.app_session_data.file_nodes_cache.clear(); // Clear in app_session_data
+                scan_was_successful = false;
+                self.app_session_data.file_nodes_cache.clear();
+                format!(
+                    "Profile activated but failed to scan directory {:?} for profile '{}': {}",
+                    self.app_session_data.root_path_for_scan,
+                    self.app_session_data
+                        .current_profile_name
+                        .as_ref()
+                        .unwrap_or(&"<unknown>".to_string()),
+                    e
+                )
             }
-        }
+        };
+        // self.app_session_data.update_token_count(); // This would be called here in Phase 2
 
-        self.refresh_tree_view_from_cache(window_id);
+        // Update window title (doesn't need to access self.ui_state content beyond window_id)
+        self._update_window_title_with_profile_and_archive(window_id);
 
-        match final_status_severity {
-            MessageSeverity::Error => app_error!(self, "{}", final_status_message),
-            MessageSeverity::Warning => app_warn!(self, "{}", final_status_message),
-            _ => app_info!(self, "{}", final_status_message),
-        }
+        {
+            let ui_state_mut = self.ui_state.as_mut().expect("UI state must exist here");
+            ui_state_mut.next_tree_item_id_counter = 1;
+            ui_state_mut.path_to_tree_item_id.clear();
 
-        self.update_current_archive_status();
+            let descriptors = Self::build_tree_item_descriptors_recursive_internal(
+                &self.app_session_data.file_nodes_cache,
+                &mut ui_state_mut.path_to_tree_item_id,
+                &mut ui_state_mut.next_tree_item_id_counter,
+            );
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::PopulateTreeView {
+                    window_id,
+                    items: descriptors,
+                });
+        } // `ui_state_mut` borrow ends here.
+
+        // Update `current_archive_status_for_ui` in `self.ui_state`
+        // The method `update_current_archive_status` itself handles borrowing `self.ui_state.as_mut()`.
+        // It also calls `app_error!` or `log::debug!`.
+        // This needs to be called when `self.ui_state` is not already exclusively borrowed.
+        self.update_current_archive_status(); // This will internally get `&mut self.ui_state` if Some.
+
+        // Update token count and request display (internally gets `&mut self.app_session_data` and calls `app_info!`)
         self._update_token_count_and_request_display();
+
+        // Display the overall status message from loading/scanning
+        // This must happen AFTER any mutable borrows of self.ui_state needed by the macros are done,
+        // or if the macros are robust enough. The current macros try an immutable borrow.
+        if scan_was_successful {
+            app_info!(self, "{}", final_status_message);
+        } else {
+            app_error!(self, "{}", final_status_message);
+        }
+        // The `app_info!` for tokens is now inside `_update_token_count_and_request_display`.
+        // The `app_info!/app_error!` for archive status is inside `update_current_archive_status`.
+
+        // Update save button state
         self._update_save_to_archive_button_state(window_id);
 
+        // Show the window (very last step)
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
@@ -1448,16 +1353,7 @@ impl MyAppLogic {
             "_update_window_title_with_profile_and_archive called with mismatching window ID or no UI state."
         );
 
-        let mut title = "SourcePacker".to_string();
-        // current_profile_cache is in app_session_data
-        if let Some(profile) = &self.app_session_data.current_profile_cache {
-            title = format!("{} - [{}]", title, profile.name);
-            if let Some(archive_path) = &profile.archive_path {
-                title = format!("{} - [{}]", title, archive_path.display());
-            } else {
-                title = format!("{} - [No Archive Set]", title);
-            }
-        }
+        let title = MainWindowUiState::compose_window_title(&self.app_session_data);
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
@@ -1630,9 +1526,9 @@ impl PlatformEventHandler for MyAppLogic {
         // current_profile_name is in app_session_data
         if let Some(active_profile_name) = self.app_session_data.current_profile_name.clone() {
             if !active_profile_name.is_empty() {
-                // create_profile_from_current_state uses app_session_data
-                let profile_to_save =
-                    self.create_profile_from_current_state(active_profile_name.clone());
+                let profile_to_save = self
+                    .app_session_data
+                    .create_profile_from_session_state(active_profile_name.clone());
                 log::debug!(
                     "AppLogic: Attempting to save content of active profile '{}' on exit.",
                     active_profile_name
@@ -1842,6 +1738,6 @@ impl MyAppLogic {
     }
 
     pub(crate) fn test_current_token_count(&self) -> usize {
-        self.app_session_data.current_token_count
+        self.app_session_data.cached_current_token_count
     }
 }

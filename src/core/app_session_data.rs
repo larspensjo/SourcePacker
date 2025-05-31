@@ -6,7 +6,11 @@
  * data from both the UI-specific state and the main application logic handler,
  * acting as a primary model component for session state.
  */
-use crate::core::{FileNode, Profile}; // Import necessary types
+use crate::core::{
+    FileNode, FileState, FileSystemScannerOperations, Profile, StateManagerOperations,
+}; // Import necessary types
+use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
 
 /*
@@ -25,7 +29,7 @@ pub struct AppSessionData {
     /* The root directory path from which file system scans are performed. */
     pub root_path_for_scan: PathBuf,
     /* The current estimated total token count for all selected files. */
-    pub current_token_count: usize,
+    pub cached_current_token_count: usize,
 }
 
 impl AppSessionData {
@@ -41,8 +45,174 @@ impl AppSessionData {
             current_profile_cache: None,
             file_nodes_cache: Vec::new(),
             root_path_for_scan: PathBuf::from("."), // Default to current directory
-            current_token_count: 0,
+            cached_current_token_count: 0,
         }
+    }
+
+    // This helper remains static for now.
+    fn gather_selected_deselected_paths_recursive(
+        nodes: &[FileNode],
+        selected: &mut HashSet<PathBuf>,
+        deselected: &mut HashSet<PathBuf>,
+    ) {
+        for node in nodes {
+            match node.state {
+                FileState::Selected => {
+                    selected.insert(node.path.clone());
+                }
+                FileState::Deselected => {
+                    deselected.insert(node.path.clone());
+                }
+                FileState::Unknown => {}
+            }
+            if node.is_dir && !node.children.is_empty() {
+                Self::gather_selected_deselected_paths_recursive(
+                    &node.children,
+                    selected,
+                    deselected,
+                );
+            }
+        }
+    }
+
+    pub(crate) fn create_profile_from_session_state(&self, new_profile_name: String) -> Profile {
+        let mut selected_paths = HashSet::new();
+        let mut deselected_paths = HashSet::new();
+
+        Self::gather_selected_deselected_paths_recursive(
+            &self.file_nodes_cache, // Use app_session_data
+            &mut selected_paths,
+            &mut deselected_paths,
+        );
+
+        Profile {
+            name: new_profile_name,
+            root_folder: self.root_path_for_scan.clone(), // Use app_session_data
+            selected_paths,
+            deselected_paths,
+            archive_path: self
+                .current_profile_cache // Use app_session_data
+                .as_ref()
+                .and_then(|p| p.archive_path.clone()),
+        }
+    }
+
+    /*
+     * Recalculates the estimated token count for all currently selected files.
+     * Data is read from `file_nodes_cache` and result cached
+     * in `current_token_count`. UI update is requested if UI state exists.
+     */
+    pub(crate) fn update_token_count(&mut self) -> usize {
+        log::debug!("Recalculating token count for selected files and requesting display.");
+        let mut total_tokens: usize = 0;
+        let mut files_processed_for_tokens: usize = 0;
+        let mut files_failed_to_read_for_tokens: usize = 0;
+
+        // Helper function to recursively traverse the file node tree
+        fn count_tokens_recursive_inner(
+            nodes: &[FileNode], // Operates on FileNode slice
+            current_total_tokens: &mut usize,
+            files_processed: &mut usize,
+            files_failed: &mut usize,
+        ) {
+            for node in nodes {
+                if !node.is_dir && node.state == FileState::Selected {
+                    *files_processed += 1;
+                    match fs::read_to_string(&node.path) {
+                        Ok(content) => {
+                            let tokens_in_file =
+                                crate::core::estimate_tokens_simple_whitespace(&content);
+                            *current_total_tokens += tokens_in_file;
+                        }
+                        Err(e) => {
+                            *files_failed += 1;
+                            log::warn!(
+                                "TokenCount: Failed to read file {:?} for token counting: {}",
+                                node.path,
+                                e
+                            );
+                        }
+                    }
+                }
+                if node.is_dir {
+                    count_tokens_recursive_inner(
+                        &node.children,
+                        current_total_tokens,
+                        files_processed,
+                        files_failed,
+                    );
+                }
+            }
+        }
+
+        count_tokens_recursive_inner(
+            &self.file_nodes_cache, // Use app_session_data
+            &mut total_tokens,
+            &mut files_processed_for_tokens,
+            &mut files_failed_to_read_for_tokens,
+        );
+
+        self.cached_current_token_count = total_tokens; // Store in app_session_data
+        log::debug!(
+            "Token count updated internally: {} tokens from {} selected files ({} files failed to read).",
+            self.cached_current_token_count,
+            files_processed_for_tokens,
+            files_failed_to_read_for_tokens
+        );
+
+        // Status message macro will use ui_state to get window_id if available
+        // app_info!(self, "Tokens: {}", self.current_token_count);
+        self.cached_current_token_count
+    }
+
+    pub fn load_profile_core_data(
+        &mut self,
+        profile_to_activate: &Profile,
+        file_system_scanner: &dyn FileSystemScannerOperations,
+        state_manager: &dyn StateManagerOperations,
+    ) -> bool {
+        log::debug!(
+            "AppSessionData: Loading core data for profile '{}'",
+            profile_to_activate.name
+        );
+        // TODO: Should call profile_to_activate() here
+        self.current_profile_name = Some(profile_to_activate.name.clone());
+        self.root_path_for_scan = profile_to_activate.root_folder.clone();
+        self.current_profile_cache = Some(profile_to_activate.clone());
+        match file_system_scanner.scan_directory(&self.root_path_for_scan) {
+            Ok(nodes) => {
+                self.file_nodes_cache = nodes;
+                log::debug!(
+                    "AppSessionData: Scanned {} top-level nodes for profile '{}'.",
+                    self.file_nodes_cache.len(),
+                    profile_to_activate.name
+                );
+                state_manager
+                    .apply_profile_to_tree(&mut self.file_nodes_cache, profile_to_activate);
+                log::debug!(
+                    "AppSessionData: Applied profile '{}' to the scanned tree.",
+                    profile_to_activate.name
+                );
+                // In Phase 2, this method would also call self.update_token_count()
+                true
+            }
+            Err(e) => {
+                log::error!(
+                    "AppSessionData: Failed to scan directory {:?} for profile '{}': {:?}",
+                    self.root_path_for_scan,
+                    profile_to_activate.name,
+                    e
+                );
+                self.file_nodes_cache.clear(); // Ensure cache is clear on error
+                false
+            }
+        }
+    }
+
+    pub fn activate_profile(&mut self, profile_to_activate: Profile) {
+        self.current_profile_name = Some(profile_to_activate.name.clone());
+        self.root_path_for_scan = profile_to_activate.root_folder.clone();
+        self.current_profile_cache = Some(profile_to_activate.clone());
     }
 }
 
@@ -58,6 +228,6 @@ mod tests {
         assert!(session_data.current_profile_cache.is_none());
         assert!(session_data.file_nodes_cache.is_empty());
         assert_eq!(session_data.root_path_for_scan, PathBuf::from("."));
-        assert_eq!(session_data.current_token_count, 0);
+        assert_eq!(session_data.cached_current_token_count, 0);
     }
 }
