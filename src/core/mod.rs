@@ -37,6 +37,8 @@ pub use config::{
 
 pub use state_manager::{CoreStateManager, StateManagerOperations};
 
-pub use tokenizer_utils::estimate_tokens_tiktoken;
+pub use tokenizer_utils::{
+    CoreTikTokenCounter, SimpleWhitespaceTokenCounter, TokenCounterOperations,
+};
 
 pub use app_session_data::AppSessionData;

@@ -9,7 +9,7 @@ mod ui_description_layer;
 use app_logic::handler::MyAppLogic;
 use core::{
     CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
-    CoreStateManager,
+    CoreStateManager, CoreTikTokenCounter,
 };
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
 use std::fs::File;
@@ -56,6 +56,7 @@ fn main() -> PlatformResult<()> {
     let core_profile_manager = Arc::new(CoreProfileManager::new());
     let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new());
     let core_archiver = Arc::new(CoreArchiver::new());
+    let core_token_counter = Arc::new(CoreTikTokenCounter::new());
     let core_state_manager = Arc::new(CoreStateManager::new());
 
     let mut my_app_logic = MyAppLogic::new(
@@ -63,6 +64,7 @@ fn main() -> PlatformResult<()> {
         core_profile_manager,
         core_file_system_scanner,
         core_archiver,
+        core_token_counter,
         core_state_manager,
     );
     log::debug!("Create Main Window Frame.");

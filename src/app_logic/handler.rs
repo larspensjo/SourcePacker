@@ -1,7 +1,7 @@
 use crate::core::{
     self, AppSessionData, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
     FileNode, FileState, FileSystemScannerOperations, Profile, ProfileError,
-    ProfileManagerOperations, StateManagerOperations,
+    ProfileManagerOperations, StateManagerOperations, TokenCounterOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -83,9 +83,8 @@ pub struct MyAppLogic {
     profile_manager: Arc<dyn ProfileManagerOperations>,
     file_system_scanner: Arc<dyn FileSystemScannerOperations>,
     archiver: Arc<dyn ArchiverOperations>,
+    token_counter_manager: Arc<dyn TokenCounterOperations>,
     state_manager: Arc<dyn StateManagerOperations>,
-
-    // Command queue for platform interactions
     synchronous_command_queue: VecDeque<PlatformCommand>,
 }
 
@@ -102,6 +101,7 @@ impl MyAppLogic {
         profile_manager: Arc<dyn ProfileManagerOperations>,
         file_system_scanner: Arc<dyn FileSystemScannerOperations>,
         archiver: Arc<dyn ArchiverOperations>,
+        token_counter: Arc<dyn TokenCounterOperations>,
         state_manager: Arc<dyn StateManagerOperations>,
     ) -> Self {
         log::debug!("MyAppLogic::new called.");
@@ -112,6 +112,7 @@ impl MyAppLogic {
             profile_manager,
             file_system_scanner,
             archiver,
+            token_counter_manager: token_counter,
             state_manager,
             synchronous_command_queue: VecDeque::new(),
         }
@@ -349,7 +350,9 @@ impl MyAppLogic {
      * requests the UI to display this count.
      */
     pub(crate) fn _update_token_count_and_request_display(&mut self) {
-        let token_count = self.app_session_data.update_token_count();
+        let token_count = self
+            .app_session_data
+            .update_token_count(&*self.token_counter_manager);
         app_info!(self, "Tokens: {}", token_count);
     }
 
@@ -904,6 +907,7 @@ impl MyAppLogic {
             profile_to_activate, // Consumes profile_to_activate
             &*self.file_system_scanner,
             &*self.state_manager,
+            &*self.token_counter_manager,
         );
 
         let (scan_was_successful, final_status_message) = match scan_result {

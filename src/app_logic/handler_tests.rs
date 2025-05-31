@@ -530,7 +530,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     // Create a temp file for the token counter to read
     let temp_dir = tempdir().unwrap();
     let (concrete_file_path, _temp_file_guard) =
-        create_temp_file_with_content(&temp_dir, "startup_content", "token test"); // 2 tokens
+        create_temp_file_with_content(&temp_dir, "startup_content", "token test"); // 2 tokens by tiktoken simple
 
     // Update mock_scan_result to use the concrete path for the FileNode
     // And ensure the FileNode path matches what's in selected_paths_for_profile if it's supposed to be selected
@@ -556,7 +556,8 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     let mock_scan_result_nodes = vec![FileNode::new(
         concrete_file_path.clone(),   // Path to the actual temp file
         "startup_content.txt".into(), // Name can be different from path
-        false,
+        false,                        // is_dir
+                                      // state will be applied by state_manager based on profile
     )];
 
     mock_file_system_scanner
@@ -585,8 +586,8 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     );
     assert_eq!(
         logic.test_current_token_count(),
-        2,
-        "Token count should be 2 from selected temp file"
+        3, // "token test" is 3 tokens by tiktoken (e.g. "token", " test", <|endoftext|>)
+        "Token count should be 3 from selected temp file"
     );
 
     let expected_title = format!(
@@ -620,9 +621,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: true, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "Expected SetControlEnabled (true) for save button. Got: {:?}", cmds
     );
-    assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 2" && *severity == MessageSeverity::Information )).is_some(),
-        "Expected 'Tokens: 2' status bar update. Got: {:?}", cmds
+    assert!( // Corrected expected token count in status message
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 3" && *severity == MessageSeverity::Information )).is_some(),
+        "Expected 'Tokens: 3' status bar update. Got: {:?}", cmds
     );
 }
 
@@ -806,7 +807,7 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
 #[test]
 fn test_profile_selection_dialog_completed_cancelled_quits_app() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
-    logic.test_set_main_window_id(Some(WindowId(1)));
+    logic.test_set_main_window_id_and_init_ui_state(WindowId(1)); // Ensures ui_state exists
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: WindowId(1),
         chosen_profile_name: None,
@@ -819,7 +820,7 @@ fn test_profile_selection_dialog_completed_cancelled_quits_app() {
         "Expected QuitApplication command. Got: {:?}",
         cmds
     );
-    assert_eq!(cmds.len(), 1, "Expected only QuitApplication command."); // Specific enough for this case
+    assert_eq!(cmds.len(), 1, "Expected only QuitApplication command.");
 }
 
 #[test]
@@ -827,7 +828,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
     let (mut logic, _mock_config_manager, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let profile_name = "ChosenProfile";
     let profile_root = PathBuf::from("/chosen/root");
@@ -891,7 +892,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
 fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates_selection() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let profile_name = "FailingProfile";
     mock_profile_manager.set_load_profile_result(
@@ -921,7 +922,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
 fn test_profile_selection_dialog_completed_create_new_starts_flow() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: main_window_id,
@@ -946,8 +947,8 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
         assert_eq!(context_tag.as_deref(), Some("NewProfileName"));
     }
     assert_eq!(
-        logic.test_pending_action().as_ref(),
-        Some(&PendingAction::CreatingNewProfileGetName)
+        logic.test_pending_action(),
+        Some(PendingAction::CreatingNewProfileGetName).as_ref()
     );
 }
 
@@ -955,7 +956,7 @@ fn test_profile_selection_dialog_completed_create_new_starts_flow() {
 fn test_input_dialog_completed_for_new_profile_name_valid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
 
     let profile_name = "MyNewProfile";
@@ -967,7 +968,7 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
     let cmds = logic.test_drain_commands();
 
     assert_eq!(
-        logic.test_pending_new_profile_name().as_deref(),
+        logic.test_pending_new_profile_name().map(|s| s.as_str()),
         Some(profile_name)
     );
     let folder_picker_cmd = find_command(&cmds, |cmd| {
@@ -981,8 +982,8 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
         assert!(title.contains("New Profile (2/2): Select Root Folder"));
     }
     assert_eq!(
-        logic.test_pending_action().as_ref(),
-        Some(&PendingAction::CreatingNewProfileGetRoot)
+        logic.test_pending_action(),
+        Some(PendingAction::CreatingNewProfileGetRoot).as_ref()
     );
 }
 
@@ -990,7 +991,7 @@ fn test_input_dialog_completed_for_new_profile_name_valid() {
 fn test_input_dialog_completed_for_new_profile_name_invalid() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
 
     let invalid_name = "My/New/Profile";
@@ -1009,10 +1010,9 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
         ))
         .is_some()
     );
-    // Pending action should remain CreatingNewProfileGetName or similar to re-prompt
     assert_eq!(
-        logic.test_pending_action().as_ref(),
-        Some(&PendingAction::CreatingNewProfileGetName)
+        logic.test_pending_action(),
+        Some(PendingAction::CreatingNewProfileGetName).as_ref()
     );
 }
 
@@ -1020,7 +1020,7 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
 fn test_input_dialog_completed_for_new_profile_name_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_action(PendingAction::CreatingNewProfileGetName);
     mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
 
@@ -1046,12 +1046,12 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
     let (mut logic, _, mock_profile_manager, mock_fs_scanner, mock_archiver, _) =
         setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let profile_name = "NewlyCreatedProfile";
     let profile_root = PathBuf::from("/newly/created/root");
     logic.test_set_pending_new_profile_name(Some(profile_name.to_string()));
-    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot); // Set before event
+    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
 
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![])); // No files, so Tokens: 0
     mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
@@ -1105,9 +1105,9 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
 fn test_folder_picker_dialog_completed_cancelled() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_pending_new_profile_name(Some("TempName".to_string()));
-    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot); // Set before event
+    logic.test_set_pending_action(PendingAction::CreatingNewProfileGetRoot);
     mock_profile_manager.set_list_profiles_result(Ok(vec![])); // For re-initiation
 
     logic.handle_event(AppEvent::FolderPickerDialogCompleted {
@@ -1131,7 +1131,7 @@ fn test_folder_picker_dialog_completed_cancelled() {
 fn test_initiate_profile_selection_failure_to_list_profiles() {
     let (mut logic, _, mock_profile_manager, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     mock_profile_manager.set_list_profiles_result(Err(ProfileError::Io(io::Error::new(
         io::ErrorKind::PermissionDenied,
@@ -1141,7 +1141,6 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
     let cmds = logic.test_drain_commands();
 
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text,.. } if *severity == MessageSeverity::Error && text.contains("Failed to list profiles"))).is_some());
-    // No dialog should be shown if listing fails catastrophically
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -1155,14 +1154,14 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
 fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let (
         mut logic,
-        mock_config_manager, // get_saved_profile_name used here
+        mock_config_manager,
         mock_profile_manager_arc,
         mock_file_system_scanner_arc,
         mock_archiver_arc,
         _,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let profile_to_load_name = "ProfileToLoadViaManager";
     let profile_root_for_scan = PathBuf::from("/mocked/profile/root/for/scan");
@@ -1170,17 +1169,16 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let profile_json_path_from_dialog =
         PathBuf::from(format!("/dummy/path/to/{}.json", profile_to_load_name));
 
-    // Temp file for token counting
     let temp_dir = tempdir().unwrap();
     let (concrete_file_path, _temp_file_guard) =
-        create_temp_file_with_content(&temp_dir, "opened_content", "opened file tokens"); // 3 tokens
+        create_temp_file_with_content(&temp_dir, "opened_content", "opened file tokens"); // 3 tokens by tiktoken
 
     let mut selected_paths = HashSet::new();
     selected_paths.insert(concrete_file_path.clone());
 
     let mock_loaded_profile = Profile {
         name: profile_to_load_name.to_string(),
-        root_folder: temp_dir.path().to_path_buf(), // Use temp_dir as root
+        root_folder: temp_dir.path().to_path_buf(),
         selected_paths,
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_path_for_loaded_profile.clone()),
@@ -1192,7 +1190,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let scanned_nodes = vec![FileNode::new(
         concrete_file_path.clone(),
         "opened_content.txt".into(),
-        false,
+        false, // is_dir
     )];
     mock_file_system_scanner_arc.set_scan_directory_result(temp_dir.path(), Ok(scanned_nodes));
     mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
@@ -1252,7 +1250,7 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
 fn test_handle_window_close_requested_generates_close_command() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     logic.handle_event(AppEvent::WindowCloseRequestedByUser {
         window_id: main_window_id,
@@ -1266,7 +1264,7 @@ fn test_handle_window_close_requested_generates_close_command() {
 fn test_menu_set_archive_path_cancelled() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
     logic.test_set_current_profile_cache(Some(Profile::new("Test".into(), PathBuf::from("."))));
     logic.test_set_pending_action(PendingAction::SettingArchivePath);
 
@@ -1276,11 +1274,7 @@ fn test_menu_set_archive_path_cancelled() {
     });
     let cmds = logic.test_drain_commands();
 
-    // Only SetControlEnabled(false) is expected as a functional command.
-    // Log messages for cancellation are debug.
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC)).is_some());
-    // Check that no other unexpected functional commands were generated.
-    // The `get_functional_commands` can be useful here if we adapt it, or filter manually.
     let functional_cmds = cmds
         .into_iter()
         .filter(|cmd| {
@@ -1312,7 +1306,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         _,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let profile_name = "ProfileForStatusUpdateViaMockArchiver";
     let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_mock_archiver");
@@ -1351,11 +1345,8 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     );
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text.contains("Archive: ErrorChecking"))).is_some());
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
-    // Other commands like SetWindowTitle, PopulateTreeView, SetControlEnabled are also expected.
 }
 
-// --- Token Counting Specific Tests (already updated for Step 2.2) ---
-// Helper function to create a temporary file with content and return its path and the NamedTempFile guard.
 fn create_temp_file_with_content(
     dir: &tempfile::TempDir,
     filename_prefix: &str,
@@ -1374,13 +1365,13 @@ fn create_temp_file_with_content(
 fn test_token_count_updates_on_tree_item_toggle() {
     let (mut logic, _, _, _, _, _mock_state_manager) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let temp_dir = tempdir().unwrap();
     let (file1_path, _temp_file1_guard) =
-        create_temp_file_with_content(&temp_dir, "file1", "hello world"); // 2 tokens
+        create_temp_file_with_content(&temp_dir, "file1", "hello world"); // 2 tokens by tiktoken
     let (file2_path, _temp_file2_guard) =
-        create_temp_file_with_content(&temp_dir, "file2", "another example test"); // 3 tokens
+        create_temp_file_with_content(&temp_dir, "file2", "another example test"); // 3 tokens by tiktoken
 
     let node1_item_id = TreeItemId(101);
     let node2_item_id = TreeItemId(102);
@@ -1390,14 +1381,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
             path: file1_path.clone(),
             name: "file1.txt".to_string(),
             is_dir: false,
-            state: FileState::Selected, // Initially selected
+            state: FileState::Selected,
             children: Vec::new(),
         },
         FileNode {
             path: file2_path.clone(),
             name: "file2.txt".to_string(),
             is_dir: false,
-            state: FileState::Deselected, // Initially deselected
+            state: FileState::Deselected,
             children: Vec::new(),
         },
     ];
@@ -1405,7 +1396,6 @@ fn test_token_count_updates_on_tree_item_toggle() {
     logic.test_path_to_tree_item_id_insert(&file1_path, node1_item_id);
     logic.test_path_to_tree_item_id_insert(&file2_path, node2_item_id);
 
-    // Call the public method to update tokens and request display
     logic._update_token_count_and_request_display();
     assert_eq!(
         logic.test_current_token_count(),
@@ -1418,7 +1408,6 @@ fn test_token_count_updates_on_tree_item_toggle() {
         "Expected 'Tokens: 2' status bar update. Got: {:?}", initial_cmds
     );
 
-    // Simulate toggling file2 to Selected
     logic.handle_event(AppEvent::TreeViewItemToggledByUser {
         window_id: main_window_id,
         item_id: node2_item_id,
@@ -1427,18 +1416,15 @@ fn test_token_count_updates_on_tree_item_toggle() {
 
     assert_eq!(
         logic.test_current_token_count(),
-        5,
+        5, // 2 (file1) + 3 (file2)
         "Count should be 2 (file1) + 3 (file2) = 5"
     );
     let cmds_after_toggle1 = logic.test_drain_commands();
-    // Other commands might be generated by TreeViewItemToggledByUser (e.g. UpdateTreeItemVisualState, archive status).
-    // We specifically look for the token update.
     assert!(
         cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 5" && *severity == MessageSeverity::Information)),
         "Expected 'Tokens: 5' status bar update after toggle. Got: {:?}", cmds_after_toggle1
     );
 
-    // Simulate toggling file1 to Deselected
     logic.handle_event(AppEvent::TreeViewItemToggledByUser {
         window_id: main_window_id,
         item_id: node1_item_id,
@@ -1457,10 +1443,6 @@ fn test_token_count_updates_on_tree_item_toggle() {
     );
 }
 
-/*
- * Verifies that `current_token_count` is correctly calculated and displayed when a profile is
- * activated.
- */
 #[test]
 fn test_token_count_updates_on_profile_activation() {
     let (mut logic, mock_config_manager, mock_profile_manager, mock_fs_scanner, _, _) =
@@ -1477,7 +1459,7 @@ fn test_token_count_updates_on_profile_activation() {
     let profile_root = temp_dir.path().to_path_buf();
 
     let mut selected_paths = HashSet::new();
-    selected_paths.insert(file_a_path.clone()); // Only file_a is selected by profile
+    selected_paths.insert(file_a_path.clone());
 
     let profile = Profile {
         name: profile_name.to_string(),
@@ -1519,28 +1501,22 @@ fn test_token_count_updates_on_profile_activation() {
     );
 
     let cmds = logic.test_drain_commands();
-    // _activate_profile_and_show_window calls _update_token_count_and_request_display.
-    // Other app_info! calls in _activate_profile_and_show_window will also generate status updates.
     assert!(
         cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
         "Expected 'Tokens: 3' status bar update on profile activation. Got: {:?}", cmds
     );
 }
 
-/*
- * Verifies that `_update_token_count_and_request_display` correctly sums tokens
- * from readable selected files, skips unreadable ones, and requests display.
- */
 #[test]
 fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
     let (mut logic, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
-    logic.test_set_main_window_id(Some(main_window_id));
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
     let temp_dir = tempdir().unwrap();
     let (readable_file_path, _temp_readable_guard) =
         create_temp_file_with_content(&temp_dir, "readable", "one two three four"); // 4 tokens
-    let unreadable_file_path = temp_dir.path().join("non_existent_file.txt");
+    let unreadable_file_path = temp_dir.path().join("non_existent_file.txt"); // This file won't exist
 
     let file_nodes = vec![
         FileNode {

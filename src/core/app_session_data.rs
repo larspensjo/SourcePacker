@@ -8,7 +8,8 @@
  */
 use crate::core::{
     FileNode, FileState, FileSystemScannerOperations, Profile, StateManagerOperations,
-}; // Import necessary types
+    TokenCounterOperations,
+};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -100,10 +101,13 @@ impl AppSessionData {
     /*
      * Recalculates the estimated token count for all currently selected files.
      * Data is read from `file_nodes_cache` and result cached
-     * in `current_token_count`. UI update is requested if UI state exists.
+     * in `current_token_count`.
      */
-    pub(crate) fn update_token_count(&mut self) -> usize {
-        log::debug!("Recalculating token count for selected files and requesting display.");
+    pub(crate) fn update_token_count(
+        &mut self,
+        token_counter: &dyn TokenCounterOperations,
+    ) -> usize {
+        log::debug!("Recalculating token count for selected files.");
         let mut total_tokens: usize = 0;
         let mut files_processed_for_tokens: usize = 0;
         let mut files_failed_to_read_for_tokens: usize = 0;
@@ -114,13 +118,18 @@ impl AppSessionData {
             current_total_tokens: &mut usize,
             files_processed: &mut usize,
             files_failed: &mut usize,
+            token_counter_ref: &dyn TokenCounterOperations,
         ) {
             for node in nodes {
                 if !node.is_dir && node.state == FileState::Selected {
                     *files_processed += 1;
+                    log::debug!(
+                        "TokenCount: Processing file {:?} for token counting.",
+                        node.path
+                    );
                     match fs::read_to_string(&node.path) {
                         Ok(content) => {
-                            let tokens_in_file = crate::core::estimate_tokens_tiktoken(&content);
+                            let tokens_in_file = token_counter_ref.count_tokens(&content);
                             *current_total_tokens += tokens_in_file;
                         }
                         Err(e) => {
@@ -139,6 +148,7 @@ impl AppSessionData {
                         current_total_tokens,
                         files_processed,
                         files_failed,
+                        token_counter_ref,
                     );
                 }
             }
@@ -149,6 +159,7 @@ impl AppSessionData {
             &mut total_tokens,
             &mut files_processed_for_tokens,
             &mut files_failed_to_read_for_tokens,
+            token_counter,
         );
 
         self.cached_current_token_count = total_tokens; // Store in app_session_data
@@ -158,9 +169,6 @@ impl AppSessionData {
             files_processed_for_tokens,
             files_failed_to_read_for_tokens
         );
-
-        // Status message macro will use ui_state to get window_id if available
-        // app_info!(self, "Tokens: {}", self.current_token_count);
         self.cached_current_token_count
     }
 
@@ -178,6 +186,7 @@ impl AppSessionData {
         profile_to_activate: Profile, // Takes ownership
         file_system_scanner: &dyn FileSystemScannerOperations,
         state_manager: &dyn StateManagerOperations,
+        token_counter: &dyn TokenCounterOperations,
     ) -> Result<(), String> {
         log::debug!(
             "AppSessionData: Activating and populating data for profile '{}'",
@@ -203,7 +212,7 @@ impl AppSessionData {
                     "AppSessionData: Applied profile '{:?}' to the scanned tree.",
                     self.current_profile_name
                 );
-                self.update_token_count(); // Update token count after successful scan and state application
+                self.update_token_count(token_counter); // Update token count after successful scan and state application
                 Ok(())
             }
             Err(e) => {
@@ -215,16 +224,171 @@ impl AppSessionData {
                 );
                 log::error!("AppSessionData: {}", error_message);
                 self.file_nodes_cache.clear(); // Ensure cache is clear on error
+                self.cached_current_token_count = 0; // Also reset token count
                 Err(error_message)
             }
         }
     }
 }
 
-// Minimal unit test for the constructor
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::{
+        FileNode, FileState, FileSystemError, FileSystemScannerOperations, Profile,
+        StateManagerOperations, TokenCounterOperations,
+    };
+    use std::collections::{HashMap, HashSet};
+    use std::fs::{self, File};
+    use std::io::{self, Write};
+    use std::path::{Path, PathBuf};
+    use std::sync::{Arc, Mutex};
+    use tempfile::{NamedTempFile, tempdir};
+
+    /*
+     * This module contains unit tests for `AppSessionData`.
+     * It focuses on testing the logic for managing session state, profile creation from state,
+     * token counting, and profile activation. Mocks are used for external dependencies
+     * like file system scanning and state management operations.
+     */
+
+    // --- Mock Structures for activate_and_populate_data ---
+    struct MockFileSystemScanner {
+        scan_directory_results: Mutex<HashMap<PathBuf, Result<Vec<FileNode>, FileSystemError>>>,
+        scan_directory_calls: Mutex<Vec<PathBuf>>,
+    }
+
+    impl MockFileSystemScanner {
+        fn new() -> Self {
+            MockFileSystemScanner {
+                scan_directory_results: Mutex::new(HashMap::new()),
+                scan_directory_calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn set_scan_directory_result(
+            &self,
+            path: &Path,
+            result: Result<Vec<FileNode>, FileSystemError>,
+        ) {
+            self.scan_directory_results
+                .lock()
+                .unwrap()
+                .insert(path.to_path_buf(), result);
+        }
+
+        #[allow(dead_code)] // Potentially useful for more detailed assertions
+        fn get_scan_directory_calls(&self) -> Vec<PathBuf> {
+            self.scan_directory_calls.lock().unwrap().clone()
+        }
+    }
+
+    impl FileSystemScannerOperations for MockFileSystemScanner {
+        fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>, FileSystemError> {
+            self.scan_directory_calls
+                .lock()
+                .unwrap()
+                .push(root_path.to_path_buf());
+            match self.scan_directory_results.lock().unwrap().get(root_path) {
+                Some(Ok(nodes)) => Ok(nodes.clone()),
+                Some(Err(e)) => Err(match e {
+                    // Basic cloning for test purposes
+                    FileSystemError::Io(io_err) => {
+                        FileSystemError::Io(io::Error::new(io_err.kind(), "mock io error"))
+                    }
+                    FileSystemError::IgnoreError(_) => {
+                        FileSystemError::IgnoreError(ignore::Error::from(io::Error::new(
+                            io::ErrorKind::Other,
+                            "mock ignore error",
+                        )))
+                    }
+                    FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
+                }),
+                None => Ok(Vec::new()), // Default to empty if no specific result is set
+            }
+        }
+    }
+
+    struct MockStateManager {
+        apply_profile_to_tree_calls: Mutex<Vec<(Profile, Vec<FileNode>)>>,
+    }
+
+    impl MockStateManager {
+        fn new() -> Self {
+            MockStateManager {
+                apply_profile_to_tree_calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        #[allow(dead_code)] // Potentially useful for more detailed assertions
+        fn get_apply_profile_to_tree_calls(&self) -> Vec<(Profile, Vec<FileNode>)> {
+            self.apply_profile_to_tree_calls.lock().unwrap().clone()
+        }
+    }
+
+    impl StateManagerOperations for MockStateManager {
+        fn apply_profile_to_tree(&self, tree: &mut Vec<FileNode>, profile: &Profile) {
+            self.apply_profile_to_tree_calls
+                .lock()
+                .unwrap()
+                .push((profile.clone(), tree.clone()));
+            // Minimal simulation of apply_profile_to_tree for testing post-conditions
+            for node in tree.iter_mut() {
+                if profile.selected_paths.contains(&node.path) {
+                    node.state = FileState::Selected;
+                } else if profile.deselected_paths.contains(&node.path) {
+                    node.state = FileState::Deselected;
+                } else {
+                    node.state = FileState::Unknown;
+                }
+            }
+        }
+
+        fn update_folder_selection(&self, _node: &mut FileNode, _new_state: FileState) {
+            // Not directly used by AppSessionData::activate_and_populate_data, but part of trait.
+        }
+    }
+
+    // --- Mock TokenCounter ---
+    struct MockTokenCounter {
+        default_count: usize,
+        counts_for_content: HashMap<String, usize>, // For more specific mocking if needed
+    }
+    impl MockTokenCounter {
+        fn new(default_count: usize) -> Self {
+            Self {
+                default_count,
+                counts_for_content: HashMap::new(),
+            }
+        }
+        #[allow(dead_code)]
+        fn set_count_for_content(&mut self, content: &str, count: usize) {
+            self.counts_for_content.insert(content.to_string(), count);
+        }
+    }
+    impl TokenCounterOperations for MockTokenCounter {
+        fn count_tokens(&self, text: &str) -> usize {
+            if let Some(count) = self.counts_for_content.get(text) {
+                *count
+            } else {
+                self.default_count
+            }
+        }
+    }
+    // Helper to create temporary files for token counting tests
+    fn create_temp_file_with_content(
+        dir: &tempfile::TempDir,
+        filename_prefix: &str,
+        content: &str,
+    ) -> (PathBuf, NamedTempFile) {
+        let mut temp_file = tempfile::Builder::new()
+            .prefix(filename_prefix)
+            .suffix(".txt")
+            .tempfile_in(dir.path())
+            .unwrap();
+        writeln!(temp_file, "{}", content).unwrap();
+        (temp_file.path().to_path_buf(), temp_file)
+    }
 
     #[test]
     fn test_app_session_data_new() {
@@ -234,5 +398,289 @@ mod tests {
         assert!(session_data.file_nodes_cache.is_empty());
         assert_eq!(session_data.root_path_for_scan, PathBuf::from("."));
         assert_eq!(session_data.cached_current_token_count, 0);
+    }
+
+    #[test]
+    fn test_create_profile_from_session_state_basic() {
+        let session_data = AppSessionData {
+            current_profile_name: Some("OldProfile".to_string()),
+            current_profile_cache: Some(Profile {
+                name: "OldProfile".to_string(),
+                root_folder: PathBuf::from("/old/root"),
+                selected_paths: HashSet::new(),
+                deselected_paths: HashSet::new(),
+                archive_path: Some(PathBuf::from("/old/archive.zip")),
+            }),
+            file_nodes_cache: vec![
+                FileNode {
+                    path: PathBuf::from("/old/root/file1.txt"),
+                    name: "file1.txt".into(),
+                    is_dir: false,
+                    state: FileState::Selected,
+                    children: Vec::new(),
+                },
+                FileNode {
+                    path: PathBuf::from("/old/root/file2.txt"),
+                    name: "file2.txt".into(),
+                    is_dir: false,
+                    state: FileState::Deselected,
+                    children: Vec::new(),
+                },
+            ],
+            root_path_for_scan: PathBuf::from("/new/root"), // Simulating root change before save-as
+            cached_current_token_count: 0,
+        };
+
+        let new_profile = session_data.create_profile_from_session_state("NewProfile".to_string());
+
+        assert_eq!(new_profile.name, "NewProfile");
+        assert_eq!(new_profile.root_folder, PathBuf::from("/new/root"));
+        assert!(
+            new_profile
+                .selected_paths
+                .contains(&PathBuf::from("/old/root/file1.txt"))
+        );
+        assert!(
+            !new_profile
+                .selected_paths
+                .contains(&PathBuf::from("/old/root/file2.txt"))
+        );
+        assert!(
+            new_profile
+                .deselected_paths
+                .contains(&PathBuf::from("/old/root/file2.txt"))
+        );
+        assert_eq!(
+            new_profile.archive_path,
+            Some(PathBuf::from("/old/archive.zip"))
+        );
+    }
+
+    #[test]
+    fn test_create_profile_from_session_state_no_archive_path() {
+        let session_data = AppSessionData {
+            current_profile_name: None,
+            current_profile_cache: None, // No old profile, so no archive path to inherit
+            file_nodes_cache: vec![],
+            root_path_for_scan: PathBuf::from("/root"),
+            cached_current_token_count: 0,
+        };
+        let new_profile =
+            session_data.create_profile_from_session_state("ProfileNoArchive".to_string());
+        assert_eq!(new_profile.archive_path, None);
+    }
+
+    #[test]
+    fn test_update_token_count_no_files() {
+        let mut session_data = AppSessionData::new();
+        let mock_token_counter = MockTokenCounter::new(0); // Irrelevant count for no files
+        let count = session_data.update_token_count(&mock_token_counter);
+        assert_eq!(count, 0);
+        assert_eq!(session_data.cached_current_token_count, 0);
+    }
+
+    #[test]
+    fn test_update_token_count_selected_files() {
+        let mut session_data = AppSessionData::new();
+        let mock_token_counter = MockTokenCounter::new(5); // Each "file" has 5 tokens
+        let temp_dir = tempdir().unwrap();
+        let (file1_path, _guard1) = create_temp_file_with_content(&temp_dir, "f1", "hello world");
+        let (file2_path, _guard2) =
+            create_temp_file_with_content(&temp_dir, "f2", "another example");
+        let (file3_path, _guard3) = create_temp_file_with_content(&temp_dir, "f3", "skip this one");
+
+        session_data.file_nodes_cache = vec![
+            FileNode {
+                path: file1_path.clone(),
+                name: "f1.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+            },
+            FileNode {
+                path: file2_path.clone(),
+                name: "f2.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+            },
+            FileNode {
+                path: file3_path.clone(),
+                name: "f3.txt".into(),
+                is_dir: false,
+                state: FileState::Deselected,
+                children: Vec::new(),
+            },
+            FileNode {
+                // Folder with a selected child
+                path: temp_dir.path().join("folder"),
+                name: "folder".into(),
+                is_dir: true,
+                state: FileState::Unknown, // Folder state itself doesn't matter for token sum
+                children: vec![FileNode {
+                    path: create_temp_file_with_content(&temp_dir, "child", "child content").0,
+                    name: "child.txt".into(),
+                    is_dir: false,
+                    state: FileState::Selected,
+                    children: Vec::new(),
+                }],
+            },
+        ];
+        let count = session_data.update_token_count(&mock_token_counter);
+        // 3 selected files (f1, f2, child.txt), each mocked to 5 tokens
+        assert_eq!(count, 5 * 3, "Expected 3 files * 5 tokens each");
+        assert_eq!(session_data.cached_current_token_count, 15);
+    }
+
+    #[test]
+    fn test_update_token_count_handles_read_error() {
+        let mut session_data = AppSessionData::new();
+        let mock_token_counter = MockTokenCounter::new(2); // Readable file has 2 tokens
+        let temp_dir = tempdir().unwrap();
+        let (readable_path, _guard_readable) =
+            create_temp_file_with_content(&temp_dir, "readable", "one two");
+        let non_existent_path = temp_dir.path().join("non_existent.txt");
+
+        session_data.file_nodes_cache = vec![
+            FileNode {
+                path: readable_path.clone(),
+                name: "readable.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+            },
+            FileNode {
+                path: non_existent_path.clone(),
+                name: "non_existent.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+            },
+        ];
+        let count = session_data.update_token_count(&mock_token_counter);
+        assert_eq!(count, 2, "Only readable file should contribute");
+        assert_eq!(session_data.cached_current_token_count, 2);
+    }
+
+    #[test]
+    fn test_activate_and_populate_data_success() {
+        let mut session_data = AppSessionData::new();
+        let mock_scanner = MockFileSystemScanner::new();
+        let mock_state_manager = MockStateManager::new();
+        let mock_token_counter = MockTokenCounter::new(7); // Each selected file will contribute 7 tokens
+
+        let profile_name = "TestProfile";
+        let root_folder = PathBuf::from("/test/root"); // Initial conceptual root
+
+        let temp_dir = tempdir().unwrap(); // Actual root for scanned files and token counting
+        let (file_for_token_path, _g) =
+            create_temp_file_with_content(&temp_dir, "tok", "token count this");
+
+        let mut profile_for_activation =
+            Profile::new(profile_name.to_string(), temp_dir.path().to_path_buf());
+        profile_for_activation
+            .selected_paths
+            .insert(file_for_token_path.clone());
+
+        let nodes_for_scanner_to_return = vec![FileNode {
+            path: file_for_token_path.clone(),
+            name: "tok.txt".into(),
+            is_dir: false,
+            state: FileState::Unknown, // State manager will update this
+            children: Vec::new(),
+        }];
+        mock_scanner
+            .set_scan_directory_result(temp_dir.path(), Ok(nodes_for_scanner_to_return.clone()));
+
+        let result = session_data.activate_and_populate_data(
+            profile_for_activation.clone(),
+            &mock_scanner,
+            &mock_state_manager,
+            &mock_token_counter,
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(
+            session_data.current_profile_name.as_deref(),
+            Some(profile_name)
+        );
+        assert_eq!(
+            session_data.current_profile_cache.as_ref().unwrap().name,
+            profile_name
+        );
+        assert_eq!(session_data.root_path_for_scan, temp_dir.path()); // Should be the actual scan root
+        assert_eq!(session_data.file_nodes_cache.len(), 1);
+        assert_eq!(session_data.file_nodes_cache[0].path, file_for_token_path);
+        assert_eq!(
+            session_data.file_nodes_cache[0].state,
+            FileState::Selected,
+            "State manager should have set it to selected"
+        );
+        assert_eq!(session_data.cached_current_token_count, 7); // From MockTokenCounter
+
+        assert_eq!(mock_scanner.get_scan_directory_calls().len(), 1);
+        assert_eq!(mock_scanner.get_scan_directory_calls()[0], temp_dir.path());
+        assert_eq!(
+            mock_state_manager.get_apply_profile_to_tree_calls().len(),
+            1
+        );
+        assert_eq!(
+            mock_state_manager.get_apply_profile_to_tree_calls()[0]
+                .0
+                .name,
+            profile_name
+        );
+    }
+
+    #[test]
+    fn test_activate_and_populate_data_scan_error() {
+        let mut session_data = AppSessionData::new();
+        let mock_scanner = MockFileSystemScanner::new();
+        let mock_state_manager = MockStateManager::new();
+        let mock_token_counter = MockTokenCounter::new(0); // Irrelevant as scan fails
+
+        let profile_name = "ErrorProfile";
+        let root_folder = PathBuf::from("/error/root");
+        let profile = Profile::new(profile_name.to_string(), root_folder.clone());
+
+        mock_scanner.set_scan_directory_result(
+            &root_folder,
+            Err(FileSystemError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "scan failed",
+            ))),
+        );
+
+        let result = session_data.activate_and_populate_data(
+            profile.clone(),
+            &mock_scanner,
+            &mock_state_manager,
+            &mock_token_counter,
+        );
+
+        assert!(result.is_err());
+        if let Err(msg) = result {
+            assert!(msg.contains("Failed to scan directory"));
+            assert!(msg.contains(profile_name));
+        }
+        assert_eq!(
+            session_data.current_profile_name.as_deref(),
+            Some(profile_name)
+        ); // Profile details are set before scan
+        assert!(
+            session_data.file_nodes_cache.is_empty(),
+            "Cache should be cleared on scan error"
+        );
+        assert_eq!(
+            session_data.cached_current_token_count, 0,
+            "Token count should be 0 on error"
+        );
+
+        assert_eq!(mock_scanner.get_scan_directory_calls().len(), 1);
+        assert_eq!(
+            mock_state_manager.get_apply_profile_to_tree_calls().len(),
+            0,
+            "Apply profile should not be called if scan fails"
+        );
     }
 }

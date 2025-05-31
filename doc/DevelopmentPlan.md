@@ -18,11 +18,6 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 
 Implemented sections have been removed.
 
-### P2.11.1: Robust State Saving on Exit
-*   **Problem:** (Previously identified) The `handle_window_destroyed` might clear state prematurely before `on_quit()` saves.
-*   **Action:** Ensure that application state required for saving (profile name, current file selections, archive path) is reliably preserved until `MyAppLogic::on_quit()` is called. The M/V/P refactoring should address this by separating `AppSessionData` (persistent) from `MainWindowUiState` (transient).
-*   **Reference:** Covered by the "M/V/P Separation Plan", specifically how `handle_window_destroyed` will only clear `MainWindowUiState`.
-
 ### P2.11.2: Core Logic Correctness & User Experience (High Priority)
 *   **User-Friendly Error Reporting from `MyAppLogic`:** `[TechErrorHandlingGracefulV1]`
     *   **Problem:** Errors in `MyAppLogic` are logged to console but not shown to the user in the UI.
