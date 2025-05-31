@@ -158,8 +158,14 @@
     *   Pay attention to edge cases and error handling.
 
 ---
+## Phase 5: Fix all tests in handler_tests.rs
 
-## Phase 5: Documentation and Review
+Many of these should be moved to AppSessionData or MainWindowUiState.
+
+Evaluate whether the injected services should also be moved. This is probably necessary, to be able to move the tests effectively.
+---
+
+## Phase 6: Documentation and Review
 
 **Objective:** Document the new architecture and review the changes for clarity and correctness.
 
