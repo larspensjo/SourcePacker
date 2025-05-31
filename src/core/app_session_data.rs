@@ -120,8 +120,7 @@ impl AppSessionData {
                     *files_processed += 1;
                     match fs::read_to_string(&node.path) {
                         Ok(content) => {
-                            let tokens_in_file =
-                                crate::core::estimate_tokens_simple_whitespace(&content);
+                            let tokens_in_file = crate::core::estimate_tokens_tiktoken(&content);
                             *current_total_tokens += tokens_in_file;
                         }
                         Err(e) => {

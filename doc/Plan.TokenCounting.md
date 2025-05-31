@@ -20,53 +20,11 @@
 
 **Goal:** Display the calculated token count in the main status bar. This will temporarily share space with or overwrite other status messages.
 
-### Step 2.1: Update `MyAppLogic` to Command Status Bar Update
-*   **Action a:** Modify the token calculation method in `MyAppLogic` (e.g., `_recalculate_and_log_token_count`).
-    *   After `self.current_token_count` is set, if `self.main_window_id` is `Some`, create and enqueue a `PlatformCommand::UpdateStatusBarText`.
-    *   The text for this command should be formatted (e.g., "Tokens: X").
-    *   Use `MessageSeverity::Information` or `MessageSeverity::Debug` for now.
-    *   Consider renaming the method to reflect its new responsibility of also requesting UI updates (e.g., `_update_token_count_state_and_request_display`).
-*   **Verification:**
-    *   Project compiles.
-    *   Application runs. The status bar now displays "Tokens: X" when selections change or profiles load/refresh. This message might conflict with other status updates.
-
-### Step 2.2: Update `MyAppLogic` Unit Tests
-*   **Action:** In `src/app_logic/handler_tests.rs`:
-    *   Modify existing tests (or add new ones) to assert that `PlatformCommand::UpdateStatusBarText` is generated with the correct token count message when the token calculation/update method is called.
-*   **Verification:**
-    *   Unit tests pass.
-    *   Application runs as in Step 2.1.
-
 ---
 
 ## Phase 3: Advanced Tokenizer Integration
 
 **Goal:** Replace the simple whitespace tokenizer with a more accurate library like `tiktoken-rs`.
-
-### Step 3.1: Add `tiktoken-rs` Dependency
-*   **Action:** Add `tiktoken-rs = "0.5"` (or latest version) to `Cargo.toml` under `[dependencies]`.
-*   **Verification:**
-    *   `cargo build` completes successfully, downloading and compiling the new dependency.
-    *   Application runs as before.
-
-### Step 3.2: Update `tokenizer_utils.rs`
-*   **Action a:** Modify `src/core/tokenizer_utils.rs`:
-    *   Import necessary items from `tiktoken_rs` (e.g., `cl100k_base`, `CoreBPE`).
-    *   Define a new public function, e.g., `estimate_tokens_tiktoken(content: &str) -> usize`.
-    *   Inside this function, get a `CoreBPE` instance (e.g., using `cl100k_base()`).
-    *   Use the `bpe.encode_with_special_tokens(content).len()` to get the token count.
-    *   Include error handling for BPE initialization, potentially logging an error and returning 0 or panicking.
-    *   Add unit tests for this new `estimate_tokens_tiktoken` function.
-*   **Action b:** In `MyAppLogic`'s token calculation method, change the call from `estimate_tokens_simple_whitespace` to the new `estimate_tokens_tiktoken`.
-*   **Verification:**
-    *   Project compiles.
-    *   Unit tests for `tokenizer_utils` (including new `tiktoken` tests) pass.
-    *   Application runs. Token counts displayed in the status bar should now be based on `tiktoken-rs`.
-
-### Step 3.3: Performance Consideration (Lazy BPE Initialization)
-*   **Action (Optional but Recommended):** Modify `tokenizer_utils.rs` to use `lazy_static` or `once_cell` (add to `Cargo.toml`) for the `CoreBPE` instance. This avoids re-initializing the BPE model on every `estimate_tokens_tiktoken` call.
-*   **Verification:**
-    *   Project compiles and runs. Performance for token counting should be improved, especially if called frequently.
 
 ---
 
@@ -101,3 +59,7 @@
     *   Show token count for the currently selected file in the "File Content Viewer" panel (P3.3).
     *   Potentially add a column to the TreeView or a tooltip.
 *   **Error Handling for File Reads in UI:** Improve robustness if many files fail to read during token counting (e.g., display "Tokens: X (Y files failed to read)" in the status bar part).
+
+*   **Action (Optional but Recommended):** Modify `tokenizer_utils.rs` to use `lazy_static` or `once_cell` (add to `Cargo.toml`) for the `CoreBPE` instance. This avoids re-initializing the BPE model on every `estimate_tokens_tiktoken` call.
+*   **Verification:**
+    *   Project compiles and runs. Performance for token counting should be improved, especially if called frequently.

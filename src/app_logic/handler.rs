@@ -373,13 +373,11 @@ impl MyAppLogic {
         {
             log::debug!(
                 "AppLogic: Main window (ID: {:?}) destroyed notification received. Clearing UI state.",
-                // Safe to unwrap here because map_or confirmed ui_state is Some and window_id matches
                 self.ui_state.as_ref().unwrap().window_id
             );
-            self.ui_state = None; // This drops MainWindowUiState, implicitly clearing its fields.
+            self.ui_state = None;
         } else {
-            log::trace!(
-                // Changed to trace as this is less critical if other windows exist
+            log::debug!(
                 "AppLogic: Window (ID: {:?}) destroyed, but it was not the main window tracked by ui_state.",
                 window_id
             );
