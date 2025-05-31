@@ -931,39 +931,24 @@ impl MyAppLogic {
                 .map_or(false, |s| s.window_id == window_id),
             "Mismatched window ID or no UI state for _activate_profile_and_show_window"
         );
-        self.app_session_data.activate_profile(profile_to_activate);
 
-        let mut scan_was_successful = true;
-        let final_status_message = match self
-            .file_system_scanner
-            .scan_directory(&self.app_session_data.root_path_for_scan)
-        {
-            Ok(nodes) => {
-                self.app_session_data.file_nodes_cache = nodes;
-                self.state_manager.apply_profile_to_tree(
-                    &mut self.app_session_data.file_nodes_cache,
-                    self.app_session_data
-                        .current_profile_cache
-                        .as_ref()
-                        .unwrap(), // Safe: just set
-                );
-                initial_operation_status_message // Use the message passed in
-            }
-            Err(e) => {
-                scan_was_successful = false;
-                self.app_session_data.file_nodes_cache.clear();
-                format!(
-                    "Profile activated but failed to scan directory {:?} for profile '{}': {}",
-                    self.app_session_data.root_path_for_scan,
-                    self.app_session_data
-                        .current_profile_name
-                        .as_ref()
-                        .unwrap_or(&"<unknown>".to_string()),
-                    e
-                )
+        let scan_result = self.app_session_data.activate_and_populate_data(
+            profile_to_activate, // Consumes profile_to_activate
+            &*self.file_system_scanner,
+            &*self.state_manager,
+        );
+
+        let (scan_was_successful, final_status_message) = match scan_result {
+            Ok(_) => (true, initial_operation_status_message),
+            Err(scan_error_message) => {
+                // The error message from AppSessionData::activate_and_populate_data
+                // should be comprehensive enough for UI display.
+                (false, scan_error_message)
             }
         };
-        // self.app_session_data.update_token_count(); // This would be called here in Phase 2
+
+        // `update_token_count` is now called within `activate_and_populate_data`.
+        // `_update_token_count_and_request_display` will still be called later to queue the UI update for tokens.
 
         // Update window title (doesn't need to access self.ui_state content beyond window_id)
         self._update_window_title_with_profile_and_archive(window_id);

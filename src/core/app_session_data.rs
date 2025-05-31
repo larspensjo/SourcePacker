@@ -165,54 +165,60 @@ impl AppSessionData {
         self.cached_current_token_count
     }
 
-    pub fn load_profile_core_data(
+    /*
+     * Activates the given profile, loads its associated file system data,
+     * applies the profile's selection state to the scanned files, and updates
+     * the token count. This is the primary method for making a profile fully
+     * active and ready for use in the session.
+     *
+     * Returns `Ok(())` on success, or an `Err(String)` containing an error
+     * message if file system scanning or processing fails.
+     */
+    pub fn activate_and_populate_data(
         &mut self,
-        profile_to_activate: &Profile,
+        profile_to_activate: Profile, // Takes ownership
         file_system_scanner: &dyn FileSystemScannerOperations,
         state_manager: &dyn StateManagerOperations,
-    ) -> bool {
+    ) -> Result<(), String> {
         log::debug!(
-            "AppSessionData: Loading core data for profile '{}'",
+            "AppSessionData: Activating and populating data for profile '{}'",
             profile_to_activate.name
         );
-        // TODO: Should call profile_to_activate() here
         self.current_profile_name = Some(profile_to_activate.name.clone());
         self.root_path_for_scan = profile_to_activate.root_folder.clone();
         self.current_profile_cache = Some(profile_to_activate.clone());
+
         match file_system_scanner.scan_directory(&self.root_path_for_scan) {
             Ok(nodes) => {
                 self.file_nodes_cache = nodes;
                 log::debug!(
-                    "AppSessionData: Scanned {} top-level nodes for profile '{}'.",
+                    "AppSessionData: Scanned {} top-level nodes for profile '{:?}'.",
                     self.file_nodes_cache.len(),
-                    profile_to_activate.name
+                    self.current_profile_name
                 );
-                state_manager
-                    .apply_profile_to_tree(&mut self.file_nodes_cache, profile_to_activate);
+                state_manager.apply_profile_to_tree(
+                    &mut self.file_nodes_cache,
+                    self.current_profile_cache.as_ref().unwrap(),
+                );
                 log::debug!(
-                    "AppSessionData: Applied profile '{}' to the scanned tree.",
-                    profile_to_activate.name
+                    "AppSessionData: Applied profile '{:?}' to the scanned tree.",
+                    self.current_profile_name
                 );
-                // In Phase 2, this method would also call self.update_token_count()
-                true
+                self.update_token_count(); // Update token count after successful scan and state application
+                Ok(())
             }
             Err(e) => {
-                log::error!(
-                    "AppSessionData: Failed to scan directory {:?} for profile '{}': {:?}",
+                let error_message = format!(
+                    "Failed to scan directory {:?} for profile '{:?}': {:?}",
                     self.root_path_for_scan,
-                    profile_to_activate.name,
+                    self.current_profile_name, // Use the name now stored in self
                     e
                 );
+                log::error!("AppSessionData: {}", error_message);
                 self.file_nodes_cache.clear(); // Ensure cache is clear on error
-                false
+                Err(error_message)
             }
         }
-    }
-
-    pub fn activate_profile(&mut self, profile_to_activate: Profile) {
-        self.current_profile_name = Some(profile_to_activate.name.clone());
-        self.root_path_for_scan = profile_to_activate.root_folder.clone();
-        self.current_profile_cache = Some(profile_to_activate.clone());
     }
 }
 
