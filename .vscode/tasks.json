@@ -16,7 +16,8 @@
       "type": "shell",
       "command": "cargo run",
       "group": "none",
-      "problemMatcher": ["$rustc"]
+      "problemMatcher": ["$rustc"],
+      "dependsOn": "Build",
     },
     {
       "label": "Test",
