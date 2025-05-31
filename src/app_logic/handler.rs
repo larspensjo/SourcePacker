@@ -11,10 +11,9 @@ use crate::platform_layer::{
 use crate::app_logic::MainWindowUiState;
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-// Added for token counting (fs::read_to_string)
-use std::fs;
 
 // Import log macros
 use log::{debug, error, info, trace, warn};
@@ -725,6 +724,7 @@ impl MyAppLogic {
                                     let new_profile =
                                         self.app_session_data.create_profile_from_session_state(
                                             profile_name_str.clone(),
+                                            &*self.token_counter_manager,
                                         );
                                     let profile_name_clone = new_profile.name.clone();
                                     match self
@@ -825,7 +825,12 @@ impl MyAppLogic {
 
     fn handle_window_resized(&mut self, _window_id: WindowId, _width: i32, _height: i32) {
         // Currently does not generate commands. Log if needed.
-        // log::trace!("Window resized: ID {:?}, W:{}, H:{}", _window_id, _width, _height);
+        log::debug!(
+            "Window resized: ID {:?}, W:{}, H:{}",
+            _window_id,
+            _width,
+            _height
+        );
     }
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
@@ -1485,9 +1490,10 @@ impl PlatformEventHandler for MyAppLogic {
         // current_profile_name is in app_session_data
         if let Some(active_profile_name) = self.app_session_data.current_profile_name.clone() {
             if !active_profile_name.is_empty() {
-                let profile_to_save = self
-                    .app_session_data
-                    .create_profile_from_session_state(active_profile_name.clone());
+                let profile_to_save = self.app_session_data.create_profile_from_session_state(
+                    active_profile_name.clone(),
+                    &*self.token_counter_manager,
+                );
                 log::debug!(
                     "AppLogic: Attempting to save content of active profile '{}' on exit.",
                     active_profile_name

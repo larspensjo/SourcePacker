@@ -6,6 +6,7 @@
  * data from both the UI-specific state and the main application logic handler,
  * acting as a primary model component for session state.
  */
+use crate::core::models::FileTokenDetails;
 use crate::core::{
     FileNode, FileState, FileSystemScannerOperations, Profile, StateManagerOperations,
     TokenCounterOperations,
@@ -76,26 +77,100 @@ impl AppSessionData {
         }
     }
 
-    pub(crate) fn create_profile_from_session_state(&self, new_profile_name: String) -> Profile {
+    /*
+     * Creates a `Profile` instance from the current session state.
+     * This function gathers selected and deselected paths from the `file_nodes_cache`.
+     * Crucially, for files that are selected and have a checksum, it reads their content,
+     * counts their tokens, and stores this information along with the checksum in the
+     * `file_details` map of the returned `Profile`. This is used when saving a profile
+     * to persist token count information.
+     */
+    pub(crate) fn create_profile_from_session_state(
+        &self,
+        new_profile_name: String,
+        token_counter: &dyn TokenCounterOperations,
+    ) -> Profile {
         let mut selected_paths = HashSet::new();
         let mut deselected_paths = HashSet::new();
+        let mut file_details_map = std::collections::HashMap::new();
 
         Self::gather_selected_deselected_paths_recursive(
-            &self.file_nodes_cache, // Use app_session_data
+            &self.file_nodes_cache,
             &mut selected_paths,
             &mut deselected_paths,
         );
 
+        Self::populate_file_details_recursive(
+            &self.file_nodes_cache,
+            &mut file_details_map,
+            token_counter,
+        );
+
         Profile {
             name: new_profile_name,
-            root_folder: self.root_path_for_scan.clone(), // Use app_session_data
+            root_folder: self.root_path_for_scan.clone(),
             selected_paths,
             deselected_paths,
             archive_path: self
-                .current_profile_cache // Use app_session_data
+                .current_profile_cache
                 .as_ref()
                 .and_then(|p| p.archive_path.clone()),
-            file_details: std::collections::HashMap::new(), // Initialize with an empty map for now
+            file_details: file_details_map,
+        }
+    }
+
+    /*
+     * Recursively populates the `file_details_map` with checksums and token counts
+     * for files that are marked as `Selected` in the `nodes` tree.
+     * This helper is used by `create_profile_from_session_state` to build the
+     * token cache that will be persisted in the profile.
+     */
+    fn populate_file_details_recursive(
+        nodes: &[FileNode],
+        file_details_map: &mut std::collections::HashMap<PathBuf, FileTokenDetails>,
+        token_counter: &dyn TokenCounterOperations,
+    ) {
+        for node in nodes {
+            if node.is_dir {
+                Self::populate_file_details_recursive(
+                    &node.children,
+                    file_details_map,
+                    token_counter,
+                );
+            } else if node.state == FileState::Selected {
+                if let Some(checksum_val) = &node.checksum {
+                    match fs::read_to_string(&node.path) {
+                        Ok(content) => {
+                            let token_count = token_counter.count_tokens(&content);
+                            file_details_map.insert(
+                                node.path.clone(),
+                                FileTokenDetails {
+                                    checksum: checksum_val.clone(),
+                                    token_count,
+                                },
+                            );
+                            log::debug!(
+                                "AppSessionData: Cached token count {} for selected file {:?} with checksum {}",
+                                token_count,
+                                node.path,
+                                checksum_val
+                            );
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "AppSessionData: Failed to read file {:?} for token caching during profile save: {}",
+                                node.path,
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    log::warn!(
+                        "AppSessionData: Selected file {:?} has no checksum; cannot cache token count for profile save.",
+                        node.path
+                    );
+                }
+            }
         }
     }
 
@@ -364,11 +439,17 @@ mod tests {
         }
         #[allow(dead_code)]
         fn set_count_for_content(&mut self, content: &str, count: usize) {
+            log::debug!(
+                "MockTokenCounter: Setting count {} for content '{}'",
+                count,
+                content
+            );
             self.counts_for_content.insert(content.to_string(), count);
         }
     }
     impl TokenCounterOperations for MockTokenCounter {
         fn count_tokens(&self, text: &str) -> usize {
+            log::debug!("MockTokenCounter: Counting tokens for text '{}'", text);
             if let Some(count) = self.counts_for_content.get(text) {
                 *count
             } else {
@@ -403,61 +484,66 @@ mod tests {
 
     #[test]
     fn test_create_profile_from_session_state_basic() {
-        let session_data = AppSessionData {
+        let temp_dir = tempdir().unwrap();
+        let (file1_path, _g1) = create_temp_file_with_content(&temp_dir, "f1", "content one");
+        let (file2_path, _g2) = create_temp_file_with_content(&temp_dir, "f2", "content two");
+
+        let mut session_data = AppSessionData {
             current_profile_name: Some("OldProfile".to_string()),
             current_profile_cache: Some(Profile {
                 name: "OldProfile".to_string(),
-                root_folder: PathBuf::from("/old/root"),
+                root_folder: temp_dir.path().join("old_root"),
                 selected_paths: HashSet::new(),
                 deselected_paths: HashSet::new(),
-                archive_path: Some(PathBuf::from("/old/archive.zip")),
+                archive_path: Some(temp_dir.path().join("old_archive.zip")),
                 file_details: HashMap::new(),
             }),
             file_nodes_cache: vec![
                 FileNode {
-                    path: PathBuf::from("/old/root/file1.txt"),
+                    path: file1_path.clone(),
                     name: "file1.txt".into(),
                     is_dir: false,
                     state: FileState::Selected,
                     children: Vec::new(),
-                    checksum: None,
+                    checksum: Some("cs1".to_string()),
                 },
                 FileNode {
-                    path: PathBuf::from("/old/root/file2.txt"),
+                    path: file2_path.clone(),
                     name: "file2.txt".into(),
                     is_dir: false,
-                    state: FileState::Deselected,
+                    state: FileState::Deselected, // This one won't be in file_details
                     children: Vec::new(),
-                    checksum: None,
+                    checksum: Some("cs2".to_string()),
                 },
             ],
-            root_path_for_scan: PathBuf::from("/new/root"), // Simulating root change before save-as
+            root_path_for_scan: temp_dir.path().join("new_root"),
             cached_current_token_count: 0,
         };
+        // Setup mock token counter for specific content
+        let mut specific_token_counter = MockTokenCounter::new(0);
+        specific_token_counter.set_count_for_content("content one", 10);
 
-        let new_profile = session_data.create_profile_from_session_state("NewProfile".to_string());
+        let new_profile = session_data
+            .create_profile_from_session_state("NewProfile".to_string(), &specific_token_counter);
 
         assert_eq!(new_profile.name, "NewProfile");
-        assert_eq!(new_profile.root_folder, PathBuf::from("/new/root"));
-        assert!(
-            new_profile
-                .selected_paths
-                .contains(&PathBuf::from("/old/root/file1.txt"))
-        );
-        assert!(
-            !new_profile
-                .selected_paths
-                .contains(&PathBuf::from("/old/root/file2.txt"))
-        );
-        assert!(
-            new_profile
-                .deselected_paths
-                .contains(&PathBuf::from("/old/root/file2.txt"))
-        );
+        assert_eq!(new_profile.root_folder, temp_dir.path().join("new_root"));
+        assert!(new_profile.selected_paths.contains(&file1_path));
+        assert!(!new_profile.selected_paths.contains(&file2_path));
+        assert!(new_profile.deselected_paths.contains(&file2_path));
         assert_eq!(
             new_profile.archive_path,
-            Some(PathBuf::from("/old/archive.zip"))
+            Some(temp_dir.path().join("old_archive.zip"))
         );
+        assert_eq!(
+            new_profile.file_details.len(),
+            1,
+            "Only selected file should have details"
+        );
+        assert!(new_profile.file_details.contains_key(&file1_path));
+        let detail1 = new_profile.file_details.get(&file1_path).unwrap();
+        assert_eq!(detail1.checksum, "cs1");
+        assert_eq!(detail1.token_count, 10); // As per mock
     }
 
     #[test]
@@ -469,9 +555,76 @@ mod tests {
             root_path_for_scan: PathBuf::from("/root"),
             cached_current_token_count: 0,
         };
-        let new_profile =
-            session_data.create_profile_from_session_state("ProfileNoArchive".to_string());
+        let mock_token_counter = MockTokenCounter::new(0);
+        let new_profile = session_data
+            .create_profile_from_session_state("ProfileNoArchive".to_string(), &mock_token_counter);
         assert_eq!(new_profile.archive_path, None);
+        assert!(new_profile.file_details.is_empty());
+    }
+
+    #[test]
+    fn test_create_profile_from_session_state_file_read_error() {
+        let temp_dir = tempdir().unwrap();
+        let non_existent_path = temp_dir.path().join("non_existent.txt"); // Will cause read error
+
+        let mock_token_counter = MockTokenCounter::new(0);
+        let session_data = AppSessionData {
+            current_profile_name: None,
+            current_profile_cache: None,
+            file_nodes_cache: vec![FileNode {
+                path: non_existent_path.clone(),
+                name: "non_existent.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+                checksum: Some("cs_non_existent".to_string()),
+            }],
+            root_path_for_scan: temp_dir.path().to_path_buf(),
+            cached_current_token_count: 0,
+        };
+
+        let new_profile = session_data.create_profile_from_session_state(
+            "ProfileWithErrorFile".to_string(),
+            &mock_token_counter,
+        );
+        assert!(
+            new_profile.file_details.is_empty(),
+            "File details should be empty if file read failed."
+        );
+        assert!(new_profile.selected_paths.contains(&non_existent_path)); // Still marked as selected path
+    }
+
+    #[test]
+    fn test_create_profile_from_session_state_no_checksum() {
+        let temp_dir = tempdir().unwrap();
+        let (file_no_cs_path, _g_no_cs) =
+            create_temp_file_with_content(&temp_dir, "f_no_cs", "content no cs");
+
+        let mock_token_counter = MockTokenCounter::new(0);
+        let session_data = AppSessionData {
+            current_profile_name: None,
+            current_profile_cache: None,
+            file_nodes_cache: vec![FileNode {
+                path: file_no_cs_path.clone(),
+                name: "f_no_cs.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+                checksum: None, // No checksum
+            }],
+            root_path_for_scan: temp_dir.path().to_path_buf(),
+            cached_current_token_count: 0,
+        };
+
+        let new_profile = session_data.create_profile_from_session_state(
+            "ProfileWithNoCSFile".to_string(),
+            &mock_token_counter,
+        );
+        assert!(
+            new_profile.file_details.is_empty(),
+            "File details should be empty if file has no checksum."
+        );
+        assert!(new_profile.selected_paths.contains(&file_no_cs_path));
     }
 
     #[test]
