@@ -287,24 +287,28 @@ impl Win32ApiInternalState {
                 parent_control_id,
                 panel_id,
             } => {
-                todo!("CreatePanel command not yet implemented in command_executor")
+                command_executor::execute_create_panel(self, window_id, parent_control_id, panel_id)
             }
             PlatformCommand::CreateLabel {
                 window_id,
                 parent_panel_id,
                 label_id,
                 initial_text,
-            } => {
-                todo!("CreateLabel command not yet implemented in command_executor")
-            }
+            } => command_executor::execute_create_label(
+                self,
+                window_id,
+                parent_panel_id,
+                label_id,
+                initial_text,
+            ),
             PlatformCommand::UpdateLabelText {
                 window_id,
                 label_id,
                 text,
                 severity,
-            } => {
-                todo!("UpdateLabelText command not yet implemented in command_executor")
-            }
+            } => command_executor::execute_update_label_text(
+                self, window_id, label_id, text, severity,
+            ),
         }
     }
 }
@@ -357,6 +361,7 @@ impl PlatformInterface {
             menu_action_map: HashMap::new(),
             next_menu_item_id_counter: 30000, // Default starting ID for menu items
             layout_rules: None,
+            label_severities: HashMap::new(),
         };
 
         // Insert preliminary data into the active_windows map.

@@ -97,6 +97,11 @@ pub(crate) struct NativeWindowData {
      * If `None`, a default or hardcoded layout might be used (initially).
      */
     pub(crate) layout_rules: Option<Vec<LayoutRule>>,
+    /*
+     * Stores the current severity for each new status label, keyed by their logical ID.
+     * This is used by the WM_CTLCOLORSTATIC handler to set text color.
+     */
+    pub(crate) label_severities: HashMap<i32, MessageSeverity>,
 }
 
 impl NativeWindowData {
@@ -399,6 +404,28 @@ impl Win32ApiInternalState {
                                 SetBkMode(hdc_static_ctrl, TRANSPARENT);
                                 lresult_override =
                                     Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
+                            }
+                        } else {
+                            // Check if it's one of the new labels by looking up its control ID
+                            // (which is its logical ID for these new labels) in label_severities.
+                            // GetDlgCtrlID is needed here if the HWND doesn't directly map to logical ID.
+                            // For now, assuming controls map stores HWND against logical ID.
+                            let control_id_of_static =
+                                unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
+                            if let Some(severity) =
+                                window_data.label_severities.get(&control_id_of_static)
+                            {
+                                unsafe {
+                                    let color = match severity {
+                                        MessageSeverity::Error => COLORREF(0x000000FF), // Red
+                                        MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning
+                                        _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
+                                    };
+                                    SetTextColor(hdc_static_ctrl, color);
+                                    SetBkMode(hdc_static_ctrl, TRANSPARENT);
+                                    lresult_override =
+                                        Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
+                                }
                             }
                         }
                     }

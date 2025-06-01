@@ -30,8 +30,8 @@ use windows::{
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu, SetWindowTextW,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CHILD, WS_VISIBLE,
+                DestroyMenu, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu,
+                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CHILD, WS_VISIBLE,
             },
         },
     },
@@ -615,4 +615,229 @@ pub(crate) fn execute_close_window(
     window_id: WindowId,
 ) -> PlatformResult<()> {
     window_common::send_close_message(internal_state, window_id)
+}
+
+/*
+ * Executes the `CreatePanel` command.
+ * Creates a generic STATIC control to act as a panel. The panel can be a child
+ * of the main window or another control (identified by `parent_control_id`).
+ * The new panel's HWND is stored in `NativeWindowData.controls` mapped by `panel_id`.
+ */
+pub(crate) fn execute_create_panel(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    parent_control_id: Option<i32>,
+    panel_id: i32, // Logical ID for this new panel
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_create_panel for WinID {:?}, PanelID: {}, ParentControlID: {:?}",
+        window_id,
+        panel_id,
+        parent_control_id
+    );
+
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
+        PlatformError::OperationFailed("Failed to lock windows map for CreatePanel".into())
+    })?;
+
+    if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+        if window_data.controls.contains_key(&panel_id) {
+            return Err(PlatformError::OperationFailed(format!(
+                "Panel with logical ID {} already exists for window {:?}",
+                panel_id, window_id
+            )));
+        }
+
+        let hwnd_parent = match parent_control_id {
+            Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "Parent control with logical ID {} not found for CreatePanel in WinID {:?}",
+                    id, window_id
+                ))
+            })?,
+            None => window_data.hwnd, // Parent is the main window
+        };
+
+        if hwnd_parent.is_invalid() {
+            return Err(PlatformError::InvalidHandle(format!(
+                "Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
+                window_id, parent_control_id
+            )));
+        }
+
+        let hwnd_panel = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0), // Or WS_EX_CONTROLPARENT if it should manage tab order for children
+                WC_STATIC,          // Using a STATIC control as a simple panel container
+                None,               // No text for a simple panel
+                WS_CHILD | WS_VISIBLE, // Basic styles for a panel
+                0,
+                0,
+                10,
+                10, // Dummy position/size, layout rules will adjust
+                Some(hwnd_parent),
+                Some(HMENU(panel_id as *mut _)), // Use logical ID for the HMENU
+                Some(internal_state.h_instance),
+                None,
+            )?
+        };
+        window_data.controls.insert(panel_id, hwnd_panel);
+        log::debug!(
+            "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
+            panel_id,
+            window_id,
+            hwnd_panel
+        );
+        Ok(())
+    } else {
+        Err(PlatformError::InvalidHandle(format!(
+            "WindowId {:?} not found for CreatePanel",
+            window_id
+        )))
+    }
+}
+
+/*
+ * Executes the `CreateLabel` command.
+ * Creates a STATIC control (label) as a child of the specified parent panel.
+ * The label's HWND is stored in `NativeWindowData.controls` mapped by `label_id`.
+ * Its initial severity is set to Information in `label_severities`.
+ */
+pub(crate) fn execute_create_label(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    parent_panel_id: i32, // Logical ID of the parent panel
+    label_id: i32,        // Logical ID for this new label
+    initial_text: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_create_label for WinID {:?}, LabelID: {}, ParentPanelID: {}, Text: '{}'",
+        window_id,
+        label_id,
+        parent_panel_id,
+        initial_text
+    );
+
+    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
+        PlatformError::OperationFailed("Failed to lock windows map for CreateLabel".into())
+    })?;
+
+    if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+        if window_data.controls.contains_key(&label_id) {
+            return Err(PlatformError::OperationFailed(format!(
+                "Label with logical ID {} already exists for window {:?}",
+                label_id, window_id
+            )));
+        }
+
+        let hwnd_parent_panel = window_data
+            .get_control_hwnd(parent_panel_id)
+            .ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "Parent panel with logical ID {} not found for CreateLabel in WinID {:?}",
+                    parent_panel_id, window_id
+                ))
+            })?;
+
+        let hwnd_label = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                WC_STATIC,
+                &HSTRING::from(initial_text.as_str()),
+                WS_CHILD | WS_VISIBLE | SS_LEFT, // Basic label styles
+                0,
+                0,
+                10,
+                10, // Dummy position/size, layout rules will adjust
+                Some(hwnd_parent_panel),
+                Some(HMENU(label_id as *mut _)), // Use logical ID for the HMENU
+                Some(internal_state.h_instance),
+                None,
+            )?
+        };
+        window_data.controls.insert(label_id, hwnd_label);
+        window_data
+            .label_severities
+            .insert(label_id, MessageSeverity::Information); // Default to Information
+        log::debug!(
+            "CommandExecutor: Created label '{}' (LogicalID {}) for WinID {:?} with HWND {:?}",
+            initial_text,
+            label_id,
+            window_id,
+            hwnd_label
+        );
+        Ok(())
+    } else {
+        Err(PlatformError::InvalidHandle(format!(
+            "WindowId {:?} not found for CreateLabel",
+            window_id
+        )))
+    }
+}
+
+/*
+ * Executes the `UpdateLabelText` command.
+ * Updates the text and severity of a generic label control.
+ * The label is identified by its logical `label_id`.
+ */
+pub(crate) fn execute_update_label_text(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    label_id: i32, // Logical ID of the label
+    text: String,
+    severity: MessageSeverity,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_update_label_text for WinID {:?}, LabelID: {}, Text: '{}', Severity: {:?}",
+        window_id,
+        label_id,
+        text,
+        severity
+    );
+
+    let hwnd_label_for_api_call: Option<HWND>;
+
+    // Scope for the write lock on window_map to update label_severities
+    {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
+            PlatformError::OperationFailed("Failed to lock windows map for UpdateLabelText".into())
+        })?;
+
+        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+            hwnd_label_for_api_call = window_data.get_control_hwnd(label_id);
+            if hwnd_label_for_api_call.is_none() {
+                return Err(PlatformError::InvalidHandle(format!(
+                    "Label with logical ID {} not found for UpdateLabelText in WinID {:?}",
+                    label_id, window_id
+                )));
+            }
+            window_data.label_severities.insert(label_id, severity);
+        } else {
+            return Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for UpdateLabelText",
+                window_id
+            )));
+        }
+    } // Write lock released
+
+    // Now make WinAPI calls without holding the lock
+    if let Some(hwnd_label) = hwnd_label_for_api_call {
+        unsafe {
+            if SetWindowTextW(hwnd_label, &HSTRING::from(text)).is_err() {
+                return Err(PlatformError::OperationFailed(format!(
+                    "SetWindowTextW for label ID {} failed: {:?}",
+                    label_id,
+                    GetLastError()
+                )));
+            }
+            InvalidateRect(Some(hwnd_label), None, true); // Trigger repaint for WM_CTLCOLORSTATIC
+        }
+        Ok(())
+    } else {
+        // This case should have been caught above, but as a safeguard:
+        Err(PlatformError::InvalidHandle(format!(
+            "Label HWND for logical ID {} became invalid before API call in WinID {:?}",
+            label_id, window_id
+        )))
+    }
 }
