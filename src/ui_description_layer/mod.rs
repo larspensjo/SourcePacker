@@ -10,7 +10,7 @@ use crate::app_logic::ui_constants;
 use crate::platform_layer::{
     control_treeview::ID_TREEVIEW_CTRL,
     types::{DockStyle, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId},
-    window_common::{ID_STATUS_BAR_CTRL, STATUS_BAR_HEIGHT},
+    window_common::STATUS_BAR_HEIGHT,
 };
 
 /*
@@ -76,13 +76,6 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         control_id: ID_TREEVIEW_CTRL,
     });
 
-    // 4. Create *Old* Status Bar (will be removed in a later step)
-    commands.push(PlatformCommand::CreateStatusBar {
-        window_id,
-        control_id: ID_STATUS_BAR_CTRL, // The old, single status bar
-        initial_text: "Ready (Old)".to_string(),
-    });
-
     // --- New Status Bar Elements (Phase 5) ---
     // 4.a Create the Status Bar Panel (child of main window)
     commands.push(PlatformCommand::CreatePanel {
@@ -113,18 +106,11 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     // 5. Define Layout Rules for the controls
     let layout_rules = vec![
-        LayoutRule {
-            control_id: ID_STATUS_BAR_CTRL,
-            dock_style: DockStyle::Bottom,
-            order: 0, // At the very bottom
-            fixed_size: Some(STATUS_BAR_HEIGHT),
-            margin: (0, 0, 0, 0),
-        },
-        // New Status Bar Panel: Docks to the bottom, above the old one.
+        // New Status Bar Panel: Docks to the bottom.
         LayoutRule {
             control_id: ui_constants::STATUS_BAR_PANEL_ID,
             dock_style: DockStyle::Bottom,
-            order: 1, // Just above the old status bar
+            order: 0, // Now the primary bottom-docked item
             fixed_size: Some(STATUS_BAR_HEIGHT),
             margin: (0, 0, 0, 0),
         },

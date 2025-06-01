@@ -11,7 +11,7 @@ use crate::platform_layer::{
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -46,14 +46,6 @@ macro_rules! status_message {
 
         // Update UI status bar
         if let Some(ui_state_ref) = &$self.ui_state {
-            // Command for the OLD status bar
-            $self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id: ui_state_ref.window_id,
-                    text: text.clone(),
-                    severity: $severity,
-                });
-            // Command for the NEW general status label
             $self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
@@ -255,6 +247,47 @@ impl MyAppLogic {
                 items: descriptors,
             });
     }
+    /*
+     * Converts an `ArchiveStatus` enum to a user-friendly string.
+     * This function provides plain English descriptions for each status variant,
+     * making them more understandable in the UI. For I/O errors, it also
+     * attempts to describe common `io::ErrorKind` values.
+     */
+    fn archive_status_to_plain_string(status: &ArchiveStatus) -> String {
+        match status {
+            ArchiveStatus::UpToDate => "Up to date.".to_string(),
+            ArchiveStatus::NotYetGenerated => "Not yet generated.".to_string(),
+            ArchiveStatus::OutdatedRequiresUpdate => "Out of date.".to_string(),
+            ArchiveStatus::ArchiveFileMissing => "File missing.".to_string(), // This case is usually caught before check_archive_status
+            ArchiveStatus::NoFilesSelected => "No files selected.".to_string(),
+            ArchiveStatus::ErrorChecking(Some(kind)) => {
+                let kind_str = match kind {
+                    io::ErrorKind::NotFound => "file not found",
+                    io::ErrorKind::PermissionDenied => "permission denied",
+                    io::ErrorKind::ConnectionRefused => "connection refused",
+                    io::ErrorKind::ConnectionReset => "connection reset",
+                    io::ErrorKind::ConnectionAborted => "connection aborted",
+                    io::ErrorKind::NotConnected => "not connected",
+                    io::ErrorKind::AddrInUse => "address in use",
+                    io::ErrorKind::AddrNotAvailable => "address not available",
+                    io::ErrorKind::BrokenPipe => "broken pipe",
+                    io::ErrorKind::AlreadyExists => "already exists",
+                    io::ErrorKind::WouldBlock => "operation would block",
+                    io::ErrorKind::InvalidInput => "invalid input",
+                    io::ErrorKind::InvalidData => "invalid data",
+                    io::ErrorKind::TimedOut => "timed out",
+                    io::ErrorKind::WriteZero => "write zero",
+                    io::ErrorKind::Interrupted => "interrupted",
+                    io::ErrorKind::Unsupported => "unsupported operation",
+                    io::ErrorKind::UnexpectedEof => "unexpected end of file",
+                    io::ErrorKind::OutOfMemory => "out of memory",
+                    _ => "an I/O error occurred",
+                };
+                format!("Error: {}.", kind_str)
+            }
+            ArchiveStatus::ErrorChecking(None) => "Error: Unknown.".to_string(),
+        }
+    }
 
     pub(crate) fn update_current_archive_status(&mut self) {
         let ui_state_mut = match self.ui_state.as_mut() {
@@ -273,16 +306,14 @@ impl MyAppLogic {
             Some(p) => p,
             None => {
                 ui_state_mut.current_archive_status_for_ui = None;
-                let msg = "No profile loaded";
-                // This sends to OLD status bar AND NEW GENERAL label
-                app_info!(self, "{}", msg);
+                app_info!(self, "No profile loaded");
 
-                // Also update the DEDICATED archive label
+                let archive_label_text = "Archive: No profile loaded".to_string();
                 self.synchronous_command_queue
                     .push_back(PlatformCommand::UpdateLabelText {
                         window_id: main_window_id,
                         label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                        text: format!("Archive: {}", msg),
+                        text: archive_label_text,
                         severity: MessageSeverity::Information,
                     });
                 return;
@@ -295,30 +326,32 @@ impl MyAppLogic {
 
         ui_state_mut.current_archive_status_for_ui = Some(status.clone());
 
-        let status_text = format!("Archive: {:?}", status);
+        let plain_status_string = Self::archive_status_to_plain_string(&status);
+        let archive_label_text = format!("Archive: {}", plain_status_string);
+
         let severity_for_archive_msg = match status {
             ArchiveStatus::ErrorChecking(_) => MessageSeverity::Error,
             _ => MessageSeverity::Information,
         };
 
-        // Update the DEDICATED archive label
+        // Update the DEDICATED archive label with the plain English string
         self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateLabelText {
                 window_id: main_window_id,
                 label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                text: status_text.clone(), // Clone for this command
+                text: archive_label_text,
                 severity: severity_for_archive_msg,
             });
 
-        // If it's an error, also send it to the general status message system
-        // (which hits old status bar + new general label via the macro).
-        // Non-error archive statuses are only shown on the dedicated label.
+        // If it's an error, also send it to the general status message system.
+        // The general status message (via app_error!) will use the Debug representation
+        // of the status for more detailed logging, while the dedicated label uses plain English.
         if severity_for_archive_msg == MessageSeverity::Error {
-            app_error!(self, "{}", status_text);
+            app_error!(self, "Archive status error: {:?}", status);
         } else {
             log::debug!(
                 "AppLogic UpdateArchiveStatus (not an error): {}",
-                status_text
+                plain_status_string
             );
         }
     }
@@ -411,7 +444,6 @@ impl MyAppLogic {
 
         let token_text = format!("Tokens: {}", token_count);
 
-        // This sends to OLD status bar AND NEW GENERAL label via status_message! macro
         app_info!(self, "{}", token_text);
 
         // Additionally, send to the NEW DEDICATED token label
@@ -1060,7 +1092,6 @@ impl MyAppLogic {
         let token_count_for_display = self.app_session_data.cached_current_token_count;
         let token_text = format!("Tokens: {}", token_count_for_display);
 
-        // This sends to OLD status bar AND NEW GENERAL label via status_message! macro
         app_info!(self, "{}", token_text);
 
         // Additionally, send to the NEW DEDICATED token label

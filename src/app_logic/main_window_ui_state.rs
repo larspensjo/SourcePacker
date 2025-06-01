@@ -6,9 +6,10 @@
  * UI-specific status caches (like archive status), and temporary data for
  * dialog flows or pending UI actions.
  */
+use crate::app_logic::ui_constants;
 use crate::core::AppSessionData; // Import AppSessionData so it's in scope
 use crate::core::ArchiveStatus; // For current_archive_status_for_ui
-use crate::platform_layer::{MessageSeverity, PlatformCommand, TreeItemId, WindowId}; // Import PlatformCommand and MessageSeverity
+use crate::platform_layer::{MessageSeverity, PlatformCommand, TreeItemId, WindowId};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -60,6 +61,10 @@ impl MainWindowUiState {
         }
     }
 
+    /*
+     * Composes the main window title string based on the current application session data.
+     * Includes the application name, current profile name (if any), and archive path status.
+     */
     pub fn compose_window_title(app_session_data: &AppSessionData) -> String {
         let mut title = "SourcePacker".to_string();
         if let Some(profile_cache) = &app_session_data.current_profile_cache {
@@ -73,7 +78,17 @@ impl MainWindowUiState {
         title
     }
 
-    // This version returns commands. MyAppLogic queues them.
+    /*
+     * Builds a list of `PlatformCommand`s for initially displaying profile information.
+     * This function is intended to generate commands that reflect the state of a newly
+     * activated profile. It includes setting the window title, and commands to update
+     * the general status label, the dedicated token count label, and the dedicated
+     * archive status label. It also includes a command to set the enabled state of the
+     * "Generate Archive" button.
+     *
+     * Note: TreeView population is handled separately by `MyAppLogic` as it involves
+     * more complex recursive descriptor building.
+     */
     pub fn build_initial_profile_display_commands(
         &self,
         app_session_data: &AppSessionData, // Needs to read from AppSessionData
@@ -82,20 +97,15 @@ impl MainWindowUiState {
     ) -> Vec<PlatformCommand> {
         let mut commands = Vec::new();
         let window_id = self.window_id;
+
         // 1. Set Window Title
         let title = Self::compose_window_title(app_session_data);
         commands.push(PlatformCommand::SetWindowTitle { window_id, title });
-        // 2. Populate Tree View
-        // In Phase 3, self.build_tree_item_descriptors() would be a method here.
-        // For now, let's imagine it's called and returns descriptors.
-        // let tree_items = self.build_tree_item_descriptors(&app_session_data.file_nodes_cache);
-        // commands.push(PlatformCommand::PopulateTreeView { window_id, items: tree_items });
-        // For now, MyAppLogic would call its own build_tree_item_descriptors_recursive
-        // and this helper in MainWindowUiState might not exist yet, or be simpler.
-        // The plan for Phase 3 is to move build_tree_item_descriptors here.
-        // 3. Initial Status Message (passed in)
-        commands.push(PlatformCommand::UpdateStatusBarText {
+
+        // 2. Initial Status Message (General Label)
+        commands.push(PlatformCommand::UpdateLabelText {
             window_id,
+            label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
             text: initial_status_message,
             severity: if scan_was_successful {
                 MessageSeverity::Information
@@ -104,31 +114,67 @@ impl MainWindowUiState {
             },
         });
 
-        // 4. Token Count (data from AppSessionData)
-        commands.push(PlatformCommand::UpdateStatusBarText {
+        // 3. Token Count (General Label and Dedicated Token Label)
+        let token_text = format!("Tokens: {}", app_session_data.cached_current_token_count);
+        // Update dedicated token label
+        commands.push(PlatformCommand::UpdateLabelText {
             window_id,
-            text: format!("Tokens: {}", app_session_data.cached_current_token_count),
+            label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+            text: token_text,
             severity: MessageSeverity::Information,
         });
 
-        // 5. Archive Status (data from self.current_archive_status_for_ui, which MyAppLogic would update first)
-        // This part needs careful thought: update_current_archive_status is still in MyAppLogic.
-        // So, MyAppLogic would call that, THEN call this method,
-        // or this method needs the Archiver passed to it to check status,
-        // or it just relies on self.current_archive_status_for_ui being up-to-date.
+        // 4. Archive Status (Dedicated Archive Label, and General Label if error)
+        // Relies on self.current_archive_status_for_ui being up-to-date.
+        // MyAppLogic should call its update_current_archive_status (which updates this field)
+        // before calling this command builder.
         if let Some(status) = &self.current_archive_status_for_ui {
-            let status_text = format!("Archive: {:?}", status);
-            commands.push(PlatformCommand::UpdateStatusBarText {
+            let archive_status_text = format!("Archive: {:?}", status);
+            let archive_severity = if matches!(status, ArchiveStatus::ErrorChecking(_)) {
+                MessageSeverity::Error
+            } else {
+                MessageSeverity::Information
+            };
+
+            // Update dedicated archive label
+            commands.push(PlatformCommand::UpdateLabelText {
                 window_id,
-                text: status_text,
-                severity: if matches!(status, ArchiveStatus::ErrorChecking(_)) {
-                    MessageSeverity::Error
-                } else {
-                    MessageSeverity::Information
-                },
+                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                text: archive_status_text.clone(),
+                severity: archive_severity,
+            });
+
+            // If it's an error, also update the general status label
+            if archive_severity == MessageSeverity::Error {
+                commands.push(PlatformCommand::UpdateLabelText {
+                    window_id,
+                    label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+                    text: archive_status_text,
+                    severity: MessageSeverity::Error,
+                });
+            }
+        } else {
+            // Case: No profile or archive status not yet determined.
+            // MyAppLogic.update_current_archive_status handles this message for active UI.
+            // If this command builder is called before that, we send a default.
+            let no_profile_msg_archive_label = "Archive: No profile loaded".to_string();
+            commands.push(PlatformCommand::UpdateLabelText {
+                window_id,
+                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                text: no_profile_msg_archive_label.clone(),
+                severity: MessageSeverity::Information,
+            });
+            // Also update general status if no profile, consistent with update_current_archive_status
+            commands.push(PlatformCommand::UpdateLabelText {
+                window_id,
+                label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+                text: "No profile loaded".to_string(), // Shorter message for general status
+                severity: MessageSeverity::Information,
             });
         }
-        // 6. Save Button State
+
+        // 5. Save Button State (This button ID might be from an older design phase)
+        // The Step 5.F plan does not remove this button, so the command is retained.
         let save_button_enabled = app_session_data
             .current_profile_cache
             .as_ref()
@@ -139,8 +185,7 @@ impl MainWindowUiState {
             control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
             enabled: save_button_enabled,
         });
-        // 7. Show Window (This should arguably be the very last thing MyAppLogic does)
-        // commands.push(PlatformCommand::ShowWindow { window_id });
+
         commands
     }
 }
@@ -153,14 +198,99 @@ mod tests {
 
     #[test]
     fn test_main_window_ui_state_new() {
+        // Arrange
         let test_window_id = WindowId(42);
+
+        // Act
         let ui_state = MainWindowUiState::new(test_window_id);
 
+        // Assert
         assert_eq!(ui_state.window_id, test_window_id);
         assert!(ui_state.path_to_tree_item_id.is_empty());
         assert_eq!(ui_state.next_tree_item_id_counter, 1);
         assert!(ui_state.current_archive_status_for_ui.is_none());
         assert!(ui_state.pending_action.is_none());
         assert!(ui_state.pending_new_profile_name.is_none());
+    }
+
+    #[test]
+    fn test_build_initial_profile_display_commands_generates_update_label_text() {
+        // Arrange
+        let window_id = WindowId(1);
+        let ui_state = MainWindowUiState::new(window_id);
+        let mut app_session_data = AppSessionData::new();
+        app_session_data.cached_current_token_count = 123;
+        // Simulate MyAppLogic having updated this field:
+        // ui_state.current_archive_status_for_ui = Some(ArchiveStatus::UpToDate); // This is not directly settable on MainWindowUiState
+
+        let initial_status = "Profile loaded.".to_string();
+
+        // Act
+        let commands = ui_state.build_initial_profile_display_commands(
+            &app_session_data,
+            initial_status.clone(),
+            true, // scan_was_successful
+        );
+
+        // Assert
+        let mut found_general_initial_status = false;
+        let mut found_general_token_status = false;
+        let mut found_dedicated_token_status = false;
+        let mut found_dedicated_archive_status = false;
+
+        for cmd in &commands {
+            if let PlatformCommand::UpdateLabelText {
+                label_id,
+                text,
+                severity,
+                ..
+            } = cmd
+            {
+                if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID {
+                    if text == &initial_status && *severity == MessageSeverity::Information {
+                        found_general_initial_status = true;
+                    }
+                    if text == "Tokens: 123" && *severity == MessageSeverity::Information {
+                        found_general_token_status = true;
+                    }
+                } else if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID {
+                    if text == "Tokens: 123" && *severity == MessageSeverity::Information {
+                        found_dedicated_token_status = true;
+                    }
+                } else if *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID {
+                    // current_archive_status_for_ui is None by default in this test setup
+                    if text == "Archive: No profile loaded"
+                        && *severity == MessageSeverity::Information
+                    {
+                        found_dedicated_archive_status = true;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            found_general_initial_status,
+            "Initial status message for general label not found or incorrect."
+        );
+        assert!(
+            found_general_token_status,
+            "Token status message for general label not found or incorrect."
+        );
+        assert!(
+            found_dedicated_token_status,
+            "Token status message for dedicated token label not found or incorrect."
+        );
+        assert!(
+            found_dedicated_archive_status,
+            "Default archive status for dedicated archive label not found or incorrect."
+        );
+
+        // Check for SetWindowTitle and SetControlEnabled as well
+        assert!(
+            commands
+                .iter()
+                .any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { .. }))
+        );
+        assert!(commands.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == crate::app_logic::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC)));
     }
 }

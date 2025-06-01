@@ -243,11 +243,6 @@ pub enum PlatformCommand {
         filter_spec: String,
         initial_dir: Option<PathBuf>,
     },
-    UpdateStatusBarText {
-        window_id: WindowId,
-        text: String,
-        severity: MessageSeverity,
-    },
     ShowProfileSelectionDialog {
         window_id: WindowId,
         available_profiles: Vec<String>,
@@ -282,12 +277,6 @@ pub enum PlatformCommand {
         window_id: WindowId,
         control_id: i32, // The existing logical ID (e.g., ID_BUTTON_GENERATE_ARCHIVE)
         text: String,
-        // Position/size will be managed by DefineLayout command.
-    },
-    CreateStatusBar {
-        window_id: WindowId,
-        control_id: i32, // The existing logical ID (e.g., ID_STATUS_BAR_CTRL)
-        initial_text: String,
         // Position/size will be managed by DefineLayout command.
     },
     CreateTreeView {

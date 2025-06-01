@@ -14,9 +14,7 @@ use super::types::{
 };
 use super::window_common; // For window_common operations like set_window_title
 
-use crate::platform_layer::window_common::{
-    BUTTON_AREA_HEIGHT, ID_STATUS_BAR_CTRL, SS_LEFT, WC_BUTTON, WC_STATIC,
-};
+use crate::platform_layer::window_common::{BUTTON_AREA_HEIGHT, SS_LEFT, WC_BUTTON, WC_STATIC};
 use std::sync::Arc;
 use windows::{
     Win32::{
@@ -73,100 +71,6 @@ pub(crate) fn execute_define_layout(
             "WindowId {:?} not found for execute_define_layout",
             window_id
         )))
-    }
-}
-
-/*
- * Executes the `UpdateStatusBarText` command.
- * It updates the stored text and severity in `NativeWindowData` and then
- * calls the WinAPI functions to update the visual appearance of the status bar.
- * The lock on `window_map` is released before making WinAPI calls that might
- * trigger synchronous messages (like WM_CTLCOLORSTATIC) to prevent deadlocks.
- */
-pub(crate) fn execute_update_status_bar_text(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
-    text: String,
-    severity: MessageSeverity,
-) -> PlatformResult<()> {
-    // Logging of the status message content is now centralized here.
-    match severity {
-        MessageSeverity::Error => {
-            log::error!("Platform Status (WinID {:?} ERROR): {}", window_id, text)
-        }
-        MessageSeverity::Warning => {
-            log::warn!("Platform Status (WinID {:?} WARN):  {}", window_id, text)
-        }
-        MessageSeverity::Information => {
-            log::info!("Platform Status (WinID {:?} INFO): {}", window_id, text)
-        }
-        MessageSeverity::Debug => {
-            log::debug!("Platform Status (WinID {:?} DEBUG): {}", window_id, text)
-        }
-        MessageSeverity::None => {
-            log::debug!("Platform Status (WinID {:?} CLEAR)", window_id)
-        }
-    }
-
-    let mut text_to_set_on_control: Option<String> = None;
-    let mut hwnd_status_bar_for_api_call: Option<HWND> = None;
-
-    // Scope for the write lock on window_map
-    {
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
-            PlatformError::OperationFailed("Failed to lock windows map for status update".into())
-        })?;
-
-        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            if severity == MessageSeverity::None {
-                window_data.status_bar_current_text.clear();
-                window_data.status_bar_current_severity = MessageSeverity::None;
-                text_to_set_on_control = Some("".to_string());
-            } else if severity >= window_data.status_bar_current_severity {
-                window_data.status_bar_current_text = text.clone();
-                window_data.status_bar_current_severity = severity;
-                text_to_set_on_control = Some(text.clone());
-            } else {
-                log::debug!(
-                    "Platform Status (WinID {:?} IGNORED_LOWER_SEVERITY_UI_UPDATE): current severity {:?}, incoming {:?})",
-                    window_id,
-                    window_data.status_bar_current_severity,
-                    severity
-                );
-                return Ok(());
-            }
-            hwnd_status_bar_for_api_call = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL);
-        } else {
-            return Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for status bar update",
-                window_id
-            )));
-        }
-    } // Write lock released
-
-    if let Some(hwnd_status) = hwnd_status_bar_for_api_call {
-        if let Some(final_text) = text_to_set_on_control {
-            unsafe {
-                if SetWindowTextW(hwnd_status, &HSTRING::from(final_text)).is_err() {
-                    return Err(PlatformError::OperationFailed(format!(
-                        "SetWindowTextW for status bar failed: {:?}",
-                        GetLastError()
-                    )));
-                }
-                InvalidateRect(Some(hwnd_status), None, true);
-            }
-            Ok(())
-        } else {
-            Ok(())
-        }
-    } else {
-        log::error!(
-            "Platform Warning: Status bar HWND (ID {}) not found for WindowId {:?} during UI update. Text was: '{}'",
-            ID_STATUS_BAR_CTRL,
-            window_id,
-            text,
-        );
-        Ok(())
     }
 }
 
@@ -443,62 +347,6 @@ pub(crate) fn execute_create_button(
     } else {
         Err(PlatformError::InvalidHandle(format!(
             "WindowId {:?} not found for CreateButton",
-            window_id
-        )))
-    }
-}
-
-/*
- * Executes the `CreateStatusBar` command.
- * Creates a native status bar control (STATIC) and stores its HWND.
- */
-pub(crate) fn execute_create_status_bar(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
-    control_id: i32,
-    initial_text: String,
-) -> PlatformResult<()> {
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
-        PlatformError::OperationFailed("Failed to lock windows map for status bar creation".into())
-    })?;
-
-    if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-        if window_data.controls.contains_key(&control_id) {
-            return Err(PlatformError::OperationFailed(format!(
-                "Status bar with ID {} already present for window {:?}",
-                control_id, window_id
-            )));
-        }
-        let hwnd_status_bar = unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                WC_STATIC,
-                &HSTRING::from(initial_text.as_str()),
-                WS_CHILD | WS_VISIBLE | SS_LEFT,
-                0,
-                0,
-                0,
-                0, // Dummies, WM_SIZE/LayoutRules will adjust
-                Some(window_data.hwnd),
-                Some(HMENU(control_id as *mut _)),
-                Some(internal_state.h_instance),
-                None,
-            )?
-        };
-        window_data.controls.insert(control_id, hwnd_status_bar);
-        window_data.status_bar_current_text = initial_text.clone();
-        window_data.status_bar_current_severity = MessageSeverity::Information;
-        log::debug!(
-            "CommandExecutor: Created status bar (ID {}) for window {:?} with HWND {:?}, initial text: '{}'",
-            control_id,
-            window_id,
-            hwnd_status_bar,
-            initial_text
-        );
-        Ok(())
-    } else {
-        Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for CreateStatusBar",
             window_id
         )))
     }

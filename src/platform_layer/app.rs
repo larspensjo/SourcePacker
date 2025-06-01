@@ -202,11 +202,6 @@ impl Win32ApiInternalState {
                 filter_spec,
                 initial_dir,
             ),
-            PlatformCommand::UpdateStatusBarText {
-                window_id,
-                text,
-                severity,
-            } => command_executor::execute_update_status_bar_text(self, window_id, text, severity),
             PlatformCommand::ShowProfileSelectionDialog {
                 window_id,
                 available_profiles,
@@ -262,16 +257,6 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_create_button(self, window_id, control_id, text),
-            PlatformCommand::CreateStatusBar {
-                window_id,
-                control_id,
-                initial_text,
-            } => command_executor::execute_create_status_bar(
-                self,
-                window_id,
-                control_id,
-                initial_text,
-            ),
             PlatformCommand::CreateTreeView {
                 window_id,
                 control_id,
@@ -356,8 +341,6 @@ impl PlatformInterface {
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
-            status_bar_current_text: String::new(),
-            status_bar_current_severity: MessageSeverity::None,
             menu_action_map: HashMap::new(),
             next_menu_item_id_counter: 30000, // Default starting ID for menu items
             layout_rules: None,
@@ -516,20 +499,6 @@ impl PlatformInterface {
         unsafe {
             let mut msg = MSG::default();
             loop {
-                // Reset status bar severity display state for all windows.
-                if let Ok(mut windows_map_guard) = self.internal_state.active_windows.write() {
-                    for (_id, window_data) in windows_map_guard.iter_mut() {
-                        window_data.status_bar_current_severity = MessageSeverity::Information;
-                        if window_data.status_bar_current_text.is_empty() {
-                            window_data.status_bar_current_severity = MessageSeverity::None;
-                        }
-                    }
-                } else {
-                    log::warn!(
-                        "Platform: Failed to lock active_windows to reset status bar severity state."
-                    );
-                }
-
                 // Process commands from the application logic queue.
                 loop {
                     let command_to_execute: Option<PlatformCommand> = {

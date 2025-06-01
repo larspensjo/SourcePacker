@@ -689,16 +689,12 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     let profile_loaded_text = format!("Profile '{}' loaded.", last_profile_name_to_load);
 
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateStatusBarText for 'Tokens: 5'. Got: {:?}", cmds
-    );
-    assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds
+        "Expected general label UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds
     );
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *text == profile_loaded_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateStatusBarText for profile loaded. Got: {:?}", cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == token_status_text )).is_some(),
+        "Expected dedicated token label UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds
     );
     assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_text && *severity == MessageSeverity::Information )).is_some(),
@@ -765,15 +761,14 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
 
     let token_status_text = "Tokens: 0";
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateStatusBarText for 'Tokens: 0'. Got: {:?}", cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected general label UpdateLabelText for 'Tokens: 0'. Got: {:?}", cmds
     );
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateLabelText for 'Tokens: 0'. Got: {:?}", cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == token_status_text )).is_some(),
+        "Expected dedicated token label UpdateLabelText for 'Tokens: 0'. Got: {:?}", cmds
     );
 }
-
 #[test]
 fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
     let (mut logic, mock_config_manager, mock_profile_manager, _, _, _, _) =
@@ -786,7 +781,7 @@ fn test_on_main_window_created_no_last_profile_triggers_initiate_flow() {
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, text, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -819,7 +814,7 @@ fn test_on_main_window_created_no_last_profile_but_existing_profiles_triggers_in
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, text, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Information && text.contains("No last profile name found"))).is_some());
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::ShowProfileSelectionDialog { emphasize_create_new: false, available_profiles: ap, .. } if *ap == existing_profiles)).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
@@ -843,7 +838,7 @@ fn test_on_main_window_created_load_last_profile_name_fails_triggers_initiate_fl
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Error && text.contains("Error loading last profile name"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, text, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text.contains("Error loading last profile name"))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -881,7 +876,7 @@ fn test_on_main_window_created_load_profile_fails_triggers_initiate_flow() {
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text, .. } if *severity == MessageSeverity::Error && text.contains("Failed to load last profile") && text.contains(last_profile_name))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, text, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text.contains("Failed to load last profile") && text.contains(last_profile_name))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -988,7 +983,14 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
         !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 0")
+        ).is_some(),
+        "Expected dedicated token label for 'Tokens: 0'. Got: {:?}", cmds
+    );
 }
 
 #[test]
@@ -1011,7 +1013,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text.contains("Could not load profile"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text.contains("Could not load profile"))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -1105,7 +1107,7 @@ fn test_input_dialog_completed_for_new_profile_name_invalid() {
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Warning && text.contains("Invalid profile name"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Warning && text.contains("Invalid profile name"))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -1205,8 +1207,14 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
         !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("New profile '{}' created and loaded.", profile_name)))).is_some());
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text,..} if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text.contains(&format!("New profile '{}' created and loaded.", profile_name)))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 0")
+        ).is_some()
+    );
 }
 
 #[test]
@@ -1247,8 +1255,7 @@ fn test_initiate_profile_selection_failure_to_list_profiles() {
     ))));
     logic.initiate_profile_selection_or_creation(main_window_id);
     let cmds = logic.test_drain_commands();
-
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, text,.. } if *severity == MessageSeverity::Error && text.contains("Failed to list profiles"))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, text,.. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text.contains("Failed to list profiles"))).is_some());
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -1359,8 +1366,14 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("Profile '{}' loaded and scanned.", profile_to_load_name)))).is_some());
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 7" && *severity == MessageSeverity::Information )).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText {label_id, text, ..} if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text.contains(&format!("Profile '{}' loaded and scanned.", profile_to_load_name)))).is_some());
+    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 7" && *severity == MessageSeverity::Information )).is_some());
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 7")
+        ).is_some()
+    );
 }
 
 #[test]
@@ -1389,22 +1402,7 @@ fn test_menu_set_archive_path_cancelled() {
         window_id: main_window_id,
         result: None,
     });
-    let cmds = logic.test_drain_commands();
-
-    // SetControlEnabled for the button is no longer sent.
-    // The command queue might be empty or only contain debug status messages.
-    let _functional_cmds = cmds // Renamed as it might be empty
-        .into_iter()
-        .filter(|cmd| {
-            !matches!(
-                cmd,
-                PlatformCommand::UpdateStatusBarText {
-                    severity: MessageSeverity::Debug, // Assuming Debug is used for these informational logs
-                    ..
-                }
-            )
-        })
-        .collect::<Vec<_>>();
+    let _cmds = logic.test_drain_commands(); // Drain commands to avoid interference
     // No specific command is expected here now other than potential status updates.
     // For example, if _update_generate_archive_menu_item_state logged something via app_info.
     // If it only logs via log::debug, then functional_cmds would likely be empty.
@@ -1479,13 +1477,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         "Expected dedicated archive label update for error. Got: {:?}",
         cmds
     );
-    // 2. General status (old bar + new general label) via app_error!
-    assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
-            if *severity == MessageSeverity::Error && text == &archive_status_text_for_general_status
-        )).is_some(),
-        "Expected old status bar error for archive. Got: {:?}", cmds
-    );
+    // 2. General status (new general label) via app_error!
     assert!(
         find_command(
             &cmds,
@@ -1502,10 +1494,6 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
 
     // Verify token count message (will be 0)
     let token_text = "Tokens: 0";
-    assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateStatusBarText for 'Tokens: 0'. Got: {:?}", cmds
-    );
     assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information )).is_some(),
         "Expected UpdateLabelText for general label for 'Tokens: 0'. Got: {:?}", cmds
@@ -1577,11 +1565,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
     );
     let initial_cmds = logic.test_drain_commands();
     assert!(
-        initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 2" && *severity == MessageSeverity::Information)),
-        "Expected UpdateStatusBarText for 'Tokens: 2'. Got: {:?}", initial_cmds
-    );
-    assert!(
-        initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 2" && *severity == MessageSeverity::Information)),
+        initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 2" && *severity == MessageSeverity::Information)),
         "Expected UpdateLabelText for 'Tokens: 2'. Got: {:?}", initial_cmds
     );
 
@@ -1600,11 +1584,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
     );
     let cmds_after_toggle1 = logic.test_drain_commands();
     assert!(
-        cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 5" && *severity == MessageSeverity::Information)),
-        "Expected UpdateStatusBarText for 'Tokens: 5'. Got: {:?}", cmds_after_toggle1
-    );
-    assert!(
-        cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 5" && *severity == MessageSeverity::Information)),
+        cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 5" && *severity == MessageSeverity::Information)),
         "Expected UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds_after_toggle1
     );
 
@@ -1623,11 +1603,7 @@ fn test_token_count_updates_on_tree_item_toggle() {
     );
     let cmds_after_toggle2 = logic.test_drain_commands();
     assert!(
-        cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
-        "Expected UpdateStatusBarText for 'Tokens: 3'. Got: {:?}", cmds_after_toggle2
-    );
-    assert!(
-        cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 3" && *severity == MessageSeverity::Information)),
+        cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 3" && *severity == MessageSeverity::Information)),
         "Expected UpdateLabelText for 'Tokens: 3'. Got: {:?}", cmds_after_toggle2
     );
 }
@@ -1710,11 +1686,7 @@ fn test_token_count_updates_on_profile_activation() {
     let cmds = logic.test_drain_commands();
     let token_text = "Tokens: 10";
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == token_text && *severity == MessageSeverity::Information)),
-        "Expected UpdateStatusBarText for 'Tokens: 10'. Got: {:?}", cmds
-    );
-    assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
         "Expected UpdateLabelText for 'Tokens: 10'. Got: {:?}", cmds
     );
 }
@@ -1767,11 +1739,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
     let cmds = logic.test_drain_commands();
     let token_text = "Tokens: 12";
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == token_text && *severity == MessageSeverity::Information)),
-        "Expected UpdateStatusBarText 'Tokens: 12'. Got: {:?}", cmds
-    );
-    assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
         "Expected UpdateLabelText 'Tokens: 12'. Got: {:?}", cmds
     );
 }
@@ -1834,17 +1802,12 @@ fn test_menu_action_generate_archive_triggers_logic() {
     assert!(
         find_command(
             &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
-            if severity == &MessageSeverity::Information && text == &success_text)
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Information && text == &success_text)
         )
         .is_some(),
-        "Expected old status success message. Got: {:?}",
+        "Expected new label success message. Got: {:?}",
         cmds
-    );
-    assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
-            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Information && text == &success_text)).is_some(),
-        "Expected new label success message. Got: {:?}", cmds
     );
 }
 
@@ -1867,8 +1830,8 @@ fn test_menu_action_generate_archive_no_profile_shows_error() {
     assert!(
         find_command(
             &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
-            if severity == &MessageSeverity::Error && text.contains("No profile loaded"))
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No profile loaded"))
         )
         .is_some(),
         "Expected 'No profile loaded' error status. Got: {:?}",
@@ -1904,8 +1867,8 @@ fn test_menu_action_generate_archive_no_archive_path_shows_error() {
     assert!(
         find_command(
             &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
-            if severity == &MessageSeverity::Error && text.contains("No archive path set"))
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No archive path set"))
         )
         .is_some(),
         "Expected 'No archive path set' error status. Got: {:?}",
@@ -1929,17 +1892,7 @@ fn test_update_token_count_queues_all_relevant_commands() {
     let cmds = logic.test_drain_commands();
 
     // Assert
-    // 1. Check for the old UpdateStatusBarText command (from app_info!)
-    assert!(
-        find_command(&cmds, |cmd| {
-            matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id, text, severity }
-                if *window_id == main_window_id && text == expected_message && *severity == expected_severity)
-        }).is_some(),
-        "Expected UpdateStatusBarText command for old status bar. Got: {:?}",
-        cmds
-    );
-
-    // 2. Check for the new UpdateLabelText command for the general label (from app_info!)
+    // 1. Check for the new UpdateLabelText command for the general label (from app_info!)
     assert!(
         find_command(&cmds, |cmd| {
             matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
@@ -1953,7 +1906,7 @@ fn test_update_token_count_queues_all_relevant_commands() {
         cmds
     );
 
-    // 3. Check for the new UpdateLabelText command for the dedicated token label (explicitly queued)
+    // 2. Check for the new UpdateLabelText command for the dedicated token label (explicitly queued)
     assert!(
         find_command(&cmds, |cmd| {
             matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
@@ -1967,11 +1920,11 @@ fn test_update_token_count_queues_all_relevant_commands() {
         cmds
     );
 
-    // Ensure exactly these three commands are present.
+    // Ensure exactly these two commands are present.
     assert_eq!(
         cmds.len(),
-        3,
-        "Expected exactly three commands (old status, new general label, new dedicated token label). Got: {:?}",
+        2,
+        "Expected exactly two commands (new general label, new dedicated token label). Got: {:?}",
         cmds
     );
 }
@@ -2018,19 +1971,6 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     );
     // Check for general status update (Error, via app_error!)
     assert!(
-        find_command(
-            &cmds_error,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id, text, severity }
-                if *window_id == main_window_id &&
-                   text == &error_text && // app_error! uses the same text
-                   *severity == MessageSeverity::Error
-            )
-        )
-        .is_some(),
-        "Expected UpdateStatusBarText from app_error! (Error). Got: {:?}",
-        cmds_error
-    );
-    assert!(
         find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && // From app_error!
@@ -2064,7 +2004,6 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     );
     // Ensure no general error messages were sent for informational status
     let general_error_cmd_count = cmds_info.iter().filter(|cmd| {
-        matches!(cmd, PlatformCommand::UpdateStatusBarText { severity, .. } if *severity == MessageSeverity::Error) ||
         matches!(cmd, PlatformCommand::UpdateLabelText { label_id, severity, .. }
             if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error)
     }).count();
@@ -2096,19 +2035,6 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
         cmds_no_profile
     );
     // Check for general status update (via app_info!)
-    assert!(
-        find_command(
-            &cmds_no_profile,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id, text, severity }
-                if *window_id == main_window_id &&
-                   text == no_profile_msg_general &&
-                   *severity == MessageSeverity::Information
-            )
-        )
-        .is_some(),
-        "Expected UpdateStatusBarText from app_info! (No Profile). Got: {:?}",
-        cmds_no_profile
-    );
     assert!(
         find_command(&cmds_no_profile, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
@@ -2169,19 +2095,6 @@ fn test_update_token_count_routes_to_dedicated_label() {
 
     // Check for general status update (via app_info!)
     assert!(
-        find_command(
-            &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id, text, severity }
-                if *window_id == main_window_id &&
-                   text == expected_token_text &&
-                   *severity == expected_severity
-            )
-        )
-        .is_some(),
-        "Expected UpdateStatusBarText from app_info!. Got: {:?}",
-        cmds
-    );
-    assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && // From app_info!
@@ -2192,11 +2105,11 @@ fn test_update_token_count_routes_to_dedicated_label() {
         cmds
     );
 
-    // Should be 3 commands: 1 for dedicated token label, 2 from app_info! (old status + general label)
+    // Should be 2 commands: 1 for dedicated token label, 1 from app_info! (general label)
     assert_eq!(
         cmds.len(),
-        3,
-        "Expected 3 commands for token update. Got: {:?}",
+        2,
+        "Expected 2 commands for token update. Got: {:?}",
         cmds
     );
 }

@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
-pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003;
+// pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003; // Removed as per Step 5.F
 
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
@@ -51,7 +51,7 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 pub const BUTTON_AREA_HEIGHT: i32 = 50;
 pub const STATUS_BAR_HEIGHT: i32 = 25;
 pub(crate) const BUTTON_X_PADDING: i32 = 10;
-const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // Used by old logic, new logic uses rule margins
+const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // Used by old layout logic, new logic uses rule margins
 pub(crate) const BUTTON_WIDTH: i32 = 150;
 pub(crate) const BUTTON_HEIGHT: i32 = 30;
 
@@ -61,10 +61,11 @@ pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
 /*
  * Holds native data associated with a specific window managed by the platform layer.
  * This includes the native window handle (`HWND`), a map of control IDs to their
- * `HWND`s, any control-specific states (like for the TreeView), the current status
- * bar text and severity, a map for menu item actions (`menu_action_map`),
+ * `HWND`s, any control-specific states (like for the TreeView),
+ * a map for menu item actions (`menu_action_map`),
  * a counter for generating unique menu item IDs (`next_menu_item_id_counter`),
- * and a list of layout rules (`layout_rules`) for positioning controls.
+ * a list of layout rules (`layout_rules`) for positioning controls, and
+ * severity information for new labels.
  */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
@@ -80,8 +81,6 @@ pub(crate) struct NativeWindowData {
      * keyed by their logical control ID.
      */
     pub(crate) controls: HashMap<i32, HWND>,
-    pub(crate) status_bar_current_text: String,
-    pub(crate) status_bar_current_severity: MessageSeverity,
     /*
      * Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
      * This map is populated when the menu is created.
@@ -126,16 +125,12 @@ impl NativeWindowData {
         id
     }
 
-    // Helper to check if rules for the main three controls are present.
+    // Helper to check if rules for the main controls are present.
     // Used by handle_wm_size to decide which layout logic path to take.
-    // This might need adjustment or removal as the new layout system becomes primary.
     fn has_main_layout_rules(&self) -> bool {
-        self.layout_rules.as_ref().map_or(false, |rules| {
-            // For this transitional phase, we'll consider the new layout active if any rules are defined.
-            // A more robust check might ensure rules for specific critical components exist.
-            // For now, if ui_description_layer provides *any* layout rules, we try to use the new system.
-            !rules.is_empty()
-        })
+        self.layout_rules
+            .as_ref()
+            .map_or(false, |rules| !rules.is_empty())
     }
 }
 
@@ -381,52 +376,34 @@ impl Win32ApiInternalState {
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
             }
             WM_CTLCOLORSTATIC => {
+                // TODO: Break this out into a separate function
                 let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
                 let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
 
-                if let Some(windows_guard) = self.active_windows.read().ok() {
-                    if let Some(window_data) = windows_guard.get(&window_id) {
-                        // First, check the old status bar
-                        if Some(hwnd_static_ctrl_from_msg)
-                            == window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
+                let mut handled = false;
+                if let Some(windows_map_guard) = self.active_windows.read().ok() {
+                    if let Some(window_data) = windows_map_guard.get(&window_id) {
+                        let control_id_of_static =
+                            unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
+                        if let Some(severity) =
+                            window_data.label_severities.get(&control_id_of_static)
                         {
                             unsafe {
-                                if window_data.status_bar_current_severity == MessageSeverity::Error
-                                {
-                                    SetTextColor(hdc_static_ctrl, COLORREF(0x000000FF)); // Red
-                                } else {
-                                    SetTextColor(
-                                        hdc_static_ctrl,
-                                        COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
-                                    );
-                                }
+                                let color = match severity {
+                                    MessageSeverity::Error => COLORREF(0x000000FF), // Red
+                                    MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning (FFA500 -> BGR is 00A5FF)
+                                    _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)), // Default text color
+                                };
+                                SetTextColor(hdc_static_ctrl, color);
                                 SetBkMode(hdc_static_ctrl, TRANSPARENT);
                                 lresult_override =
                                     Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
-                            }
-                        } else {
-                            // If not the old status bar, check if it's one of the new labels
-                            let control_id_of_static =
-                                unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
-                            if let Some(severity) =
-                                window_data.label_severities.get(&control_id_of_static)
-                            {
-                                unsafe {
-                                    let color = match severity {
-                                        MessageSeverity::Error => COLORREF(0x000000FF), // Red
-                                        MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning (FFA500 -> BGR is 00A5FF)
-                                        _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)), // Default text color
-                                    };
-                                    SetTextColor(hdc_static_ctrl, color);
-                                    SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                                    lresult_override =
-                                        Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
-                                }
+                                handled = true;
                             }
                         }
                     }
                 }
-                if lresult_override.is_none() {
+                if !handled {
                     // If not handled by above, use default processing.
                     return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
                 }
@@ -558,8 +535,8 @@ impl Win32ApiInternalState {
     /*
      * Handles the WM_SIZE message for a window.
      * This is called when the window's size changes.
-     * If `layout_rules` are present in `NativeWindowData` for the main controls
-     * (TreeView, Button, Status Bar), it uses new logic to position these controls
+     * If `layout_rules` are present in `NativeWindowData`
+     * it uses new logic to position these controls
      * based on the rules. Otherwise, it falls back to the original hardcoded layout logic.
      * It generates an `AppEvent::WindowResized`.
      */
@@ -611,6 +588,7 @@ impl Win32ApiInternalState {
                         let control_hwnd = control_hwnd_opt.unwrap();
 
                         match rule.dock_style {
+                            // TODO break out each case into a separate function
                             DockStyle::Bottom => {
                                 let height = rule.fixed_size.unwrap_or(0);
                                 let margin_top = rule.margin.0;
@@ -782,14 +760,15 @@ impl Win32ApiInternalState {
                         }
                     }
                 } else {
-                    // Original hardcoded layout logic (fallback)
+                    // Original hardcoded layout logic (fallback if no rules defined)
                     log::debug!(
                         "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
                         window_id,
                         client_width,
                         client_height
                     );
-                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
+                    // This fallback path might become less relevant or removed if DefineLayout becomes mandatory.
+                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT; // STATUS_BAR_HEIGHT for the new bar
                     let button_area_y_pos = treeview_height;
                     let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
 
@@ -826,20 +805,7 @@ impl Win32ApiInternalState {
                             }
                         }
                     }
-                    if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
-                        if !hwnd_status.is_invalid() {
-                            unsafe {
-                                MoveWindow(
-                                    hwnd_status,
-                                    0,
-                                    status_bar_y_pos,
-                                    client_width,
-                                    STATUS_BAR_HEIGHT.max(0),
-                                    true,
-                                );
-                            }
-                        }
-                    }
+                    // No old status bar (ID_STATUS_BAR_CTRL) to lay out here anymore
                 }
             }
         }
@@ -1292,65 +1258,4 @@ pub(crate) fn destroy_native_window(
     // If hwnd_to_destroy was None, it means the window was already removed from the map,
     // so no action is needed. This is considered success.
     Ok(())
-}
-
-/*
- * Updates the text of the status bar control and triggers a repaint.
- * The actual color change based on severity is handled by `WM_CTLCOLORSTATIC`
- * in `Win32ApiInternalState::handle_window_message`, using the
- * `status_bar_current_severity` stored in `NativeWindowData`.
- * This function assumes the `severity` has already been processed and stored.
- */
-pub(crate) fn update_status_bar_text_impl(
-    window_data: &mut NativeWindowData, // Needs mutable access to update its state if necessary
-    text: &str,
-    _severity: MessageSeverity, // Passed to potentially update window_data if logic changes
-) -> PlatformResult<()> {
-    // This function is called by command_executor, which already updates
-    // window_data.status_bar_current_text and status_bar_current_severity.
-    // So, here we just need to update the control's visual text.
-    // The severity for coloring is handled in WM_CTLCOLORSTATIC using window_data's stored severity.
-
-    let hwnd_status_opt = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL);
-
-    if let Some(hwnd_status) = hwnd_status_opt {
-        if !hwnd_status.is_invalid() {
-            unsafe {
-                if SetWindowTextW(hwnd_status, &HSTRING::from(text)).is_err() {
-                    let err = GetLastError();
-                    log::error!(
-                        "Platform: SetWindowTextW for status bar (HWND {:?}, WinID {:?}) failed: {:?}",
-                        hwnd_status,
-                        window_data.id,
-                        err
-                    );
-                    return Err(PlatformError::OperationFailed(format!(
-                        "SetWindowTextW for status bar failed: {:?}",
-                        err
-                    )));
-                }
-                // InvalidateRect is important to ensure WM_CTLCOLORSTATIC is triggered for color updates.
-                InvalidateRect(Some(hwnd_status), None, true);
-            }
-            Ok(())
-        } else {
-            log::warn!(
-                "Platform: Status bar HWND for WindowId {:?} is invalid. Cannot update text.",
-                window_data.id
-            );
-            Err(PlatformError::InvalidHandle(format!(
-                "Status bar HWND invalid for WindowId {:?}",
-                window_data.id
-            )))
-        }
-    } else {
-        log::warn!(
-            "Platform: Status bar HWND not found for WindowId {:?}. Cannot update text: '{}'",
-            window_data.id,
-            text
-        );
-        // This might not be an error if the status bar hasn't been created yet,
-        // but command execution order should ideally prevent this.
-        Ok(()) // Or Err if status bar is mandatory
-    }
 }
