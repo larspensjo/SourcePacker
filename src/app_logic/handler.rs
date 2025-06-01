@@ -319,29 +319,32 @@ impl MyAppLogic {
         node: &FileNode,
         updates: &mut Vec<(TreeItemId, CheckState)>,
     ) {
-        // path_to_tree_item_id is now in ui_state
-        if let Some(ui_state_ref) = self.ui_state.as_ref() {
-            if let Some(item_id) = ui_state_ref.path_to_tree_item_id.get(&node.path) {
-                let check_state = match node.state {
-                    FileState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked,
-                };
-                updates.push((*item_id, check_state));
-
-                if node.is_dir {
-                    for child in &node.children {
-                        self.collect_visual_updates_recursive(child, updates);
-                    }
-                }
-            } else {
-                log::error!(
-                    "AppLogic: Could not find TreeItemId for path {:?} during visual update collection.",
-                    node.path
+        let ui_state_ref = match self.ui_state.as_ref() {
+            Some(ui_state) => ui_state,
+            None => {
+                log::warn!(
+                    "AppLogic: collect_visual_updates_recursive called but no UI state. Cannot get path_to_tree_item_id."
                 );
+                return;
+            }
+        };
+
+        if let Some(item_id) = ui_state_ref.path_to_tree_item_id.get(&node.path) {
+            let check_state = match node.state {
+                FileState::Selected => CheckState::Checked,
+                _ => CheckState::Unchecked,
+            };
+            updates.push((*item_id, check_state));
+
+            if node.is_dir {
+                for child in &node.children {
+                    self.collect_visual_updates_recursive(child, updates);
+                }
             }
         } else {
-            log::warn!(
-                "AppLogic: collect_visual_updates_recursive called but no UI state. Cannot get path_to_tree_item_id."
+            log::error!(
+                "AppLogic: Could not find TreeItemId for path {:?} during visual update collection.",
+                node.path
             );
         }
     }
@@ -480,57 +483,65 @@ impl MyAppLogic {
         }
     }
 
-    fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
-        if self
-            .ui_state
-            .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
-            && control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC
-        {
-            log::debug!("'Save to Archive' button clicked.");
+    fn _do_generate_archive(&mut self) {
+        if self.ui_state.is_none() {
+            log::error!("Cannot generate archive: No UI state (main window).");
+            return;
+        }
+        log::debug!("'Save to Archive' button clicked.");
 
-            // current_profile_cache is in app_session_data
-            if let Some(profile) = &self.app_session_data.current_profile_cache {
-                if let Some(archive_path) = &profile.archive_path {
-                    let display_root_path = profile.root_folder.clone();
-                    match self.archiver.create_archive_content(
-                        &self.app_session_data.file_nodes_cache, // Use app_session_data
-                        &display_root_path,
-                    ) {
-                        Ok(content) => {
-                            match self.archiver.save_archive_content(archive_path, &content) {
-                                Ok(_) => {
-                                    app_info!(
-                                        self,
-                                        "Archive successfully saved to '{}'.",
-                                        archive_path.display()
-                                    );
-                                    self.update_current_archive_status();
-                                }
-                                Err(e) => {
-                                    app_error!(
-                                        self,
-                                        "Failed to save archive content to '{}': {}",
-                                        archive_path.display(),
-                                        e
-                                    );
-                                }
+        // current_profile_cache is in app_session_data
+        if let Some(profile) = &self.app_session_data.current_profile_cache {
+            if let Some(archive_path) = &profile.archive_path {
+                let display_root_path = profile.root_folder.clone();
+                match self.archiver.create_archive_content(
+                    &self.app_session_data.file_nodes_cache, // Use app_session_data
+                    &display_root_path,
+                ) {
+                    Ok(content) => {
+                        match self.archiver.save_archive_content(archive_path, &content) {
+                            Ok(_) => {
+                                app_info!(
+                                    self,
+                                    "Archive successfully saved to '{}'.",
+                                    archive_path.display()
+                                );
+                                self.update_current_archive_status();
+                            }
+                            Err(e) => {
+                                app_error!(
+                                    self,
+                                    "Failed to save archive content to '{}': {}",
+                                    archive_path.display(),
+                                    e
+                                );
                             }
                         }
-                        Err(e) => {
-                            app_error!(self, "Failed to create archive content: {}", e);
-                        }
                     }
-                } else {
-                    app_error!(
-                        self,
-                        "No archive path set for current profile. Cannot save archive."
-                    );
+                    Err(e) => {
+                        app_error!(self, "Failed to create archive content: {}", e);
+                    }
                 }
             } else {
-                app_error!(self, "No profile loaded. Cannot save archive.");
+                app_error!(
+                    self,
+                    "No archive path set for current profile. Cannot save archive."
+                );
             }
+        } else {
+            app_error!(self, "No profile loaded. Cannot save archive.");
         }
+    }
+
+    fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
+        // Currently, no other buttons call this. If ID_BUTTON_GENERATE_ARCHIVE_LOGIC
+        // was the only one, this function might become mostly empty or repurposed.
+        // For now, log if any unexpected button click comes through.
+        log::warn!(
+            "Button with control_id {} clicked on window {:?}, but no specific action is currently mapped to it.",
+            control_id,
+            window_id
+        );
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {
@@ -674,7 +685,7 @@ impl MyAppLogic {
                                     );
                                     self._update_window_title_with_profile_and_archive(window_id);
                                     self.update_current_archive_status();
-                                    self._update_save_to_archive_button_state(window_id);
+                                    self._update_generate_archive_menu_item_state(window_id);
                                 }
                                 Err(e) => {
                                     app_error!(
@@ -690,7 +701,7 @@ impl MyAppLogic {
                         }
                     } else {
                         log::debug!("Set archive path cancelled.");
-                        self._update_save_to_archive_button_state(window_id);
+                        self._update_generate_archive_menu_item_state(window_id);
                     }
                 }
                 Some(PendingAction::SavingArchive) => {
@@ -767,7 +778,9 @@ impl MyAppLogic {
                                                 );
                                             }
                                             self.update_current_archive_status();
-                                            self._update_save_to_archive_button_state(window_id);
+                                            self._update_generate_archive_menu_item_state(
+                                                window_id,
+                                            );
                                             app_info!(
                                                 self,
                                                 "Profile '{}' saved.",
@@ -970,7 +983,7 @@ impl MyAppLogic {
         }
 
         // Update save button state
-        self._update_save_to_archive_button_state(window_id);
+        self._update_generate_archive_menu_item_state(window_id);
 
         // Show the window (very last step)
         self.synchronous_command_queue
@@ -1322,13 +1335,15 @@ impl MyAppLogic {
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
 
-    // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
-    fn _update_save_to_archive_button_state(&mut self, window_id: WindowId) {
+    // TODO: This method needs to be adapted if we want to dynamically enable/disable the menu item.
+    // For now, it does nothing as menu items are always enabled. The check is done in _do_generate_archive.
+    // If `PlatformCommand::SetMenuItemEnabled` is added later, this function would queue that command.
+    fn _update_generate_archive_menu_item_state(&mut self, window_id: WindowId) {
         assert!(
             self.ui_state
                 .as_ref()
                 .map_or(false, |s| s.window_id == window_id),
-            "_update_save_to_archive_button_state called with mismatching window ID or no UI state."
+            "_update_generate_archive_menu_item_state called with mismatching window ID or no UI state."
         );
 
         // current_profile_cache is in app_session_data
@@ -1339,14 +1354,12 @@ impl MyAppLogic {
             .and_then(|p| p.archive_path.as_ref())
             .is_some();
 
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::SetControlEnabled {
-                window_id,
-                control_id: ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
-                enabled,
-            });
-        if !enabled {
-            log::debug!("Button 'Save to Archive' disabled: No archive path set in profile.");
+        if enabled {
+            log::debug!("'Generate Archive' menu item can now function (archive path is set).");
+        } else {
+            log::debug!(
+                "'Generate Archive' menu item functionality depends on archive path (currently not set)."
+            );
         }
     }
 
@@ -1441,6 +1454,7 @@ impl PlatformEventHandler for MyAppLogic {
                 MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
                 MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
                 MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
+                MenuAction::GenerateArchive => self._do_generate_archive(),
             },
             AppEvent::FileOpenProfileDialogCompleted { window_id, result } => {
                 self.handle_file_open_dialog_completed(window_id, result);

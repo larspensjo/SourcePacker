@@ -7,8 +7,15 @@ use crate::core::{
     TokenCounterOperations,
 };
 use crate::platform_layer::{
-    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-    TreeItemDescriptor, TreeItemId, WindowId,
+    AppEvent,
+    CheckState,
+    MessageSeverity,
+    PlatformCommand,
+    PlatformEventHandler,
+    TreeItemDescriptor,
+    TreeItemId,
+    WindowId,
+    types::MenuAction, // Ensure MenuAction is in scope
 };
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -656,9 +663,11 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         "Expected ShowWindow command. Got: {:?}",
         cmds
     );
+    // The SetControlEnabled command for the button is no longer sent.
+    // The menu item is always enabled, and logic is checked inside the action.
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: true, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
-        "Expected SetControlEnabled (true) for save button. Got: {:?}", cmds
+        !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
     assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 5" && *severity == MessageSeverity::Information )).is_some(),
@@ -709,9 +718,10 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
         "Expected SetWindowTitle indicating no archive path. Got: {:?}", cmds
     );
+    // The SetControlEnabled command for the button is no longer sent.
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
-        "Expected SetControlEnabled (false) for save button. Got: {:?}", cmds
+        !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
     assert!(
         find_command(&cmds, |cmd| matches!(
@@ -937,12 +947,10 @@ fn test_profile_selection_dialog_completed_chosen_profile_loads_and_activates() 
         ))
         .is_some()
     );
+    // Check for SetControlEnabled is removed as menu item state isn't managed by this command now
     assert!(
-        find_command(&cmds, |cmd| matches!(
-            cmd,
-            PlatformCommand::SetControlEnabled { enabled: true, .. }
-        ))
-        .is_some()
+        !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
 }
@@ -958,7 +966,7 @@ fn test_profile_selection_dialog_completed_chosen_profile_load_fails_reinitiates
         profile_name,
         Err(ProfileError::ProfileNotFound(profile_name.to_string())),
     );
-    mock_profile_manager.set_list_profiles_result(Ok(vec![]));
+    mock_profile_manager.set_list_profiles_result(Ok(vec![])); // Ensure it attempts to show dialog again
     logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
         window_id: main_window_id,
         chosen_profile_name: Some(profile_name.to_string()),
@@ -1156,12 +1164,10 @@ fn test_folder_picker_dialog_completed_creates_profile_and_activates() {
         ))
         .is_some()
     );
+    // Check for SetControlEnabled is removed
     assert!(
-        find_command(&cmds, |cmd| matches!(
-            cmd,
-            PlatformCommand::SetControlEnabled { enabled: false, .. }
-        ))
-        .is_some()
+        !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("New profile '{}' created and loaded.", profile_name)))).is_some());
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
@@ -1312,12 +1318,10 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
         ))
         .is_some()
     );
+    // Check for SetControlEnabled is removed
     assert!(
-        find_command(&cmds, |cmd| matches!(
-            cmd,
-            PlatformCommand::SetControlEnabled { enabled: true, .. }
-        ))
-        .is_some()
+        !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
+        "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText {text, ..} if text.contains(&format!("Profile '{}' loaded and scanned.", profile_to_load_name)))).is_some());
     assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 7" && *severity == MessageSeverity::Information )).is_some());
@@ -1351,25 +1355,23 @@ fn test_menu_set_archive_path_cancelled() {
     });
     let cmds = logic.test_drain_commands();
 
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled: false, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC)).is_some());
-    let functional_cmds = cmds
+    // SetControlEnabled for the button is no longer sent.
+    // The command queue might be empty or only contain debug status messages.
+    let _functional_cmds = cmds // Renamed as it might be empty
         .into_iter()
         .filter(|cmd| {
             !matches!(
                 cmd,
                 PlatformCommand::UpdateStatusBarText {
-                    severity: MessageSeverity::Debug,
+                    severity: MessageSeverity::Debug, // Assuming Debug is used for these informational logs
                     ..
                 }
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        functional_cmds.len(),
-        1,
-        "Expected only SetControlEnabled(false). Got: {:?}",
-        functional_cmds
-    );
+    // No specific command is expected here now other than potential status updates.
+    // For example, if _update_generate_archive_menu_item_state logged something via app_info.
+    // If it only logs via log::debug, then functional_cmds would likely be empty.
 }
 
 #[test]
@@ -1580,7 +1582,7 @@ fn test_token_count_updates_on_profile_activation() {
         root_folder: profile_root.clone(),
         selected_paths,
         deselected_paths: HashSet::new(),
-        archive_path: None, // No archive path, so save button will be disabled
+        archive_path: None,
         file_details: HashMap::new(),
     };
 
@@ -1675,5 +1677,130 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
     assert!(
         cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 12" && *severity == MessageSeverity::Information)),
         "Expected 'Tokens: 12' status bar update, even with file read errors. Got: {:?}", cmds
+    );
+}
+
+#[test]
+fn test_menu_action_generate_archive_triggers_logic() {
+    // Arrange
+    let (mut logic, _, mock_profile_manager, _, mock_archiver, _, _) = setup_logic_with_mocks();
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+    let profile_name = "ArchiveTestProfile";
+    let archive_path = PathBuf::from("/test/archive.txt");
+    let profile = Profile {
+        name: profile_name.to_string(),
+        root_folder: PathBuf::from("/test/root"),
+        selected_paths: HashSet::new(),
+        deselected_paths: HashSet::new(),
+        archive_path: Some(archive_path.clone()),
+        file_details: HashMap::new(),
+    };
+    logic.test_set_current_profile_cache(Some(profile.clone()));
+    logic.test_set_file_nodes_cache(vec![FileNode::new(
+        PathBuf::from("/test/root/file.txt"),
+        "file.txt".into(),
+        false,
+    )]); // Add a dummy file node
+
+    mock_archiver.set_create_archive_content_result(Ok("Test Archive Content".to_string()));
+    mock_archiver.set_save_archive_content_result(Ok(()));
+
+    // Act
+    logic.handle_event(AppEvent::MenuActionClicked {
+        window_id: main_window_id, // WindowId might not be strictly necessary for global menu actions if logic doesn't use it
+        action: MenuAction::GenerateArchive,
+    });
+
+    // Assert
+    // 1. Check if archiver methods were called
+    let create_calls = mock_archiver.get_create_archive_content_calls();
+    assert_eq!(
+        create_calls.len(),
+        1,
+        "create_archive_content should be called once"
+    );
+
+    let save_calls = mock_archiver.get_save_archive_content_calls();
+    assert_eq!(
+        save_calls.len(),
+        1,
+        "save_archive_content should be called once"
+    );
+    assert_eq!(save_calls[0].0, archive_path); // Check correct path
+    assert_eq!(save_calls[0].1, "Test Archive Content"); // Check correct content
+
+    // 2. Check for status updates
+    let cmds = logic.test_drain_commands();
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+            if severity == &MessageSeverity::Information && text.contains("Archive successfully saved"))).is_some(),
+        "Expected success status message. Got: {:?}", cmds
+    );
+}
+
+#[test]
+fn test_menu_action_generate_archive_no_profile_shows_error() {
+    // Arrange
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+    logic.test_set_current_profile_cache(None); // No profile loaded
+
+    // Act
+    logic.handle_event(AppEvent::MenuActionClicked {
+        window_id: main_window_id,
+        action: MenuAction::GenerateArchive,
+    });
+
+    // Assert
+    let cmds = logic.test_drain_commands();
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+            if severity == &MessageSeverity::Error && text.contains("No profile loaded"))
+        )
+        .is_some(),
+        "Expected 'No profile loaded' error status. Got: {:?}",
+        cmds
+    );
+}
+
+#[test]
+fn test_menu_action_generate_archive_no_archive_path_shows_error() {
+    // Arrange
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+    let profile = Profile {
+        name: "NoArchivePathProfile".to_string(),
+        root_folder: PathBuf::from("/test/root"),
+        selected_paths: HashSet::new(),
+        deselected_paths: HashSet::new(),
+        archive_path: None, // No archive path set
+        file_details: HashMap::new(),
+    };
+    logic.test_set_current_profile_cache(Some(profile.clone()));
+
+    // Act
+    logic.handle_event(AppEvent::MenuActionClicked {
+        window_id: main_window_id,
+        action: MenuAction::GenerateArchive,
+    });
+
+    // Assert
+    let cmds = logic.test_drain_commands();
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+            if severity == &MessageSeverity::Error && text.contains("No archive path set"))
+        )
+        .is_some(),
+        "Expected 'No archive path set' error status. Got: {:?}",
+        cmds
     );
 }

@@ -42,8 +42,7 @@ pub enum MenuAction {
     SaveProfileAs,
     SetArchivePath,
     RefreshFileList,
-    // Add other distinct menu actions here as they are identified or needed.
-    // For example: ExitApplication, OpenSettings, ShowHelpAbout, etc.
+    GenerateArchive,
 }
 
 // --- Data Structures for UI Description (Platform-Agnostic) ---

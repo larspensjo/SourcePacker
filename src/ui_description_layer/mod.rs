@@ -10,15 +10,13 @@ use crate::app_logic::ui_constants;
 use crate::platform_layer::{
     control_treeview::ID_TREEVIEW_CTRL,
     types::{DockStyle, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId},
-    window_common::{
-        BUTTON_AREA_HEIGHT, ID_BUTTON_GENERATE_ARCHIVE, ID_STATUS_BAR_CTRL, STATUS_BAR_HEIGHT,
-    },
+    window_common::{ID_STATUS_BAR_CTRL, STATUS_BAR_HEIGHT},
 };
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
  * for the main application window. This includes creating the main menu, TreeView,
- * status bar, and other foundational UI elements like buttons. It also includes
+ * status bar, and other foundational UI elements. It also includes
  * `DefineLayout` commands to specify how these controls should be positioned and resized.
  * These commands are processed by the platform layer to construct the native UI.
  * Menu items use `MenuAction` for semantic identification.
@@ -63,6 +61,11 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
                 text: "&Refresh".to_string(),
                 children: Vec::new(),
             },
+            MenuItemConfig {
+                action: Some(MenuAction::GenerateArchive),
+                text: "&Generate Archive".to_string(),
+                children: Vec::new(),
+            },
         ],
     };
     commands.push(main_menu_command);
@@ -73,18 +76,11 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         control_id: ID_TREEVIEW_CTRL,
     });
 
-    // 3. Create "Generate Archive" Button
-    commands.push(PlatformCommand::CreateButton {
-        window_id,
-        control_id: ID_BUTTON_GENERATE_ARCHIVE,
-        text: "Generate Archive".to_string(),
-    });
-
     // 4. Create *Old* Status Bar (will be removed in a later step)
     commands.push(PlatformCommand::CreateStatusBar {
         window_id,
         control_id: ID_STATUS_BAR_CTRL, // The old, single status bar
-        initial_text: "Ready (Old)".to_string(), // Indicate it's the old one
+        initial_text: "Ready (Old)".to_string(),
     });
 
     // --- New Status Bar Elements (Phase 5) ---
@@ -117,7 +113,6 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     // 5. Define Layout Rules for the controls
     let layout_rules = vec![
-        // Old Status Bar: Docks to the bottom, fixed height. Order 0 (processed first among bottom docks).
         LayoutRule {
             control_id: ID_STATUS_BAR_CTRL,
             dock_style: DockStyle::Bottom,
@@ -126,30 +121,15 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
             margin: (0, 0, 0, 0),
         },
         // New Status Bar Panel: Docks to the bottom, above the old one.
-        // Order 1, so it's processed after the old status bar when docking from bottom.
         LayoutRule {
             control_id: ui_constants::STATUS_BAR_PANEL_ID,
             dock_style: DockStyle::Bottom,
             order: 1, // Just above the old status bar
             fixed_size: Some(STATUS_BAR_HEIGHT),
-            margin: (0, 0, 0, 0), // Panel itself has no margin against window edges here
-        },
-        // Button Area / "Generate Archive" Button:
-        // Docks to the bottom of the remaining space AFTER both status bars.
-        LayoutRule {
-            control_id: ID_BUTTON_GENERATE_ARCHIVE,
-            dock_style: DockStyle::Bottom,
-            order: 2,                             // After both status bars are placed
-            fixed_size: Some(BUTTON_AREA_HEIGHT), // This is the height of the conceptual "band" for the button
-            // Margins position the button within this band:
-            margin: (
-                5, // Top margin from the top of its allocated band
-                crate::platform_layer::window_common::BUTTON_X_PADDING, // Right margin (or use for centering)
-                5, // Bottom margin from the bottom of its allocated band
-                crate::platform_layer::window_common::BUTTON_X_PADDING, // Left margin
-            ),
+            margin: (0, 0, 0, 0),
         },
         // TreeView: Fills the remaining space. Order 10 (processed last).
+        // Its order doesn't strictly need to change but keeping it high is fine.
         LayoutRule {
             control_id: ID_TREEVIEW_CTRL,
             dock_style: DockStyle::Fill,
