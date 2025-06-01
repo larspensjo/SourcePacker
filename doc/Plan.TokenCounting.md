@@ -10,60 +10,149 @@
 
 ---
 
-## Phase 1: Basic Tokenizer Module & Core Logic Integration
+# Phase 5: Multi-Element Status Bar with Dedicated Token Count Display (Revised)
 
-**Goal:** Create the foundational token counting utility and integrate it into `AppSessionData` to calculate token counts on-the-fly for all selected files (without per-file caching yet). `cached_current_token_count` in `AppSessionData` is updated.
+**Goal:** Re-architect the status bar to be a composite area containing multiple distinct graphical elements (e.g., text labels for general status, archive status, token count). These elements will be managed by a layout system using generic platform primitives. The application must remain fully functional after each sub-step of this phase.
 
-Complete
+**Assumptions:**
+*   The token count value is correctly calculated and available in `AppSessionData`.
+*   `MyAppLogic` (Presenter) can provide the necessary strings for each status bar element.
+*   Logical Control IDs for the new status bar elements will be defined (e.g., in a shared constants module or within `app_logic`) and used by the `ui_description_layer` and `app_logic`.
 
----
+**High-Level Approach:**
+The current single `STATIC` control (old `ID_STATUS_BAR_CTRL`) used for the status bar will be replaced. The `ui_description_layer` will define a new "status bar area" by requesting the platform layer to create a generic panel. Within this panel, it will request the creation of generic labels for each piece of information.
 
-## Phase 2: Basic UI Display in Existing Status Bar
-
-**Goal:** Display the `cached_current_token_count` from `AppSessionData` in the main status bar. This will temporarily share space with or overwrite other status messages.
-
-Complete
-
----
-
-## Phase 3: Per-File Token Caching with Checksums for Performance
-
-**Goal:** Significantly improve token counting performance by caching token counts for individual files and only re-calculating when file content changes (detected by checksums).
-
-**Pre-requisite:** Phases 1 and 2 completed. `AppSessionData` can calculate total tokens on-the-fly, and the UI can display this total.
-
-Complete
-
----
-
-## Phase 4: Advanced Tokenizer Integration (e.g., `tiktoken-rs`)
-
-**Goal:** Replace the simple whitespace tokenizer with a more accurate library like `tiktoken-rs`. The caching mechanism from Phase 3 will now cache `tiktoken-rs` based counts.
-
-Complete.
+**Define Logical Control IDs (e.g., in `src/app_logic/ui_constants.rs` or similar):**
+```rust
+// Example: src/app_logic/ui_constants.rs
+pub const STATUS_BAR_PANEL_ID: i32 = 1010; // Arbitrary, unique logical ID
+pub const STATUS_LABEL_GENERAL_ID: i32 = 1011;
+pub const STATUS_LABEL_ARCHIVE_ID: i32 = 1012;
+pub const STATUS_LABEL_TOKENS_ID: i32 = 1013;
+// (Optional) STATUS_SEPARATOR_FOO_ID: i32 = 1014;
+```
+*(These constants would be used by both `ui_description_layer` and `app_logic::handler`)*
 
 ---
 
-## Phase 5: Integration with Sophisticated Status Bar (Post P2.12)
+**Step 5.A: Define New Generic Commands and Types (Platform Layer & Types)**
+*   **Goal:** Introduce new *generic* `PlatformCommand` variants for creating panels and labels, and updating labels, without breaking existing functionality. These commands will use logical `i32` control IDs.
+*   **Action:**
+    1.  In `platform_layer/types.rs`:
+        *   Add new `PlatformCommand` variants:
+            *   `CreatePanel { window_id: WindowId, parent_control_id: Option<i32>, panel_id: i32 }`
+                *   `parent_control_id`: Logical ID of the parent control (e.g., another panel). `None` means child of the main window's client area.
+                *   `panel_id`: Logical ID for this new panel.
+            *   `CreateLabel { window_id: WindowId, parent_panel_id: i32, label_id: i32, initial_text: String }`
+                *   `parent_panel_id`: Logical ID of the panel this label is a child of.
+                *   `label_id`: Logical ID for this new label.
+            *   `UpdateLabelText { window_id: WindowId, label_id: i32, text: String, severity: MessageSeverity }`
+            *   (Optional) `CreateSeparator { window_id: WindowId, parent_panel_id: i32, separator_id: i32, orientation: SeparatorOrientation }` (assuming `SeparatorOrientation` enum: `Horizontal`, `Vertical`)
+    2.  Do **not** remove `PlatformCommand::UpdateStatusBarText` or constants related to the old `ID_STATUS_BAR_CTRL` yet.
+*   **Functionality Check:** Application compiles and runs as before. The old status bar (`ID_STATUS_BAR_CTRL`) continues to function normally.
 
-**Goal:** Display the token count in its own dedicated section of the status bar, assuming the "Sophisticated Status Bar Control" (P2.12 from `DevelopmentPlan.md`) has been implemented. This phase is primarily about UI presentation of the already efficiently-calculated token count.
+**Step 5.B: Implement Generic Panel and Label Creation/Update Logic (Platform Layer)**
+*   **Goal:** Add platform-level support for creating and managing generic panels and labels based on the new commands. The platform layer maps the provided logical IDs to `HWND`s.
+*   **Action:**
+    1.  In `platform_layer/command_executor.rs`:
+        *   Implement `execute_create_panel`:
+            *   Gets parent `HWND` (either main window's `HWND` if `parent_control_id` is `None`, or `HWND` of `parent_control_id` from `NativeWindowData.controls`).
+            *   Creates a `STATIC` control (e.g., with `SS_NOTIFY` if it needs to propagate clicks, or a simple one if just a container) to act as the panel, child to parent `HWND`.
+            *   Stores its `HWND` in `NativeWindowData.controls` mapped by the provided `panel_id` (the logical ID).
+        *   Implement `execute_create_label`:
+            *   Gets parent panel's `HWND` using `parent_panel_id` from `NativeWindowData.controls`.
+            *   Creates a `STATIC` control as a child of the parent panel's `HWND`.
+            *   Stores its `HWND` in `NativeWindowData.controls` mapped by the provided `label_id`. Sets its initial text.
+        *   (Optional) Implement `execute_create_separator`.
+    2.  In `platform_layer/window_common.rs` (`NativeWindowData` struct):
+        *   Add `label_severities: HashMap<i32, MessageSeverity>` (key is the logical `label_id`).
+    3.  In `platform_layer/command_executor.rs`:
+        *   Implement `execute_update_label_text`:
+            *   Retrieves the label's `HWND` using `label_id` from `NativeWindowData.controls`.
+            *   Uses `SetWindowTextW` to update its text.
+            *   Updates `NativeWindowData.label_severities[&label_id]` with the new `severity`.
+            *   Calls `InvalidateRect` on the label's `HWND` to trigger repaint for `WM_CTLCOLORSTATIC`.
+*   **Functionality Check:** Application compiles. No visible changes to the UI yet. The old status bar continues to function normally.
 
-**Pre-requisite:** Phase 4 completed. P2.12 from `DevelopmentPlan.md` is implemented.
+**Step 5.C: Define and Layout New Status Bar Elements (UI Description & Platform Layer - Window Resizing)**
+*   **Goal:** Use the new generic commands to define the structure of the new status bar. Instantiate the panel and labels. Implement their layout. The new elements will co-exist with the old status bar.
+*   **Action:**
+    1.  In `ui_description_layer/mod.rs` (`build_main_window_static_layout` function):
+        *   Use the logical IDs defined earlier (e.g., `ui_constants::STATUS_BAR_PANEL_ID`).
+        *   Queue `PlatformCommand::CreatePanel` for `STATUS_BAR_PANEL_ID` (e.g., `parent_control_id: None`).
+        *   Queue `PlatformCommand::CreateLabel` commands for `STATUS_LABEL_GENERAL_ID`, `STATUS_LABEL_ARCHIVE_ID`, `STATUS_LABEL_TOKENS_ID`. Their `parent_panel_id` will be `STATUS_BAR_PANEL_ID`. Provide brief initial text.
+    2.  In `ui_description_layer/mod.rs` (`build_main_window_static_layout`), modify the `PlatformCommand::DefineLayout` command:
+        *   Add a `LayoutRule` for `STATUS_BAR_PANEL_ID`. This rule should specify `DockStyle::Bottom`, an `order` (e.g., `-1` if old `ID_STATUS_BAR_CTRL` has order `0`, to place new panel *above* old bar initially, or simply ensure they are distinct using different orders), and `fixed_size: Some(STATUS_BAR_HEIGHT)`.
+        *   The existing `LayoutRule` for the old `ID_STATUS_BAR_CTRL` remains unchanged.
+    3.  In `platform_layer/window_common.rs` (`handle_wm_size` function):
+        *   When `handle_wm_size` processes its `LayoutRule`s, if it resizes the control with logical ID `ui_constants::STATUS_BAR_PANEL_ID`:
+            *   Get its `HWND` and client `RECT`.
+            *   Iterate through the known new status label logical IDs (`ui_constants::STATUS_LABEL_GENERAL_ID`, etc.).
+            *   For each label, get its `HWND` (from `window_data.controls[&label_id]`) and position it using `MoveWindow`.
+            *   Implement a simple horizontal flow within the panel's client `RECT` (e.g., general status left, archive middle, tokens right; using percentages like 50%, 25%, 25% of panel width, or calculated fixed widths). **This specific layout logic for the children of `STATUS_BAR_PANEL_ID` will reside in `handle_wm_size` as a special case for this panel ID.**
+*   **Functionality Check:** Application compiles. The new status bar panel and its labels should now be visible, likely appearing alongside or slightly overlapping the old status bar (depending on layout order). New labels display initial static text. Old status bar (`ID_STATUS_BAR_CTRL`) continues to update.
 
-### Step 4.1: Adapt `MyAppLogic` to Use New Status Bar Command
-*   **Action a:** If P2.12 introduced specific identifiers for status bar parts (e.g., an enum or constants for indices), ensure these are accessible or define one for the token count part (e.g., `STATUS_PART_TOKENS`).
-*   **Action b:** In `MyAppLogic`'s token update method:
-    *   Remove the old `PlatformCommand::UpdateStatusBarText` command previously used for the token count.
-    *   Add a new command to update the specific status bar part dedicated to tokens. This command would be something like `PlatformCommand::UpdateStatusBarPart { window_id, part_index: STATUS_PART_TOKENS, text: token_status_text }`. The exact command structure depends on the P2.12 implementation.
-*   **Verification:**
-    *   Project compiles.
-    *   Application runs. The token count now appears in its dedicated section of the status bar, no longer conflicting with general status messages.
+**Step 5.D: Implement Styling for New Labels and Transition General Messages (Presenter & Platform Layer - WM_CTLCOLORSTATIC)**
+*   **Goal:** Enable text styling for new labels. Start routing general status messages to the new general label, *while also keeping updates to the old status bar*.
+*   **Action:**
+    1.  In `platform_layer/window_common.rs` (`WndProc` function, `WM_CTLCOLORSTATIC` handler):
+        *   Get the control ID of `hwnd_static_ctrl_from_msg` (e.g., using `GetDlgCtrlID`).
+        *   If this ID matches one of the new logical label IDs (e.g., `ui_constants::STATUS_LABEL_GENERAL_ID`):
+            *   Look up its severity from `NativeWindowData.label_severities[&id]`.
+            *   Set text color via `SetTextColor` based on severity.
+            *   The old logic for `ID_STATUS_BAR_CTRL` remains for now.
+    2.  In `app_logic/handler.rs`:
+        *   Modify `status_message!` macro:
+            *   Queue `PlatformCommand::UpdateLabelText` for `ui_constants::STATUS_LABEL_GENERAL_ID` with text and severity.
+            *   *Still* queue old `PlatformCommand::UpdateStatusBarText` for `ID_STATUS_BAR_CTRL`.
+*   **Functionality Check:** General status messages appear in the new general label with correct color. They also appear in the old status bar.
 
-### Step 4.2: Update `MyAppLogic` Unit Tests for New Command
-*   **Action:** In `src/app_logic/handler_tests.rs`:
-    *   Modify tests to assert that the new platform command for updating a status bar part is generated correctly with the appropriate part identifier and token count message.
-*   **Verification:**
-    *   Unit tests pass.
+**Step 5.E: Transition Archive and Token Messages to New Labels (Presenter)**
+*   **Goal:** Route archive and token updates to new labels, *while also keeping updates to the old status bar*.
+*   **Action:**
+    1.  In `app_logic/handler.rs` (e.g., `update_current_archive_status`):
+        *   In addition to old status bar logic, queue `PlatformCommand::UpdateLabelText` for `ui_constants::STATUS_LABEL_ARCHIVE_ID`.
+    2.  In `app_logic/handler.rs` (e.g., `_update_token_count_and_request_display`):
+        *   In addition to old status bar logic, queue `PlatformCommand::UpdateLabelText` for `ui_constants::STATUS_LABEL_TOKENS_ID`.
+*   **Functionality Check:** Archive/token updates appear in new labels *and* old status bar. General messages continue to update both.
+
+**Step 5.F: Finalize New System and Remove Old Status Bar (Presenter, Platform Layer, UI Description)**
+*   **Goal:** Remove all code related to the old single-string status bar (`ID_STATUS_BAR_CTRL`), making the new multi-element status bar the sole provider.
+*   **Action:**
+    1.  In `app_logic/handler.rs`:
+        *   `status_message!`: Remove queuing of `UpdateStatusBarText`. Only queue `UpdateLabelText` for `ui_constants::STATUS_LABEL_GENERAL_ID`.
+        *   Archive/Token updates: Remove logic for old status bar. Only queue `UpdateLabelText` for their respective new label IDs.
+    2.  In `platform_layer/types.rs`:
+        *   Remove `PlatformCommand::UpdateStatusBarText`.
+        *   Remove `PlatformCommand::CreateStatusBar` (the one that took `ID_STATUS_BAR_CTRL`).
+    3.  In `platform_layer/command_executor.rs`:
+        *   Remove `execute_update_status_bar_text`.
+        *   Remove `execute_create_status_bar`.
+    4.  In `platform_layer/window_common.rs` (`NativeWindowData` struct):
+        *   Remove `status_bar_current_text` and `status_bar_current_severity` fields (related to the old single status bar). The `label_severities` map remains.
+    5.  In `platform_layer/window_common.rs` (`WndProc`, `WM_CTLCOLORSTATIC` handler):
+        *   Remove the specific logic block for `ID_STATUS_BAR_CTRL`. Logic for new labels (using `label_severities` map and their logical IDs) remains.
+    6.  In `ui_description_layer/mod.rs` (`build_main_window_static_layout`):
+        *   Remove the `PlatformCommand::CreateStatusBar` that created the old status bar (`ID_STATUS_BAR_CTRL`).
+        *   Remove the `LayoutRule` for `ID_STATUS_BAR_CTRL`.
+        *   Adjust `LayoutRule` for `ui_constants::STATUS_BAR_PANEL_ID`'s `order` if needed (e.g., ensure it's `order: 0` or appropriate for the primary bottom-docked item).
+*   **Functionality Check:** Application compiles and runs. Only the new multi-element status bar (panel with labels) is visible. General, archive, and token messages update correctly in their respective labels with appropriate styling. The old status bar is gone.
+
+**Step 5.G: Testing (Ongoing throughout the phase)**
+*   **Platform Layer:**
+    *   After 5.B: Test processing of `CreatePanel`, `CreateLabel`, `UpdateLabelText`.
+    *   After 5.C: Verify new panel and labels are created and laid out correctly (alongside old bar). Test resizing and internal layout of panel children.
+    *   After 5.D: Test `UpdateLabelText` changes text and `WM_CTLCOLORSTATIC` applies styling to new labels.
+    *   After 5.F: Retest layout of elements within the panel during resize, ensuring only new system is active.
+*   **Application Logic (`handler_tests.rs`):**
+    *   After 5.D: Verify `status_message!` queues `UpdateLabelText` for the general label (with its logical ID) *and still* queues old `UpdateStatusBarText`.
+    *   After 5.E: Verify archive/token updates queue `UpdateLabelText` for their respective labels (with logical IDs) *and still* contribute to old `UpdateStatusBarText`.
+    *   After 5.F: Verify `MyAppLogic` now *only* queues the correct `UpdateLabelText` commands with the appropriate logical `label_id`s, text, and severity.
+*   **Manual UI Testing (after each relevant step):**
+    *   5.C: Confirm new panel and labels are visible. Old bar still updates.
+    *   5.D: Confirm general messages update in new general label (with color) AND old bar.
+    *   5.E: Confirm archive/token messages update in new labels AND old bar.
+    *   5.F: Confirm only new status bar elements are visible and correctly positioned/laid out. Confirm they update independently and correctly. Confirm error/warning styling applies. Check window resize behavior.
 
 ---
 

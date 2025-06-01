@@ -59,11 +59,6 @@ This section details various cleanup tasks, refactorings, and minor enhancements
     *   **Rationale:** Long-term maintainability.
     *   **Status:** M/V/P was the major step. Further sub-moduling can be considered if files grow excessively.
 
-## P2.12: Sophisticated Status Bar Control:
-*   For features like multiple panes, replace `STATIC` with `STATUSCLASSNAME`.
-*   **Centralized Error-to-Status Mapping:**
-    *   Create helpers or a module for converting `Error` types to user-friendly status messages.
-
 ## P2.13: Improved Profile management
 *   Implement a proper dialog for profile selection in the platform layer (not a stub).
 *   Implement a user-friendly UI for listing, selecting, creating, and deleting profiles within the application.
