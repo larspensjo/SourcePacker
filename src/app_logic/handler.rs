@@ -256,7 +256,7 @@ impl MyAppLogic {
             });
     }
 
-    fn update_current_archive_status(&mut self) {
+    pub(crate) fn update_current_archive_status(&mut self) {
         let ui_state_mut = match self.ui_state.as_mut() {
             Some(s) => s,
             None => {
@@ -267,11 +267,24 @@ impl MyAppLogic {
             }
         };
 
+        let main_window_id = ui_state_mut.window_id; // Get window_id for commands
+
         let profile = match &self.app_session_data.current_profile_cache {
             Some(p) => p,
             None => {
                 ui_state_mut.current_archive_status_for_ui = None;
-                app_info!(self, "No profile loaded"); // This queues a command.
+                let msg = "No profile loaded";
+                // This sends to OLD status bar AND NEW GENERAL label
+                app_info!(self, "{}", msg);
+
+                // Also update the DEDICATED archive label
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateLabelText {
+                        window_id: main_window_id,
+                        label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                        text: format!("Archive: {}", msg),
+                        severity: MessageSeverity::Information,
+                    });
                 return;
             }
         };
@@ -280,17 +293,34 @@ impl MyAppLogic {
             .archiver
             .check_archive_status(profile, &self.app_session_data.file_nodes_cache);
 
-        // The status is cloned before being assigned to avoid borrow issues if status were a more complex type
-        // that might borrow from `profile` or `file_nodes_cache`. For ArchiveStatus, it's likely a simple enum.
         ui_state_mut.current_archive_status_for_ui = Some(status.clone());
 
         let status_text = format!("Archive: {:?}", status);
-        match status {
-            ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text),
-            _ => {
-                log::debug!("{}", status_text);
-            }
+        let severity_for_archive_msg = match status {
+            ArchiveStatus::ErrorChecking(_) => MessageSeverity::Error,
+            _ => MessageSeverity::Information,
         };
+
+        // Update the DEDICATED archive label
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::UpdateLabelText {
+                window_id: main_window_id,
+                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                text: status_text.clone(), // Clone for this command
+                severity: severity_for_archive_msg,
+            });
+
+        // If it's an error, also send it to the general status message system
+        // (which hits old status bar + new general label via the macro).
+        // Non-error archive statuses are only shown on the dedicated label.
+        if severity_for_archive_msg == MessageSeverity::Error {
+            app_error!(self, "{}", status_text);
+        } else {
+            log::debug!(
+                "AppLogic UpdateArchiveStatus (not an error): {}",
+                status_text
+            );
+        }
     }
 
     // This static helper remains unchanged as it operates on passed-in data.
@@ -371,12 +401,29 @@ impl MyAppLogic {
     /*
      * Recalculates the estimated token count for all currently selected files and
      * requests the UI to display this count.
+     * It updates the old status bar, the new general status label (via `app_info!`),
+     * and the new dedicated token count label.
      */
     pub(crate) fn _update_token_count_and_request_display(&mut self) {
         let token_count = self
             .app_session_data
             .update_token_count(&*self.token_counter_manager);
-        app_info!(self, "Tokens: {}", token_count);
+
+        let token_text = format!("Tokens: {}", token_count);
+
+        // This sends to OLD status bar AND NEW GENERAL label via status_message! macro
+        app_info!(self, "{}", token_text);
+
+        // Additionally, send to the NEW DEDICATED token label
+        if let Some(ui_state_ref) = &self.ui_state {
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateLabelText {
+                    window_id: ui_state_ref.window_id,
+                    label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+                    text: token_text.clone(), // Clone because app_info! also uses token_text
+                    severity: MessageSeverity::Information,
+                });
+        }
     }
 
     fn handle_window_close_requested(&mut self, window_id: WindowId) {
@@ -1008,10 +1055,26 @@ impl MyAppLogic {
                 });
         }
 
-        self.update_current_archive_status();
+        self.update_current_archive_status(); // This will queue archive status updates
 
         let token_count_for_display = self.app_session_data.cached_current_token_count;
-        app_info!(self, "Tokens: {}", token_count_for_display);
+        let token_text = format!("Tokens: {}", token_count_for_display);
+
+        // This sends to OLD status bar AND NEW GENERAL label via status_message! macro
+        app_info!(self, "{}", token_text);
+
+        // Additionally, send to the NEW DEDICATED token label
+        // This was missing and is added now.
+        if let Some(ui_state_ref) = &self.ui_state {
+            // ui_state definitely Some here
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateLabelText {
+                    window_id: ui_state_ref.window_id,
+                    label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+                    text: token_text.clone(), // Clone because app_info! also uses token_text
+                    severity: MessageSeverity::Information,
+                });
+        }
 
         if scan_was_successful {
             app_info!(self, "{}", final_status_message);
