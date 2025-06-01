@@ -77,7 +77,7 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 
 ## P3.1: Status Bar Finalization
 *   Display number of selected files. `[UiStatusBarSelectedFileCountV1]`
-*   Display total size of selected files (optional). `[UiStatusBarSelectedFileSizeV1]`
+*   Display total token count of selected files (optional).
 *   Clearly display archive status (e.g., "Archive: Up-to-date"). Color-coding or icons. `[UiNotificationOutdatedArchiveV1]`
 *   **Usability:** Ensure status bar updates are immediate and clear.
 
