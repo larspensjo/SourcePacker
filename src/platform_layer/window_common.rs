@@ -12,6 +12,7 @@ use super::types::{
     AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformCommand,
     TreeItemId, WindowId,
 };
+use crate::app_logic::ui_constants;
 
 use windows::{
     Win32::{
@@ -127,16 +128,13 @@ impl NativeWindowData {
 
     // Helper to check if rules for the main three controls are present.
     // Used by handle_wm_size to decide which layout logic path to take.
+    // This might need adjustment or removal as the new layout system becomes primary.
     fn has_main_layout_rules(&self) -> bool {
         self.layout_rules.as_ref().map_or(false, |rules| {
-            let has_statusbar_rule = rules.iter().any(|r| r.control_id == ID_STATUS_BAR_CTRL);
-            let has_button_rule = rules
-                .iter()
-                .any(|r| r.control_id == ID_BUTTON_GENERATE_ARCHIVE);
-            let has_treeview_rule = rules
-                .iter()
-                .any(|r| r.control_id == control_treeview::ID_TREEVIEW_CTRL);
-            has_statusbar_rule && has_button_rule && has_treeview_rule
+            // For this transitional phase, we'll consider the new layout active if any rules are defined.
+            // A more robust check might ensure rules for specific critical components exist.
+            // For now, if ui_description_layer provides *any* layout rules, we try to use the new system.
+            !rules.is_empty()
         })
     }
 }
@@ -408,8 +406,6 @@ impl Win32ApiInternalState {
                         } else {
                             // Check if it's one of the new labels by looking up its control ID
                             // (which is its logical ID for these new labels) in label_severities.
-                            // GetDlgCtrlID is needed here if the HWND doesn't directly map to logical ID.
-                            // For now, assuming controls map stores HWND against logical ID.
                             let control_id_of_static =
                                 unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
                             if let Some(severity) =
@@ -579,123 +575,213 @@ impl Win32ApiInternalState {
         if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
                 if window_data.has_main_layout_rules() {
+                    // Check if any rules are defined
                     log::debug!(
                         "Platform: WM_SIZE for WinID {:?} using new rule-based layout. Client: {}x{}",
                         window_id,
                         client_width,
                         client_height
                     );
-                    // New rule-based layout logic
-                    let rules_map: HashMap<i32, &LayoutRule> = window_data
-                        .layout_rules
-                        .as_ref()
-                        .unwrap() // Safe due to has_main_layout_rules check
-                        .iter()
-                        .map(|r| (r.control_id, r))
-                        .collect();
+                    // New rule-based layout logic for main window elements
+                    // Sort rules by order
+                    let empty_vec = Vec::new();
+                    let layout_rules_ref = window_data.layout_rules.as_ref().unwrap_or(&empty_vec);
+                    let mut sorted_rules: Vec<&LayoutRule> = layout_rules_ref.iter().collect();
+                    sorted_rules.sort_by_key(|r| r.order);
+
+                    let controls_map: HashMap<i32, HWND> = window_data.controls.clone();
 
                     let mut current_available_bottom = client_height;
-                    let mut current_available_top = 0; // Assuming top-most point is 0
+                    let mut current_available_top = 0;
+                    let mut current_available_left = 0;
+                    let mut current_available_right = client_width;
+                    let mut fill_control_hwnd: Option<HWND> = None;
+                    let mut fill_control_margins: (i32, i32, i32, i32) = (0, 0, 0, 0); // (top, right, bottom, left)
 
-                    // 1. Status Bar (Order 0, Docks Bottom)
-                    if let Some(rule) = rules_map.get(&ID_STATUS_BAR_CTRL) {
-                        if rule.dock_style == DockStyle::Bottom {
-                            let height = rule.fixed_size.unwrap_or(STATUS_BAR_HEIGHT);
-                            let margin_top = rule.margin.0;
-                            let margin_right = rule.margin.1;
-                            let margin_bottom = rule.margin.2;
-                            let margin_left = rule.margin.3;
+                    for rule in &sorted_rules {
+                        let control_hwnd_opt = controls_map.get(&rule.control_id).cloned();
+                        if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
+                            log::warn!(
+                                "Layout: HWND for control ID {} not found or invalid, skipping layout.",
+                                rule.control_id
+                            );
+                            continue;
+                        }
+                        let control_hwnd = control_hwnd_opt.unwrap();
 
-                            let x = 0 + margin_left;
-                            let width = client_width - margin_left - margin_right;
-                            let y = current_available_bottom - height - margin_bottom;
+                        match rule.dock_style {
+                            DockStyle::Bottom => {
+                                let height = rule.fixed_size.unwrap_or(0);
+                                let margin_top = rule.margin.0;
+                                let margin_right = rule.margin.1;
+                                let margin_bottom = rule.margin.2;
+                                let margin_left = rule.margin.3;
 
-                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
-                                if !hwnd_ctrl.is_invalid() {
-                                    unsafe {
-                                        let _ = MoveWindow(
-                                            hwnd_ctrl,
-                                            x,
-                                            y,
-                                            width.max(0),
-                                            height.max(0),
-                                            true,
-                                        );
+                                let x = current_available_left + margin_left;
+                                let item_width = (current_available_right - current_available_left)
+                                    - margin_left
+                                    - margin_right;
+                                let y = current_available_bottom - height - margin_bottom;
+
+                                unsafe {
+                                    MoveWindow(
+                                        control_hwnd,
+                                        x,
+                                        y,
+                                        item_width.max(0),
+                                        height.max(0),
+                                        true,
+                                    );
+                                }
+                                current_available_bottom = y - margin_top;
+
+                                // Specific layout for children of STATUS_BAR_PANEL_ID
+                                if rule.control_id == ui_constants::STATUS_BAR_PANEL_ID {
+                                    let panel_client_width = item_width.max(0);
+                                    let panel_client_height = height.max(0);
+
+                                    let label_ids = [
+                                        ui_constants::STATUS_LABEL_GENERAL_ID,
+                                        ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                                        ui_constants::STATUS_LABEL_TOKENS_ID,
+                                    ];
+                                    let num_labels = label_ids.len() as i32;
+                                    if num_labels > 0 {
+                                        // Example: 50% general, 25% archive, 25% tokens
+                                        let general_width =
+                                            (panel_client_width as f32 * 0.50) as i32;
+                                        let archive_width =
+                                            (panel_client_width as f32 * 0.25) as i32;
+                                        let tokens_width =
+                                            panel_client_width - general_width - archive_width;
+
+                                        let label_widths =
+                                            [general_width, archive_width, tokens_width];
+                                        let mut current_x_in_panel = 0;
+
+                                        for (i, &label_id_val) in label_ids.iter().enumerate() {
+                                            if let Some(&label_hwnd) =
+                                                controls_map.get(&label_id_val)
+                                            {
+                                                if !label_hwnd.is_invalid() {
+                                                    let label_width = label_widths[i];
+                                                    unsafe {
+                                                        MoveWindow(
+                                                            label_hwnd,
+                                                            current_x_in_panel,
+                                                            0, // Y is 0 relative to panel's client area
+                                                            label_width.max(0),
+                                                            panel_client_height.max(0),
+                                                            true,
+                                                        );
+                                                    }
+                                                    current_x_in_panel += label_width;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            current_available_bottom = y - margin_top;
+                            DockStyle::Top => {
+                                let height = rule.fixed_size.unwrap_or(0);
+                                let margin_top = rule.margin.0;
+                                let margin_right = rule.margin.1;
+                                let margin_bottom = rule.margin.2;
+                                let margin_left = rule.margin.3;
+
+                                let x = current_available_left + margin_left;
+                                let y = current_available_top + margin_top;
+                                let item_width = (current_available_right - current_available_left)
+                                    - margin_left
+                                    - margin_right;
+
+                                unsafe {
+                                    MoveWindow(
+                                        control_hwnd,
+                                        x,
+                                        y,
+                                        item_width.max(0),
+                                        height.max(0),
+                                        true,
+                                    );
+                                }
+                                current_available_top = y + height + margin_bottom;
+                            }
+                            DockStyle::Left => {
+                                let width = rule.fixed_size.unwrap_or(0);
+                                let margin_top = rule.margin.0;
+                                let margin_right = rule.margin.1;
+                                let margin_bottom = rule.margin.2;
+                                let margin_left = rule.margin.3;
+
+                                let x = current_available_left + margin_left;
+                                let y = current_available_top + margin_top;
+                                let item_height = (current_available_bottom
+                                    - current_available_top)
+                                    - margin_top
+                                    - margin_bottom;
+
+                                unsafe {
+                                    MoveWindow(
+                                        control_hwnd,
+                                        x,
+                                        y,
+                                        width.max(0),
+                                        item_height.max(0),
+                                        true,
+                                    );
+                                }
+                                current_available_left = x + width + margin_right;
+                            }
+                            DockStyle::Right => {
+                                let width = rule.fixed_size.unwrap_or(0);
+                                let margin_top = rule.margin.0;
+                                let margin_right = rule.margin.1;
+                                let margin_bottom = rule.margin.2;
+                                let margin_left = rule.margin.3;
+
+                                let x = current_available_right - width - margin_right;
+                                let y = current_available_top + margin_top;
+                                let item_height = (current_available_bottom
+                                    - current_available_top)
+                                    - margin_top
+                                    - margin_bottom;
+                                unsafe {
+                                    MoveWindow(
+                                        control_hwnd,
+                                        x,
+                                        y,
+                                        width.max(0),
+                                        item_height.max(0),
+                                        true,
+                                    );
+                                }
+                                current_available_right = x - margin_left;
+                            }
+                            DockStyle::Fill => {
+                                fill_control_hwnd = Some(control_hwnd);
+                                fill_control_margins = rule.margin;
+                            }
+                            DockStyle::None => { /* No automated layout for this control */ }
                         }
                     }
 
-                    // 2. Button's conceptual panel (Order 1, Docks Bottom)
-                    // The rule's fixed_size is the panel height. Button is placed within.
-                    if let Some(rule) = rules_map.get(&ID_BUTTON_GENERATE_ARCHIVE) {
-                        if rule.dock_style == DockStyle::Bottom {
-                            let panel_h = rule.fixed_size.unwrap_or(BUTTON_AREA_HEIGHT);
-                            let panel_y_top = current_available_bottom - panel_h; // Top of the button panel area
-
-                            // Button's margins are relative to this panel
-                            let btn_margin_top = rule.margin.0;
-                            let btn_margin_right = rule.margin.1; // Not used for width if BUTTON_WIDTH is fixed
-                            let btn_margin_bottom = rule.margin.2;
-                            let btn_margin_left = rule.margin.3;
-
-                            let btn_x = 0 + btn_margin_left; // Assuming panel starts at x=0
-                            let btn_y = panel_y_top + btn_margin_top;
-                            // Button height is determined by panel height minus its vertical margins within the panel
-                            let btn_h = panel_h - btn_margin_top - btn_margin_bottom;
-                            let btn_w = BUTTON_WIDTH; // Width is still a constant for now
-
-                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
-                                if !hwnd_ctrl.is_invalid() {
-                                    unsafe {
-                                        MoveWindow(
-                                            hwnd_ctrl,
-                                            btn_x,
-                                            btn_y,
-                                            btn_w.max(0),
-                                            btn_h.max(0),
-                                            true,
-                                        );
-                                    }
-                                }
-                            }
-                            current_available_bottom = panel_y_top; // Update available space for elements above
-                        }
-                    }
-
-                    // 3. TreeView (Order 10, Fills remaining space)
-                    if let Some(rule) = rules_map.get(&control_treeview::ID_TREEVIEW_CTRL) {
-                        if rule.dock_style == DockStyle::Fill {
-                            let margin_top = rule.margin.0;
-                            let margin_right = rule.margin.1;
-                            let margin_bottom = rule.margin.2;
-                            let margin_left = rule.margin.3;
-
-                            let x = 0 + margin_left;
-                            let y = current_available_top + margin_top;
-                            let width = client_width - margin_left - margin_right;
-                            let height = current_available_bottom - y - margin_bottom; // current_available_bottom is now top of button panel
-
-                            if let Some(hwnd_ctrl) = window_data.get_control_hwnd(rule.control_id) {
-                                if !hwnd_ctrl.is_invalid() {
-                                    unsafe {
-                                        let _ = MoveWindow(
-                                            hwnd_ctrl,
-                                            x,
-                                            y,
-                                            width.max(0),
-                                            height.max(0),
-                                            true,
-                                        );
-                                    }
-                                }
-                            }
+                    // After all other docking, position the Fill control
+                    if let Some(hwnd_fill) = fill_control_hwnd {
+                        let x = current_available_left + fill_control_margins.3; // margin.left
+                        let y = current_available_top + fill_control_margins.0; // margin.top
+                        let width = (current_available_right - current_available_left)
+                            - fill_control_margins.3
+                            - fill_control_margins.1;
+                        let height = (current_available_bottom - current_available_top)
+                            - fill_control_margins.0
+                            - fill_control_margins.2;
+                        unsafe {
+                            MoveWindow(hwnd_fill, x, y, width.max(0), height.max(0), true);
                         }
                     }
                 } else {
-                    // Original hardcoded layout logic
+                    // Original hardcoded layout logic (fallback)
                     log::debug!(
                         "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
                         window_id,
@@ -706,13 +792,12 @@ impl Win32ApiInternalState {
                     let button_area_y_pos = treeview_height;
                     let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
 
-                    // Resize TreeView
                     if let Some(hwnd_tv) =
                         window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
                     {
                         if !hwnd_tv.is_invalid() {
                             unsafe {
-                                let _ = MoveWindow(
+                                MoveWindow(
                                     hwnd_tv,
                                     0,
                                     0,
@@ -723,15 +808,13 @@ impl Win32ApiInternalState {
                             }
                         }
                     }
-
-                    // Resize Button
                     if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE)
                     {
                         if !hwnd_btn.is_invalid() {
                             let btn_x_pos = BUTTON_X_PADDING;
                             let btn_y_pos = button_area_y_pos + BUTTON_Y_PADDING_IN_AREA;
                             unsafe {
-                                let _ = MoveWindow(
+                                MoveWindow(
                                     hwnd_btn,
                                     btn_x_pos,
                                     btn_y_pos,
@@ -742,12 +825,10 @@ impl Win32ApiInternalState {
                             }
                         }
                     }
-
-                    // Resize Status Bar
                     if let Some(hwnd_status) = window_data.get_control_hwnd(ID_STATUS_BAR_CTRL) {
                         if !hwnd_status.is_invalid() {
                             unsafe {
-                                let _ = MoveWindow(
+                                MoveWindow(
                                     hwnd_status,
                                     0,
                                     status_bar_y_pos,
@@ -825,6 +906,8 @@ impl Win32ApiInternalState {
             let control_notification_code = notification_code_raw as u32;
 
             if control_notification_code == BN_CLICKED {
+                // Check against all known button IDs that app_logic might care about
+                // For Phase 5, only ID_BUTTON_GENERATE_ARCHIVE is actively handled by app_logic for clicks.
                 if control_id_from_wparam == ID_BUTTON_GENERATE_ARCHIVE {
                     log::debug!(
                         "Platform: Button ID {} (HWND {:?}) clicked for window {:?}.",
@@ -837,8 +920,11 @@ impl Win32ApiInternalState {
                         control_id: control_id_from_wparam,
                     });
                 } else {
-                    log::warn!(
-                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled control ID {} (HWND {:?}) in window {:?}.",
+                    // It could be another button if more are added later, or a non-button control that sends BN_CLICKED.
+                    // For now, just log if it's not the one we explicitly handle.
+                    log::trace!(
+                        // Use trace for less important unhandled clicks for now
+                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled/untraced control ID {} (HWND {:?}) in window {:?}.",
                         control_id_from_wparam,
                         hwnd_control_lparam,
                         window_id
@@ -943,6 +1029,7 @@ impl Win32ApiInternalState {
         let nmhdr = unsafe { &*nmhdr_ptr };
 
         if nmhdr.idFrom as i32 != control_treeview::ID_TREEVIEW_CTRL {
+            // Could also be notifications from other common controls if added later
             return None;
         }
 
