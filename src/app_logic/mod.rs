@@ -5,9 +5,11 @@
  * Unit tests for `MyAppLogic` are in `handler_tests.rs`.
  */
 pub mod handler;
-pub mod main_window_ui_state; // Added module
+pub mod main_window_ui_state;
+pub mod ui_constants;
 
 #[cfg(test)]
 mod handler_tests;
 
 pub use main_window_ui_state::MainWindowUiState;
+pub use ui_constants::*;

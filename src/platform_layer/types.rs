@@ -306,6 +306,23 @@ pub enum PlatformCommand {
         window_id: WindowId,
         rules: Vec<LayoutRule>,
     },
+    CreatePanel {
+        window_id: WindowId,
+        parent_control_id: Option<i32>, // None means child of main window's client area
+        panel_id: i32,                  // Logical ID for this new panel
+    },
+    CreateLabel {
+        window_id: WindowId,
+        parent_panel_id: i32,
+        label_id: i32,
+        initial_text: String,
+    },
+    UpdateLabelText {
+        window_id: WindowId,
+        label_id: i32,
+        text: String,
+        severity: MessageSeverity,
+    },
 }
 
 // --- Trait for App Logic to Handle Events ---

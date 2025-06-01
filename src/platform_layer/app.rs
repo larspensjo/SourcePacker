@@ -282,6 +282,29 @@ impl Win32ApiInternalState {
             PlatformCommand::DefineLayout { window_id, rules } => {
                 command_executor::execute_define_layout(self, window_id, rules)
             }
+            PlatformCommand::CreatePanel {
+                window_id,
+                parent_control_id,
+                panel_id,
+            } => {
+                todo!("CreatePanel command not yet implemented in command_executor")
+            }
+            PlatformCommand::CreateLabel {
+                window_id,
+                parent_panel_id,
+                label_id,
+                initial_text,
+            } => {
+                todo!("CreateLabel command not yet implemented in command_executor")
+            }
+            PlatformCommand::UpdateLabelText {
+                window_id,
+                label_id,
+                text,
+                severity,
+            } => {
+                todo!("UpdateLabelText command not yet implemented in command_executor")
+            }
         }
     }
 }

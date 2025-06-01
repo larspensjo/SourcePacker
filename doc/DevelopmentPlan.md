@@ -46,6 +46,7 @@ This section details various cleanup tasks, refactorings, and minor enhancements
     *   **Action:** Acknowledge as integration testing. Focus on unit tests for `MyAppLogic`, `AppSessionData`, `MainWindowUiState`, and command handlers.
     *   **Rationale:** Balances testing effort.
     *   **Status:** Ongoing strategy.
+*   The ui_descrptive_layer builds the UI. There should be some test to assert that the same ID isn't re-used.
 
 ### P2.11.5: Future Enhancements & Nice-to-Haves (Low Priority for P2)
 *   **Structured Application Settings File:**
