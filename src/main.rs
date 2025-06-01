@@ -120,7 +120,7 @@ fn main() -> PlatformResult<()> {
     Ok(())
 }
 
-fn initialize_logging() {
+pub fn initialize_logging() {
     #[cfg(not(test))]
     {
         // Production logger (to file)

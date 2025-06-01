@@ -172,8 +172,8 @@ mod tests {
     #[test]
     fn test_core_tiktoken_counter_text_with_punctuation() {
         let counter = CoreTikTokenCounter::new();
-        // "Hello, world!" is typically 3 tokens: "Hello", ",", " world!" (or similar breakdown)
-        assert_eq!(counter.count_tokens("Hello, world!"), 3);
+        // "Hello, world!" is typically 4 tokens: "Hello", ",", "world", "!" (or similar breakdown)
+        assert_eq!(counter.count_tokens("Hello, world!"), 4);
     }
 
     #[test]
@@ -189,10 +189,10 @@ mod tests {
         let counter = CoreTikTokenCounter::new();
         // A more complex phrase to ensure it handles typical text.
         // "This is a test sentence for the tokenizer."
-        // Expected: "This" " is" " a" " test" " sentence" " for" " the" " token" "izer" "." -> 10 tokens
+        // Expected: "This" " is" " a" " test" " sentence" " for" " the" " tokenizer" "." -> 9 tokens
         assert_eq!(
             counter.count_tokens("This is a test sentence for the tokenizer."),
-            10
+            9
         );
     }
 

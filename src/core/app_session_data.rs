@@ -428,7 +428,7 @@ mod tests {
     // --- Mock TokenCounter ---
     struct MockTokenCounter {
         default_count: usize,
-        counts_for_content: HashMap<String, usize>, // For more specific mocking if needed
+        counts_for_content: HashMap<String, usize>,
     }
     impl MockTokenCounter {
         fn new(default_count: usize) -> Self {
@@ -437,22 +437,31 @@ mod tests {
                 counts_for_content: HashMap::new(),
             }
         }
-        #[allow(dead_code)]
         fn set_count_for_content(&mut self, content: &str, count: usize) {
             log::debug!(
-                "MockTokenCounter: Setting count {} for content '{}'",
+                "MockTokenCounter: Setting count {} for content {:?}",
                 count,
-                content
+                content // Log the exact string representation
             );
             self.counts_for_content.insert(content.to_string(), count);
         }
     }
     impl TokenCounterOperations for MockTokenCounter {
         fn count_tokens(&self, text: &str) -> usize {
-            log::debug!("MockTokenCounter: Counting tokens for text '{}'", text);
+            log::debug!("MockTokenCounter: Counting tokens for text {:?}", text);
             if let Some(count) = self.counts_for_content.get(text) {
+                log::debug!(
+                    "MockTokenCounter: Found specific count {} for text {:?}",
+                    count,
+                    text
+                );
                 *count
             } else {
+                log::debug!(
+                    "MockTokenCounter: No specific count for text {:?}, returning default {}",
+                    text,
+                    self.default_count
+                );
                 self.default_count
             }
         }
@@ -474,6 +483,7 @@ mod tests {
 
     #[test]
     fn test_app_session_data_new() {
+        crate::initialize_logging();
         let session_data = AppSessionData::new();
         assert!(session_data.current_profile_name.is_none());
         assert!(session_data.current_profile_cache.is_none());
@@ -484,8 +494,12 @@ mod tests {
 
     #[test]
     fn test_create_profile_from_session_state_basic() {
+        crate::initialize_logging(); // Ensure logging is initialized for this test
+
         let temp_dir = tempdir().unwrap();
-        let (file1_path, _g1) = create_temp_file_with_content(&temp_dir, "f1", "content one");
+        let file1_content_written = "content one"; // Content before writeln adds newline
+        let (file1_path, _g1) =
+            create_temp_file_with_content(&temp_dir, "f1", file1_content_written);
         let (file2_path, _g2) = create_temp_file_with_content(&temp_dir, "f2", "content two");
 
         let mut session_data = AppSessionData {
@@ -519,9 +533,11 @@ mod tests {
             root_path_for_scan: temp_dir.path().join("new_root"),
             cached_current_token_count: 0,
         };
-        // Setup mock token counter for specific content
+
+        // Setup mock token counter for specific content, including the newline
         let mut specific_token_counter = MockTokenCounter::new(0);
-        specific_token_counter.set_count_for_content("content one", 10);
+        let file1_content_as_read = format!("{}\n", file1_content_written); // This is what fs::read_to_string will get
+        specific_token_counter.set_count_for_content(&file1_content_as_read, 10);
 
         let new_profile = session_data
             .create_profile_from_session_state("NewProfile".to_string(), &specific_token_counter);
@@ -548,6 +564,7 @@ mod tests {
 
     #[test]
     fn test_create_profile_from_session_state_no_archive_path() {
+        crate::initialize_logging();
         let session_data = AppSessionData {
             current_profile_name: None,
             current_profile_cache: None, // No old profile, so no archive path to inherit
@@ -564,6 +581,7 @@ mod tests {
 
     #[test]
     fn test_create_profile_from_session_state_file_read_error() {
+        crate::initialize_logging();
         let temp_dir = tempdir().unwrap();
         let non_existent_path = temp_dir.path().join("non_existent.txt"); // Will cause read error
 
@@ -596,6 +614,7 @@ mod tests {
 
     #[test]
     fn test_create_profile_from_session_state_no_checksum() {
+        crate::initialize_logging();
         let temp_dir = tempdir().unwrap();
         let (file_no_cs_path, _g_no_cs) =
             create_temp_file_with_content(&temp_dir, "f_no_cs", "content no cs");
@@ -629,6 +648,7 @@ mod tests {
 
     #[test]
     fn test_update_token_count_no_files() {
+        crate::initialize_logging();
         let mut session_data = AppSessionData::new();
         let mock_token_counter = MockTokenCounter::new(0); // Irrelevant count for no files
         let count = session_data.update_token_count(&mock_token_counter);
@@ -638,13 +658,21 @@ mod tests {
 
     #[test]
     fn test_update_token_count_selected_files() {
+        crate::initialize_logging();
         let mut session_data = AppSessionData::new();
         let mock_token_counter = MockTokenCounter::new(5); // Each "file" has 5 tokens
         let temp_dir = tempdir().unwrap();
-        let (file1_path, _guard1) = create_temp_file_with_content(&temp_dir, "f1", "hello world");
-        let (file2_path, _guard2) =
+        let mut temp_file_guards = Vec::new();
+        let (file1_path, guard1) = create_temp_file_with_content(&temp_dir, "f1", "hello world");
+        temp_file_guards.push(guard1);
+        let (file2_path, guard2) =
             create_temp_file_with_content(&temp_dir, "f2", "another example");
-        let (file3_path, _guard3) = create_temp_file_with_content(&temp_dir, "f3", "skip this one");
+        temp_file_guards.push(guard2);
+        let (file3_path, guard3) = create_temp_file_with_content(&temp_dir, "f3", "skip this one");
+        temp_file_guards.push(guard3);
+        let (child_file_path, child_guard) =
+            create_temp_file_with_content(&temp_dir, "child", "child content");
+        temp_file_guards.push(child_guard);
 
         session_data.file_nodes_cache = vec![
             FileNode {
@@ -678,7 +706,7 @@ mod tests {
                 is_dir: true,
                 state: FileState::Unknown, // Folder state itself doesn't matter for token sum
                 children: vec![FileNode {
-                    path: create_temp_file_with_content(&temp_dir, "child", "child content").0,
+                    path: child_file_path,
                     name: "child.txt".into(),
                     is_dir: false,
                     state: FileState::Selected,
