@@ -572,7 +572,10 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     let temp_dir = tempdir().unwrap();
     let (concrete_file_path, _temp_file_guard) =
         create_temp_file_with_content(&temp_dir, "startup_content", file_content_for_tokens);
-    mock_token_counter.set_count_for_content(file_content_for_tokens, 5); // Expect 5 tokens
+    mock_token_counter.set_count_for_content(
+        &format!("{}\n", file_content_for_tokens), // Add newline to match read content
+        5,
+    );
 
     let mut profile_selected_paths = HashSet::new();
     profile_selected_paths.insert(concrete_file_path.clone());
@@ -1237,7 +1240,10 @@ fn test_file_open_dialog_completed_updates_state_and_saves_last_profile() {
     let file_content_for_tokens = "opened file tokens content";
     let (concrete_file_path, _temp_file_guard) =
         create_temp_file_with_content(&temp_dir, "opened_content", file_content_for_tokens);
-    mock_token_counter.set_count_for_content(file_content_for_tokens, 7);
+    mock_token_counter.set_count_for_content(
+        &format!("{}\n", file_content_for_tokens), // Add newline to match read content
+        7,
+    );
 
     let mut selected_paths = HashSet::new();
     selected_paths.insert(concrete_file_path.clone());
@@ -1436,6 +1442,7 @@ fn create_temp_file_with_content(
 
 #[test]
 fn test_token_count_updates_on_tree_item_toggle() {
+    // Arrange
     let (mut logic, _, _, _, _, _mock_state_manager, mock_token_counter) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
@@ -1449,8 +1456,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
     let (file2_path, _temp_file2_guard) =
         create_temp_file_with_content(&temp_dir, "file2", content2);
 
-    mock_token_counter.set_count_for_content(content1, 2);
-    mock_token_counter.set_count_for_content(content2, 3);
+    mock_token_counter.set_count_for_content(
+        &format!("{}\n", content1), // Add newline
+        2,
+    );
+    mock_token_counter.set_count_for_content(
+        &format!("{}\n", content2), // Add newline
+        3,
+    );
 
     let node1_item_id = TreeItemId(101);
     let node2_item_id = TreeItemId(102);
@@ -1477,7 +1490,10 @@ fn test_token_count_updates_on_tree_item_toggle() {
     logic.test_path_to_tree_item_id_insert(&file1_path, node1_item_id);
     logic.test_path_to_tree_item_id_insert(&file2_path, node2_item_id);
 
+    // Act: Initial token count update
     logic._update_token_count_and_request_display();
+
+    // Assert: Initial token count (only file1 selected)
     assert_eq!(
         logic.test_current_token_count(),
         2,
@@ -1489,12 +1505,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
         "Expected 'Tokens: 2' status bar update. Got: {:?}", initial_cmds
     );
 
+    // Act: Toggle file2 to be selected
     logic.handle_event(AppEvent::TreeViewItemToggledByUser {
         window_id: main_window_id,
         item_id: node2_item_id,
         new_state: CheckState::Checked,
     });
 
+    // Assert: Token count after file2 is selected (file1 + file2)
     assert_eq!(
         logic.test_current_token_count(),
         5, // 2 (file1) + 3 (file2)
@@ -1506,12 +1524,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
         "Expected 'Tokens: 5' status bar update after toggle. Got: {:?}", cmds_after_toggle1
     );
 
+    // Act: Toggle file1 to be unselected
     logic.handle_event(AppEvent::TreeViewItemToggledByUser {
         window_id: main_window_id,
         item_id: node1_item_id,
         new_state: CheckState::Unchecked,
     });
 
+    // Assert: Token count after file1 is unselected (only file2)
     assert_eq!(
         logic.test_current_token_count(),
         3,
@@ -1526,13 +1546,14 @@ fn test_token_count_updates_on_tree_item_toggle() {
 
 #[test]
 fn test_token_count_updates_on_profile_activation() {
+    // Arrange
     let (
         mut logic,
         mock_config_manager,
         mock_profile_manager,
         mock_fs_scanner,
-        _,
-        _,
+        _, // mock_archiver is not strictly needed for this token test focus
+        _, // mock_state_manager is not strictly needed
         mock_token_counter,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
@@ -1545,8 +1566,8 @@ fn test_token_count_updates_on_profile_activation() {
     let (file_b_path, _temp_file_b_guard) =
         create_temp_file_with_content(&temp_dir, "fileB", content_b);
 
-    mock_token_counter.set_count_for_content(content_a, 10);
-    mock_token_counter.set_count_for_content(content_b, 5);
+    mock_token_counter.set_count_for_content(&format!("{}\n", content_a), 10); // Add newline
+    mock_token_counter.set_count_for_content(&format!("{}\n", content_b), 5); // Add newline
 
     let profile_name = "TestProfileForTokenActivation";
     let profile_root = temp_dir.path().to_path_buf();
@@ -1559,7 +1580,7 @@ fn test_token_count_updates_on_profile_activation() {
         root_folder: profile_root.clone(),
         selected_paths,
         deselected_paths: HashSet::new(),
-        archive_path: None,
+        archive_path: None, // No archive path, so save button will be disabled
         file_details: HashMap::new(),
     };
 
@@ -1571,7 +1592,7 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_a_path.clone(),
             name: "fileA.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown,
+            state: FileState::Unknown, // Will be set to Selected by apply_profile_to_tree
             children: Vec::new(),
             checksum: None,
         },
@@ -1579,17 +1600,19 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_b_path.clone(),
             name: "fileB.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown,
+            state: FileState::Unknown, // Will remain Unknown or become Deselected
             children: Vec::new(),
             checksum: None,
         },
     ];
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(scanned_nodes));
 
+    // Act
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: main_window_id,
     });
 
+    // Assert
     assert_eq!(
         logic.test_current_token_count(),
         10,
@@ -1605,6 +1628,7 @@ fn test_token_count_updates_on_profile_activation() {
 
 #[test]
 fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
+    // Arrange
     let (mut logic, _, _, _, _, _, mock_token_counter) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
@@ -1615,7 +1639,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
         create_temp_file_with_content(&temp_dir, "readable", readable_content);
     let unreadable_file_path = temp_dir.path().join("non_existent_file.txt");
 
-    mock_token_counter.set_count_for_content(readable_content, 12);
+    mock_token_counter.set_count_for_content(&format!("{}\n", readable_content), 12); // Add newline
 
     let file_nodes = vec![
         FileNode {
@@ -1630,15 +1654,17 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
             path: unreadable_file_path.clone(),
             name: "non_existent_file.txt".to_string(),
             is_dir: false,
-            state: FileState::Selected,
+            state: FileState::Selected, // This file will fail to read
             children: Vec::new(),
             checksum: None,
         },
     ];
     logic.test_set_file_nodes_cache(file_nodes);
 
+    // Act
     logic._update_token_count_and_request_display();
 
+    // Assert
     assert_eq!(
         logic.test_current_token_count(),
         12,

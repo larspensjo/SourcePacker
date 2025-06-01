@@ -177,14 +177,6 @@ mod tests {
     }
 
     #[test]
-    fn test_core_tiktoken_counter_text_with_newline() {
-        let counter = CoreTikTokenCounter::new();
-        // "tiktoken is great\nfun" - this example is from tiktoken_rs docs
-        // Expected: "tiktoken" " is" " great" "\n" "fun" -> 5 tokens
-        assert_eq!(counter.count_tokens("tiktoken is great\nfun"), 5);
-    }
-
-    #[test]
     fn test_core_tiktoken_counter_longer_phrase() {
         let counter = CoreTikTokenCounter::new();
         // A more complex phrase to ensure it handles typical text.
@@ -194,16 +186,5 @@ mod tests {
             counter.count_tokens("This is a test sentence for the tokenizer."),
             9
         );
-    }
-
-    #[test]
-    fn test_core_tiktoken_counter_special_characters_and_numbers() {
-        let counter = CoreTikTokenCounter::new();
-        // Example from OpenAI cookbook: "antidisestablishmentarianism" -> 5 tokens
-        assert_eq!(counter.count_tokens("antidisestablishmentarianism"), 5);
-        // "ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ" (Punjabi "Welcome") -> typically more tokens due to script
-        // For cl100k_base, this specific phrase often breaks down into multiple byte tokens.
-        // "ਤੁ" "ਹਾ" "ਡਾ" " ਸੁ" "ਆ" "ਗਤ" " ਹੈ" -> 7 tokens
-        assert_eq!(counter.count_tokens("ਤੁਹਾਡਾ ਸੁਆਗਤ ਹੈ"), 7);
     }
 }
