@@ -16,85 +16,48 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
 
-Implemented sections have been removed.
-
-### P2.11.2: Core Logic Correctness & User Experience (High Priority)
-*   **User-Friendly Error Reporting from `MyAppLogic`:** `[TechErrorHandlingGracefulV1]`
-    *   **Problem:** Errors in `MyAppLogic` are logged to console but not shown to the user in the UI.
-    *   **Action:** Replace `eprintln!` calls in `MyAppLogic` that represent user-facing errors or important warnings with `PlatformCommand::UpdateStatusBarText` (or a future error dialog command). Use appropriate `MessageSeverity`. The M/V/P refactoring might centralize status update queuing in `MyAppLogic`.
-    *   **Rationale:** Essential for user feedback and a more polished application.
-*   **Accurate Profile State Update:**
-    *   **Problem:** `MyAppLogic.current_profile_name` and `current_profile_cache` (now fields in `AppSessionData`) might be updated prematurely.
-    *   **Action:** Ensure these fields in `AppSessionData` are updated *only after* a successful save operation (e.g., after creating a new profile or saving an existing one under a new name/path). This logic will be managed by `MyAppLogic` when interacting with `AppSessionData`.
-    *   **Rationale:** Maintains consistent internal state with persisted state, preventing discrepancies.
-*   **Correct Application Data Storage Location:** `[ProfileStoreAppdataLocationV1]`
-    *   **Problem:** Configuration data might be stored in a non-standard or less appropriate user directory.
-    *   **Action:** Verify and ensure `CoreConfigManager` and `CoreProfileManager` use the platform-appropriate local application data directory.
-    *   **Code Check:** This appears to be correctly implemented.
-    *   **Rationale:** Adherence to operating system guidelines.
-*   **Centralized Profile Name Validation:**
-    *   **Problem:** Profile name validation logic might be duplicated.
-    *   **Action:** Ensure `MyAppLogic` (when handling user input for profile names) uses the public `core::profiles::is_valid_profile_name_char` function.
-    *   **Code Check:** This appears to be correctly implemented.
-    *   **Rationale:** Code deduplication, consistency, and easier maintenance.
-
 ### P2.11.3: Code Health & Refactoring (Medium Priority)
-*   **Modularity of `MyAppLogic` Handlers:** `[TechModularityLogicalModulesV1]`
-    *   **Problem:** Event handlers or helper functions within `app_logic/handler.rs` might become too large.
-    *   **Action:** Review large methods in `MyAppLogic`. Refactor them into smaller, focused private helpers. The M/V/P refactoring will significantly contribute to this by moving logic to `AppSessionData` and `MainWindowUiState`.
-    *   **Reference:** Directly supported by the "M/V/P Separation Plan".
-    *   **Rationale:** Improves readability, maintainability, and unit testability.
-*   **Modularity of Platform Message Handlers:**
-    *   **Problem:** `Win32ApiInternalState::handle_window_message` can become large.
-    *   **Action:** Continue delegating specific `WM_` message handling to dedicated private methods within `Win32ApiInternalState`.
-    *   **Rationale:** Improves organization of platform-specific code.
 *   **Consolidate Directory Path Logic:**
     *   **Problem:** `CoreConfigManager::_get_app_config_dir` and `CoreProfileManager::_get_profile_storage_dir` have similar path derivation.
     *   **Action:** Review. Consider a shared private helper for the base application-specific local config directory.
     *   **Rationale:** Minor code deduplication.
+    *   **Status:** Potential minor improvement. A shared helper could be introduced.
 *   **Ergonomic Access to `Win32ApiInternalState.active_windows`:**
     *   **Problem:** Direct locking of `active_windows` can be verbose.
-    *   **Action:** Evaluate creating specialized helper methods on `Win32ApiInternalState` for common `active_windows` access patterns.
+    *   **Action:** Evaluate creating specialized helper methods on `Win32ApiInternalState` for common `active_windows` access patterns. For example:
+        ```rust
+        // In Win32ApiInternalState
+        pub(crate) fn with_window_data<F, R>(&self, window_id: WindowId, op: F) -> PlatformResult<R>
+        where
+            F: FnOnce(&window_common::NativeWindowData) -> R,
+        { /* ... */ }
+
+        pub(crate) fn with_window_data_mut<F, R>(&self, window_id: WindowId, op: F) -> PlatformResult<R>
+        where
+            F: FnOnce(&mut window_common::NativeWindowData) -> R,
+        { /* ... */ }
+        ```
     *   **Rationale:** Can enhance code readability and reduce boilerplate.
+    *   **Status:** Potential improvement.
 
 ### P2.11.4: Testing Improvements (Medium Priority)
-*   **Enhance Test Isolation for `_on_ui_setup_complete` (formerly `on_main_window_created`):**
-    *   **Problem:** Tests for `MyAppLogic::_on_ui_setup_complete` might not be fully isolated.
-    *   **Action:** Review tests. Ensure mocks are configured for `load_last_profile_name` and `load_profile`.
-    *   **Code Check:** Mocks seem robust, but targeted review is beneficial.
-    *   **Rationale:** Ensures purer unit tests for startup logic.
-*   **Simulate Non-Success Paths for Dialog Stubs:**
-    *   **Problem:** Dialog stubs primarily simulate success.
-    *   **Action:** Augment stubs in `platform_layer/dialog_handler.rs` or use a test mechanism to simulate cancellations/errors.
-    *   **Rationale:** Enables testing `MyAppLogic`'s resilience for various dialog outcomes.
 *   **Integration Testing Considerations for `PlatformInterface::main_event_loop()`:**
     *   **Problem:** The main event loop is complex to unit test.
     *   **Action:** Acknowledge as integration testing. Focus on unit tests for `MyAppLogic`, `AppSessionData`, `MainWindowUiState`, and command handlers.
     *   **Rationale:** Balances testing effort.
+    *   **Status:** Ongoing strategy.
 
 ### P2.11.5: Future Enhancements & Nice-to-Haves (Low Priority for P2)
-*   **Convenience Macro for Status Bar Updates:**
-    *   **Problem:** Enqueuing `PlatformCommand::UpdateStatusBarText` can be verbose.
-    *   **Action:** Explore creating a Rust macro or a helper method on `MyAppLogic` (e.g., `_enqueue_status_update`).
-    *   **Reference:** The M/V/P plan suggests a helper method `_enqueue_status_update` in "Phase 4: Refine Orchestration".
-    *   **Rationale:** Improves developer ergonomics.
 *   **Structured Application Settings File:**
     *   **Problem:** `last_profile_name.txt` is limited.
     *   **Action:** Plan to migrate `core::config` to use JSON (e.g., `app_settings.json`) if more settings are anticipated.
     *   **Rationale:** Scalable solution for preferences.
+    *   **Status:** Not done (low priority).
 *   **Modularity of `handler.rs` and `handler_tests.rs`:**
     *   **Problem:** Files can become large.
     *   **Action:** If `app_logic/handler.rs` becomes unwieldy *after* the M/V/P refactor, consider further sub-modules for specific flows.
-    *   **Reference:** The M/V/P plan (creating `app_session_data.rs` and `main_window_ui_state.rs`) is the first major step in this direction.
     *   **Rationale:** Long-term maintainability.
-*   **Review UI Element Creation in `WM_CREATE`:**
-    *   **Problem:** `handle_wm_create` might be a bottleneck.
-    *   **Current Decision:** Essential static child controls in `WM_CREATE` (now done via commands from `ui_description_layer`) is acceptable. Dynamic content is command-driven.
-    *   **Rationale:** Balances initial setup with command-driven flexibility.
-
-### P2.11.6: Clearer State Separation within `MyAppLogic`**
-*   **This entire section is now superseded by the "M/V/P Separation Plan".**
-    *   **Reference:** This is the core objective of the "M/V/P Separation Plan".
+    *   **Status:** M/V/P was the major step. Further sub-moduling can be considered if files grow excessively.
 
 ## P2.12: Sophisticated Status Bar Control:
 *   For features like multiple panes, replace `STATIC` with `STATUSCLASSNAME`.
@@ -117,12 +80,6 @@ Implemented sections have been removed.
 *   Display total size of selected files (optional). `[UiStatusBarSelectedFileSizeV1]`
 *   Clearly display archive status (e.g., "Archive: Up-to-date"). Color-coding or icons. `[UiNotificationOutdatedArchiveV1]`
 *   **Usability:** Ensure status bar updates are immediate and clear.
-
-## P3.2: Token Count (Module: `tokenizer_utils`)
-*   Integrate a token counting library (e.g., `tiktoken-rs` or improve simple counter). `[TokenCountEstimateSelectedV1]`
-    *   **Note:** Current implementation uses `estimate_tokens_simple_whitespace`.
-*   Update status bar with live token count. `[TokenCountLiveUpdateV1]`, `[UiStatusBarLiveTokenCountV1]`
-    *   **Reference:** Logic for updating `current_token_count` will move to `AppSessionData` as per the M/V/P plan. `MyAppLogic` will request UI updates.
 
 ## P3.3: File Content Viewer
 *   Add a read-only text control. `[UiContentViewerPanelReadOnlyV1]`
