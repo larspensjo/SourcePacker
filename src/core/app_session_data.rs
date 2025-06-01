@@ -670,6 +670,7 @@ mod tests {
             }
         }
     }
+
     fn create_temp_file_with_content(
         dir: &tempfile::TempDir,
         filename_prefix: &str,

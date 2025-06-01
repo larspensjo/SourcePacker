@@ -386,6 +386,7 @@ impl Win32ApiInternalState {
 
                 if let Some(windows_guard) = self.active_windows.read().ok() {
                     if let Some(window_data) = windows_guard.get(&window_id) {
+                        // First, check the old status bar
                         if Some(hwnd_static_ctrl_from_msg)
                             == window_data.get_control_hwnd(ID_STATUS_BAR_CTRL)
                         {
@@ -404,8 +405,7 @@ impl Win32ApiInternalState {
                                     Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
                             }
                         } else {
-                            // Check if it's one of the new labels by looking up its control ID
-                            // (which is its logical ID for these new labels) in label_severities.
+                            // If not the old status bar, check if it's one of the new labels
                             let control_id_of_static =
                                 unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
                             if let Some(severity) =
@@ -414,8 +414,8 @@ impl Win32ApiInternalState {
                                 unsafe {
                                     let color = match severity {
                                         MessageSeverity::Error => COLORREF(0x000000FF), // Red
-                                        MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning
-                                        _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
+                                        MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning (FFA500 -> BGR is 00A5FF)
+                                        _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)), // Default text color
                                     };
                                     SetTextColor(hdc_static_ctrl, color);
                                     SetBkMode(hdc_static_ctrl, TRANSPARENT);
@@ -427,6 +427,7 @@ impl Win32ApiInternalState {
                     }
                 }
                 if lresult_override.is_none() {
+                    // If not handled by above, use default processing.
                     return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
                 }
             }

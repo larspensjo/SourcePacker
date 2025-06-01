@@ -1,4 +1,5 @@
 use super::handler::*;
+use crate::app_logic::ui_constants;
 
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
@@ -541,6 +542,20 @@ where
     cmds.iter().find(|&cmd| predicate(cmd))
 }
 
+fn create_temp_file_with_content(
+    dir: &tempfile::TempDir,
+    filename_prefix: &str,
+    content: &str,
+) -> (PathBuf, NamedTempFile) {
+    let mut temp_file = tempfile::Builder::new()
+        .prefix(filename_prefix)
+        .suffix(".txt")
+        .tempfile_in(dir.path())
+        .unwrap();
+    writeln!(temp_file, "{}", content).unwrap();
+    (temp_file.path().to_path_buf(), temp_file)
+}
+
 #[test]
 fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     let (
@@ -663,15 +678,31 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         "Expected ShowWindow command. Got: {:?}",
         cmds
     );
-    // The SetControlEnabled command for the button is no longer sent.
-    // The menu item is always enabled, and logic is checked inside the action.
     assert!(
         !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
+
+    // Expect two status updates for "Tokens: 5" (one old, one new)
+    // and two for the "Profile loaded" message.
+    let token_status_text = "Tokens: 5";
+    let profile_loaded_text = format!("Profile '{}' loaded.", last_profile_name_to_load);
+
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 5" && *severity == MessageSeverity::Information )).is_some(),
-        "Expected 'Tokens: 5' status bar update. Got: {:?}", cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateStatusBarText for 'Tokens: 5'. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *text == profile_loaded_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateStatusBarText for profile loaded. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateLabelText for profile loaded. Got: {:?}", cmds
     );
 }
 
@@ -700,7 +731,7 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
     };
     mock_profile_manager.set_load_profile_result(profile_name, Ok(mock_profile.clone()));
     mock_fs_scanner.set_scan_directory_result(&profile_root, Ok(vec![]));
-    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected);
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::NoFilesSelected); // For the archive specific status
 
     logic.handle_event(AppEvent::MainWindowUISetupComplete {
         window_id: WindowId(1),
@@ -718,7 +749,6 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
         "Expected SetWindowTitle indicating no archive path. Got: {:?}", cmds
     );
-    // The SetControlEnabled command for the button is no longer sent.
     assert!(
         !find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == ID_BUTTON_GENERATE_ARCHIVE_LOGIC )).is_some(),
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
@@ -732,9 +762,15 @@ fn test_on_main_window_created_loads_profile_no_archive_path() {
         "Expected ShowWindow command. Got: {:?}",
         cmds
     );
+
+    let token_status_text = "Tokens: 0";
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some(),
-        "Expected 'Tokens: 0' status bar update. Got: {:?}", cmds
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateStatusBarText for 'Tokens: 0'. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateLabelText for 'Tokens: 0'. Got: {:?}", cmds
     );
 }
 
@@ -1406,9 +1442,11 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         Ok(mock_profile_to_load.clone()),
     );
     mock_file_system_scanner_arc.set_scan_directory_result(&root_folder_for_profile, Ok(vec![])); // Token count will be 0
-    mock_archiver_arc.set_check_archive_status_result(ArchiveStatus::ErrorChecking(Some(
-        io::ErrorKind::NotFound,
-    )));
+
+    // This is for the specific archive status, not the general status message.
+    // General status messages about profile loading will still be MessageSeverity::Information.
+    let archive_error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::NotFound));
+    mock_archiver_arc.set_check_archive_status_result(archive_error_status.clone());
 
     let event = AppEvent::FileOpenProfileDialogCompleted {
         window_id: main_window_id,
@@ -1424,22 +1462,28 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         ))
         .is_some()
     );
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text.contains("Archive: ErrorChecking"))).is_some());
-    assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == "Tokens: 0" && *severity == MessageSeverity::Information )).is_some());
-}
 
-fn create_temp_file_with_content(
-    dir: &tempfile::TempDir,
-    filename_prefix: &str,
-    content: &str,
-) -> (PathBuf, NamedTempFile) {
-    let mut temp_file = tempfile::Builder::new()
-        .prefix(filename_prefix)
-        .suffix(".txt")
-        .tempfile_in(dir.path())
-        .unwrap();
-    writeln!(temp_file, "{}", content).unwrap();
-    (temp_file.path().to_path_buf(), temp_file)
+    // Verify specific archive status message (which goes to app_error! -> status_message!)
+    let archive_status_text = format!("Archive: {:?}", archive_error_status);
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if *severity == MessageSeverity::Error && text == &archive_status_text)).is_some(),
+        "Expected old status bar error for archive. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text == &archive_status_text)).is_some(),
+        "Expected new general label error for archive. Got: {:?}", cmds
+    );
+
+    // Verify token count message
+    let token_text = "Tokens: 0";
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. } if text == token_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateStatusBarText for 'Tokens: 0'. Got: {:?}", cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information )).is_some(),
+        "Expected UpdateLabelText for 'Tokens: 0'. Got: {:?}", cmds
+    );
 }
 
 #[test]
@@ -1504,7 +1548,11 @@ fn test_token_count_updates_on_tree_item_toggle() {
     let initial_cmds = logic.test_drain_commands();
     assert!(
         initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 2" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 2' status bar update. Got: {:?}", initial_cmds
+        "Expected UpdateStatusBarText for 'Tokens: 2'. Got: {:?}", initial_cmds
+    );
+    assert!(
+        initial_cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 2" && *severity == MessageSeverity::Information)),
+        "Expected UpdateLabelText for 'Tokens: 2'. Got: {:?}", initial_cmds
     );
 
     // Act: Toggle file2 to be selected
@@ -1523,7 +1571,11 @@ fn test_token_count_updates_on_tree_item_toggle() {
     let cmds_after_toggle1 = logic.test_drain_commands();
     assert!(
         cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 5" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 5' status bar update after toggle. Got: {:?}", cmds_after_toggle1
+        "Expected UpdateStatusBarText for 'Tokens: 5'. Got: {:?}", cmds_after_toggle1
+    );
+    assert!(
+        cmds_after_toggle1.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 5" && *severity == MessageSeverity::Information)),
+        "Expected UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds_after_toggle1
     );
 
     // Act: Toggle file1 to be unselected
@@ -1542,7 +1594,11 @@ fn test_token_count_updates_on_tree_item_toggle() {
     let cmds_after_toggle2 = logic.test_drain_commands();
     assert!(
         cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 3" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 3' status bar update after second toggle. Got: {:?}", cmds_after_toggle2
+        "Expected UpdateStatusBarText for 'Tokens: 3'. Got: {:?}", cmds_after_toggle2
+    );
+    assert!(
+        cmds_after_toggle2.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Tokens: 3" && *severity == MessageSeverity::Information)),
+        "Expected UpdateLabelText for 'Tokens: 3'. Got: {:?}", cmds_after_toggle2
     );
 }
 
@@ -1554,8 +1610,8 @@ fn test_token_count_updates_on_profile_activation() {
         mock_config_manager,
         mock_profile_manager,
         mock_fs_scanner,
-        _, // mock_archiver is not strictly needed for this token test focus
-        _, // mock_state_manager is not strictly needed
+        _,
+        _,
         mock_token_counter,
     ) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
@@ -1594,7 +1650,7 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_a_path.clone(),
             name: "fileA.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown, // Will be set to Selected by apply_profile_to_tree
+            state: FileState::Unknown,
             children: Vec::new(),
             checksum: None,
         },
@@ -1602,7 +1658,7 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_b_path.clone(),
             name: "fileB.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown, // Will remain Unknown or become Deselected
+            state: FileState::Unknown,
             children: Vec::new(),
             checksum: None,
         },
@@ -1622,9 +1678,14 @@ fn test_token_count_updates_on_profile_activation() {
     );
 
     let cmds = logic.test_drain_commands();
+    let token_text = "Tokens: 10";
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 10" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 10' status bar update on profile activation. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == token_text && *severity == MessageSeverity::Information)),
+        "Expected UpdateStatusBarText for 'Tokens: 10'. Got: {:?}", cmds
+    );
+    assert!(
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
+        "Expected UpdateLabelText for 'Tokens: 10'. Got: {:?}", cmds
     );
 }
 
@@ -1656,7 +1717,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
             path: unreadable_file_path.clone(),
             name: "non_existent_file.txt".to_string(),
             is_dir: false,
-            state: FileState::Selected, // This file will fail to read
+            state: FileState::Selected,
             children: Vec::new(),
             checksum: None,
         },
@@ -1674,9 +1735,14 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
     );
 
     let cmds = logic.test_drain_commands();
+    let token_text = "Tokens: 12";
     assert!(
-        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == "Tokens: 12" && *severity == MessageSeverity::Information)),
-        "Expected 'Tokens: 12' status bar update, even with file read errors. Got: {:?}", cmds
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id: _, text, severity } if text == token_text && *severity == MessageSeverity::Information)),
+        "Expected UpdateStatusBarText 'Tokens: 12'. Got: {:?}", cmds
+    );
+    assert!(
+        cmds.iter().any(|cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id: _, label_id, text, severity } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information)),
+        "Expected UpdateLabelText 'Tokens: 12'. Got: {:?}", cmds
     );
 }
 
@@ -1702,19 +1768,18 @@ fn test_menu_action_generate_archive_triggers_logic() {
         PathBuf::from("/test/root/file.txt"),
         "file.txt".into(),
         false,
-    )]); // Add a dummy file node
+    )]);
 
     mock_archiver.set_create_archive_content_result(Ok("Test Archive Content".to_string()));
     mock_archiver.set_save_archive_content_result(Ok(()));
 
     // Act
     logic.handle_event(AppEvent::MenuActionClicked {
-        window_id: main_window_id, // WindowId might not be strictly necessary for global menu actions if logic doesn't use it
+        window_id: main_window_id,
         action: MenuAction::GenerateArchive,
     });
 
     // Assert
-    // 1. Check if archiver methods were called
     let create_calls = mock_archiver.get_create_archive_content_calls();
     assert_eq!(
         create_calls.len(),
@@ -1728,15 +1793,28 @@ fn test_menu_action_generate_archive_triggers_logic() {
         1,
         "save_archive_content should be called once"
     );
-    assert_eq!(save_calls[0].0, archive_path); // Check correct path
-    assert_eq!(save_calls[0].1, "Test Archive Content"); // Check correct content
+    assert_eq!(save_calls[0].0, archive_path);
+    assert_eq!(save_calls[0].1, "Test Archive Content");
 
-    // 2. Check for status updates
     let cmds = logic.test_drain_commands();
+    let success_text = format!(
+        "Archive successfully saved to '{}'.",
+        archive_path.display()
+    );
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
-            if severity == &MessageSeverity::Information && text.contains("Archive successfully saved"))).is_some(),
-        "Expected success status message. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateStatusBarText { text, severity, .. }
+            if severity == &MessageSeverity::Information && text == &success_text)
+        )
+        .is_some(),
+        "Expected old status success message. Got: {:?}",
+        cmds
+    );
+    assert!(
+        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Information && text == &success_text)).is_some(),
+        "Expected new label success message. Got: {:?}", cmds
     );
 }
 
@@ -1801,6 +1879,62 @@ fn test_menu_action_generate_archive_no_archive_path_shows_error() {
         )
         .is_some(),
         "Expected 'No archive path set' error status. Got: {:?}",
+        cmds
+    );
+}
+
+#[test]
+fn test_status_message_macro_queues_dual_commands() {
+    // Arrange
+    let (mut logic, _, _, _, _, _, _mock_token_counter) = setup_logic_with_mocks(); // mock_token_counter is available if needed
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+    // By default, AppSessionData.file_nodes_cache is empty, and
+    // AppSessionData.cached_current_token_count is 0.
+    // Calling _update_token_count_and_request_display will use app_info!
+    // with the current token count, which will be 0.
+    let expected_message = "Tokens: 0";
+    let expected_severity = MessageSeverity::Information;
+
+    // Act
+    logic._update_token_count_and_request_display(); // This method calls app_info!
+    let cmds = logic.test_drain_commands();
+
+    // Assert
+    // 1. Check for the old UpdateStatusBarText command
+    let old_status_cmd = find_command(&cmds, |cmd| {
+        matches!(cmd, PlatformCommand::UpdateStatusBarText { window_id, text, severity }
+            if *window_id == main_window_id && text == expected_message && *severity == expected_severity)
+    });
+    assert!(
+        old_status_cmd.is_some(),
+        "Expected UpdateStatusBarText command for old status bar with text '{}'. Got: {:?}",
+        expected_message,
+        cmds
+    );
+
+    // 2. Check for the new UpdateLabelText command for the general label
+    let new_label_cmd = find_command(&cmds, |cmd| {
+        matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
+            if *window_id == main_window_id &&
+               *label_id == ui_constants::STATUS_LABEL_GENERAL_ID &&
+               text == expected_message &&
+               *severity == expected_severity)
+    });
+    assert!(
+        new_label_cmd.is_some(),
+        "Expected UpdateLabelText command for new general status label with text '{}'. Got: {:?}",
+        expected_message,
+        cmds
+    );
+
+    // Ensure only these two relevant commands are present.
+    // _update_token_count_and_request_display only calls app_info once.
+    assert_eq!(
+        cmds.len(),
+        2,
+        "Expected exactly two commands (one old status, one new label for token count). Got: {:?}",
         cmds
     );
 }

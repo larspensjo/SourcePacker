@@ -8,7 +8,7 @@ use crate::platform_layer::{
     TreeItemDescriptor, TreeItemId, WindowId, types::MenuAction,
 };
 // Import MainWindowUiState, which we'll hold as an Option
-use crate::app_logic::MainWindowUiState;
+use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -45,11 +45,20 @@ macro_rules! status_message {
         $log_macro!("AppLogic Status: {}", text);
 
         // Update UI status bar
-        if let Some(ui_state_ref) = &$self.ui_state { // Changed to use ui_state
+        if let Some(ui_state_ref) = &$self.ui_state {
+            // Command for the OLD status bar
             $self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateStatusBarText {
-                    window_id: ui_state_ref.window_id, // Use window_id from ui_state
-                    text: text, // Use the already formatted text
+                    window_id: ui_state_ref.window_id,
+                    text: text.clone(),
+                    severity: $severity,
+                });
+            // Command for the NEW general status label
+            $self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateLabelText {
+                    window_id: ui_state_ref.window_id,
+                    label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+                    text: text,
                     severity: $severity,
                 });
         } else {
