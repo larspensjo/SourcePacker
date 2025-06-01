@@ -155,7 +155,7 @@ impl Win32ApiInternalState {
      * Delegates to specific handlers in `command_executor` or `dialog_handler`.
      */
     fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
-        log::debug!("Platform: Executing command: {:?}", command);
+        log::trace!("Platform: Executing command: {:?}", command);
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
                 command_executor::execute_set_window_title(self, window_id, &title)
