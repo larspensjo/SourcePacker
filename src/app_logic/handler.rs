@@ -164,9 +164,6 @@ impl MyAppLogic {
         );
         self.ui_state = Some(MainWindowUiState::new(window_id)); // Instantiate MainWindowUiState
 
-        // The rest of the logic now assumes self.ui_state is Some.
-        // The window_id parameter is still useful for clarity in this function's scope.
-
         match self
             .config_manager
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
@@ -185,8 +182,6 @@ impl MyAppLogic {
                         );
                         let operation_status_message =
                             format!("Profile '{}' loaded.", profile.name);
-                        // Pass window_id because _activate_profile_and_show_window expects it,
-                        // and it's confirmed to be the main window's ID.
                         self._activate_profile_and_show_window(
                             window_id,
                             profile,
@@ -223,55 +218,70 @@ impl MyAppLogic {
     }
 
     fn refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
-        // Ensure we are operating on the correct window, though window_id is passed.
-        // This check is more for internal consistency if ui_state could be None.
-        let ui_state = self
-            .ui_state
-            .as_mut()
-            .filter(|s| s.window_id == window_id)
-            .expect("UI state for the given window_id must exist to refresh tree view");
+        let ui_state = match self.ui_state.as_mut() {
+            Some(s) if s.window_id == window_id => s,
+            _ => {
+                // Original code used .expect(), implies this should not happen if logic is correct.
+                // Logging an error and returning is a graceful way to handle if it does.
+                log::error!(
+                    "AppLogic: UI state for window_id {:?} must exist to refresh tree view. Current ui_state: {:?}",
+                    window_id,
+                    self.ui_state.as_ref().map(|s_ref| s_ref.window_id)
+                );
+                return;
+            }
+        };
 
         ui_state.next_tree_item_id_counter = 1;
         ui_state.path_to_tree_item_id.clear();
 
         let descriptors = Self::build_tree_item_descriptors_recursive_internal(
-            &self.app_session_data.file_nodes_cache, // Read from app_session_data
-            &mut ui_state.path_to_tree_item_id,      // Mutate ui_state
-            &mut ui_state.next_tree_item_id_counter, // Mutate ui_state
+            &self.app_session_data.file_nodes_cache,
+            &mut ui_state.path_to_tree_item_id,
+            &mut ui_state.next_tree_item_id_counter,
         );
         self.synchronous_command_queue
             .push_back(PlatformCommand::PopulateTreeView {
-                window_id, // Use passed window_id
+                window_id,
                 items: descriptors,
             });
     }
 
     fn update_current_archive_status(&mut self) {
-        if let Some(ui_state_mut) = self.ui_state.as_mut() {
-            if let Some(profile) = &self.app_session_data.current_profile_cache {
-                let status = self
-                    .archiver
-                    .check_archive_status(profile, &self.app_session_data.file_nodes_cache);
-                ui_state_mut.current_archive_status_for_ui = Some(status); // Update field in ui_state
-
-                let status_text = format!("Archive: {:?}", status);
-                match status {
-                    ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text), // This will queue a command
-                    _ => {
-                        log::debug!("{}", status_text);
-                    }
-                };
-            } else {
-                ui_state_mut.current_archive_status_for_ui = None;
-                app_info!(self, "No profile loaded");
+        let ui_state_mut = match self.ui_state.as_mut() {
+            Some(s) => s,
+            None => {
+                log::error!(
+                    "AppLogic: update_current_archive_status called but no UI state. Status cannot be cached or displayed."
+                );
+                return;
             }
-        } else {
-            // If no ui_state, we can't store current_archive_status_for_ui.
-            // This path also means status messages won't go to UI.
-            log::error!(
-                "AppLogic: update_current_archive_status called but no UI state. Status cannot be cached or displayed."
-            );
-        }
+        };
+
+        let profile = match &self.app_session_data.current_profile_cache {
+            Some(p) => p,
+            None => {
+                ui_state_mut.current_archive_status_for_ui = None;
+                app_info!(self, "No profile loaded"); // This queues a command.
+                return;
+            }
+        };
+
+        let status = self
+            .archiver
+            .check_archive_status(profile, &self.app_session_data.file_nodes_cache);
+
+        // The status is cloned before being assigned to avoid borrow issues if status were a more complex type
+        // that might borrow from `profile` or `file_nodes_cache`. For ArchiveStatus, it's likely a simple enum.
+        ui_state_mut.current_archive_status_for_ui = Some(status.clone());
+
+        let status_text = format!("Archive: {:?}", status);
+        match status {
+            ArchiveStatus::ErrorChecking(_) => app_error!(self, "{}", status_text),
+            _ => {
+                log::debug!("{}", status_text);
+            }
+        };
     }
 
     // This static helper remains unchanged as it operates on passed-in data.
@@ -361,15 +371,18 @@ impl MyAppLogic {
     }
 
     fn handle_window_close_requested(&mut self, window_id: WindowId) {
-        // Check if it's the main window managed by ui_state
-        if self
+        if !self
             .ui_state
             .as_ref()
             .map_or(false, |s| s.window_id == window_id)
         {
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::CloseWindow { window_id });
+            // Not the main window, or no UI state. This specific handler might only care about main window.
+            // If other windows could exist and be closed, this logic might need adjustment.
+            // For now, assume it's for the main window.
+            return;
         }
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::CloseWindow { window_id });
     }
 
     fn handle_window_destroyed(&mut self, window_id: WindowId) {
@@ -380,7 +393,7 @@ impl MyAppLogic {
         {
             log::debug!(
                 "AppLogic: Main window (ID: {:?}) destroyed notification received. Clearing UI state.",
-                self.ui_state.as_ref().unwrap().window_id
+                self.ui_state.as_ref().unwrap().window_id // Safe due to check
             );
             self.ui_state = None;
         } else {
@@ -397,146 +410,165 @@ impl MyAppLogic {
         item_id: TreeItemId,
         new_state: CheckState,
     ) {
-        // Ensure this event is for the main window managed by ui_state
-        if self
-            .ui_state
-            .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
-        {
-            log::debug!(
-                "TreeItem {:?} toggled to UI state {:?}.",
-                item_id,
-                new_state
-            );
-
-            let mut path_of_toggled_node: Option<PathBuf> = None;
-            // path_to_tree_item_id is in ui_state
-            let ui_state_ref = self.ui_state.as_ref().unwrap(); // Safe due to check above
-            for (path_candidate, id_in_map) in &ui_state_ref.path_to_tree_item_id {
-                if *id_in_map == item_id {
-                    path_of_toggled_node = Some(path_candidate.clone());
-                    break;
-                }
+        let ui_state_ref = match self.ui_state.as_ref() {
+            Some(s) if s.window_id == window_id => s,
+            _ => {
+                // Event is for a window not managed by self.ui_state or ui_state is None.
+                log::debug!(
+                    "AppLogic: TreeViewItemToggled event for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
+                    window_id
+                );
+                return;
             }
+        };
 
-            if let Some(path_for_model_update) = path_of_toggled_node {
-                {
-                    // Scope for mutable borrow of app_session_data.file_nodes_cache
-                    let node_to_update_model_for = Self::find_filenode_mut(
-                        &mut self.app_session_data.file_nodes_cache, // Use app_session_data
-                        &path_for_model_update,
-                    );
+        log::debug!(
+            "TreeItem {:?} toggled to UI state {:?}.",
+            item_id,
+            new_state
+        );
 
-                    if let Some(node_model) = node_to_update_model_for {
-                        let new_model_file_state = match new_state {
-                            CheckState::Checked => FileState::Selected,
-                            CheckState::Unchecked => FileState::Deselected,
-                        };
-                        self.state_manager
-                            .update_folder_selection(node_model, new_model_file_state);
-                    } else {
-                        log::error!(
-                            "AppLogic: Model node not found for path {:?} to update state.",
-                            path_for_model_update
-                        );
-                    }
-                } // End scope for mutable borrow
+        let mut path_of_toggled_node: Option<PathBuf> = None;
+        for (path_candidate, id_in_map) in &ui_state_ref.path_to_tree_item_id {
+            if *id_in_map == item_id {
+                path_of_toggled_node = Some(path_candidate.clone());
+                break;
+            }
+        }
 
-                // Re-borrow app_session_data.file_nodes_cache immutably
-                if let Some(root_node_for_visual_update) = Self::find_filenode_ref(
-                    &self.app_session_data.file_nodes_cache,
-                    &path_for_model_update,
-                ) {
-                    let mut visual_updates_list = Vec::new();
-                    // collect_visual_updates_recursive uses self.ui_state internally
-                    self.collect_visual_updates_recursive(
-                        root_node_for_visual_update,
-                        &mut visual_updates_list,
-                    );
-                    log::debug!(
-                        "Requesting {} visual updates for TreeView after toggle.",
-                        visual_updates_list.len()
-                    );
-                    for (id_to_update_ui, state_for_ui) in visual_updates_list {
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::UpdateTreeItemVisualState {
-                                window_id, // Use window_id from event
-                                item_id: id_to_update_ui,
-                                new_state: state_for_ui,
-                            },
-                        );
-                    }
-                } else {
-                    log::error!(
-                        "AppLogic: Model node not found for path {:?} to collect visual updates.",
-                        path_for_model_update
-                    );
-                }
-                self.update_current_archive_status();
-                self._update_token_count_and_request_display();
-            } else {
+        let path_for_model_update = match path_of_toggled_node {
+            Some(p) => p,
+            None => {
                 log::error!(
                     "AppLogic: Could not find path for TreeItemId {:?} from UI event.",
                     item_id
                 );
+                return;
             }
+        };
+
+        {
+            // Scope for mutable borrow of app_session_data.file_nodes_cache
+            let node_to_update_model_for = Self::find_filenode_mut(
+                &mut self.app_session_data.file_nodes_cache,
+                &path_for_model_update,
+            );
+
+            if let Some(node_model) = node_to_update_model_for {
+                let new_model_file_state = match new_state {
+                    CheckState::Checked => FileState::Selected,
+                    CheckState::Unchecked => FileState::Deselected,
+                };
+                self.state_manager
+                    .update_folder_selection(node_model, new_model_file_state);
+            } else {
+                log::error!(
+                    "AppLogic: Model node not found for path {:?} to update state.",
+                    path_for_model_update
+                );
+                // Continue to update UI based on other states if necessary, or return
+            }
+        } // End scope for mutable borrow
+
+        let root_node_for_visual_update = match Self::find_filenode_ref(
+            &self.app_session_data.file_nodes_cache,
+            &path_for_model_update,
+        ) {
+            Some(node) => node,
+            None => {
+                log::error!(
+                    "AppLogic: Model node not found for path {:?} to collect visual updates.",
+                    path_for_model_update
+                );
+                // Attempt to update global status even if this specific node isn't found for visual update propagation
+                self.update_current_archive_status();
+                self._update_token_count_and_request_display();
+                return;
+            }
+        };
+
+        let mut visual_updates_list = Vec::new();
+        self.collect_visual_updates_recursive(
+            root_node_for_visual_update,
+            &mut visual_updates_list,
+        );
+
+        log::debug!(
+            "Requesting {} visual updates for TreeView after toggle.",
+            visual_updates_list.len()
+        );
+        for (id_to_update_ui, state_for_ui) in visual_updates_list {
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateTreeItemVisualState {
+                    window_id,
+                    item_id: id_to_update_ui,
+                    new_state: state_for_ui,
+                });
         }
+
+        self.update_current_archive_status();
+        self._update_token_count_and_request_display();
     }
 
     fn _do_generate_archive(&mut self) {
         if self.ui_state.is_none() {
+            // This is already an early-out pattern.
             log::error!("Cannot generate archive: No UI state (main window).");
             return;
         }
-        log::debug!("'Save to Archive' button clicked.");
+        log::debug!("'Save to Archive' (via menu or old button) triggered.");
 
-        // current_profile_cache is in app_session_data
-        if let Some(profile) = &self.app_session_data.current_profile_cache {
-            if let Some(archive_path) = &profile.archive_path {
-                let display_root_path = profile.root_folder.clone();
-                match self.archiver.create_archive_content(
-                    &self.app_session_data.file_nodes_cache, // Use app_session_data
-                    &display_root_path,
-                ) {
-                    Ok(content) => {
-                        match self.archiver.save_archive_content(archive_path, &content) {
-                            Ok(_) => {
-                                app_info!(
-                                    self,
-                                    "Archive successfully saved to '{}'.",
-                                    archive_path.display()
-                                );
-                                self.update_current_archive_status();
-                            }
-                            Err(e) => {
-                                app_error!(
-                                    self,
-                                    "Failed to save archive content to '{}': {}",
-                                    archive_path.display(),
-                                    e
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        app_error!(self, "Failed to create archive content: {}", e);
-                    }
-                }
-            } else {
+        let profile = match &self.app_session_data.current_profile_cache {
+            Some(p) => p,
+            None => {
+                app_error!(self, "No profile loaded. Cannot save archive.");
+                return;
+            }
+        };
+
+        let archive_path = match &profile.archive_path {
+            Some(ap) => ap,
+            None => {
                 app_error!(
                     self,
                     "No archive path set for current profile. Cannot save archive."
                 );
+                return;
             }
-        } else {
-            app_error!(self, "No profile loaded. Cannot save archive.");
+        };
+
+        let display_root_path = profile.root_folder.clone();
+        match self
+            .archiver
+            .create_archive_content(&self.app_session_data.file_nodes_cache, &display_root_path)
+        {
+            Ok(content) => match self.archiver.save_archive_content(archive_path, &content) {
+                Ok(_) => {
+                    app_info!(
+                        self,
+                        "Archive successfully saved to '{}'.",
+                        archive_path.display()
+                    );
+                    self.update_current_archive_status();
+                }
+                Err(e) => {
+                    app_error!(
+                        self,
+                        "Failed to save archive content to '{}': {}",
+                        archive_path.display(),
+                        e
+                    );
+                }
+            },
+            Err(e) => {
+                app_error!(self, "Failed to create archive content: {}", e);
+            }
         }
     }
 
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
-        // Currently, no other buttons call this. If ID_BUTTON_GENERATE_ARCHIVE_LOGIC
-        // was the only one, this function might become mostly empty or repurposed.
-        // For now, log if any unexpected button click comes through.
+        // This method is currently minimal. If it grows, early-outs for window_id match
+        // or control_id checks could be useful. For now, it's simple.
         log::warn!(
             "Button with control_id {} clicked on window {:?}, but no specific action is currently mapped to it.",
             control_id,
@@ -546,298 +578,308 @@ impl MyAppLogic {
 
     fn handle_menu_load_profile_clicked(&mut self) {
         log::debug!("MenuAction::LoadProfile action received by AppLogic.");
-        if let Some(ui_state_ref) = self.ui_state.as_ref() {
-            // Check ui_state exists
-            let profile_dir_opt = self
-                .profile_manager
-                .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::ShowOpenFileDialog {
-                    window_id: ui_state_ref.window_id, // Use window_id from ui_state
-                    title: "Load Profile".to_string(),
-                    filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                    initial_dir: profile_dir_opt,
-                });
-        } else {
-            log::warn!("Cannot handle LoadProfile: No UI state (main window).");
-        }
+        let ui_state_ref = match self.ui_state.as_ref() {
+            Some(s) => s,
+            None => {
+                log::warn!("Cannot handle LoadProfile: No UI state (main window).");
+                return;
+            }
+        };
+
+        let profile_dir_opt = self
+            .profile_manager
+            .get_profile_dir_path(APP_NAME_FOR_PROFILES);
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowOpenFileDialog {
+                window_id: ui_state_ref.window_id,
+                title: "Load Profile".to_string(),
+                filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
+                initial_dir: profile_dir_opt,
+            });
     }
 
     fn handle_file_open_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        // Ensure this event is for the main window managed by ui_state
-        if self
+        if !self
             .ui_state
             .as_ref()
             .map_or(false, |s| s.window_id == window_id)
         {
-            if let Some(profile_file_path) = result {
-                log::debug!("Profile selected for load: {:?}", profile_file_path);
-                match self
-                    .profile_manager
-                    .load_profile_from_path(&profile_file_path)
-                {
-                    Ok(loaded_profile) => {
-                        let profile_name_clone = loaded_profile.name.clone();
-                        log::debug!(
-                            "Successfully loaded profile '{}' via manager from path.",
-                            loaded_profile.name
-                        );
-                        // Update app_session_data
-                        self.app_session_data.current_profile_name =
-                            Some(loaded_profile.name.clone());
-                        self.app_session_data.root_path_for_scan =
-                            loaded_profile.root_folder.clone();
-                        // The actual `current_profile_cache` is set in _activate_profile_and_show_window
+            log::warn!(
+                "FileOpenProfileDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
+                window_id
+            );
+            return;
+        }
 
-                        if let Err(e) = self
-                            .config_manager
-                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &loaded_profile.name)
-                        {
-                            app_warn!(
-                                self,
-                                "Failed to save last profile name '{}': {:?}",
-                                loaded_profile.name,
-                                e
-                            );
-                        }
-                        let status_msg =
-                            format!("Profile '{}' loaded and scanned.", profile_name_clone);
-                        self._activate_profile_and_show_window(
-                            window_id, // Use window_id from event
-                            loaded_profile,
-                            status_msg,
-                        );
-                    }
-                    Err(e) => {
-                        app_error!(
-                            self,
-                            "Failed to load profile from {:?} via manager: {:?}",
-                            profile_file_path,
-                            e
-                        );
-                        // Clear relevant app_session_data fields
-                        self.app_session_data.current_profile_name = None;
-                        self.app_session_data.current_profile_cache = None;
-                        // Clear relevant ui_state field
-                        if let Some(ui_state_mut) = self.ui_state.as_mut() {
-                            ui_state_mut.current_archive_status_for_ui = None;
-                        }
-                    }
-                }
-            } else {
+        let profile_file_path = match result {
+            Some(pfp) => pfp,
+            None => {
                 log::debug!("Load profile cancelled.");
+                return;
+            }
+        };
+
+        log::debug!("Profile selected for load: {:?}", profile_file_path);
+        match self
+            .profile_manager
+            .load_profile_from_path(&profile_file_path)
+        {
+            Ok(loaded_profile) => {
+                let profile_name_clone = loaded_profile.name.clone();
+                log::debug!(
+                    "Successfully loaded profile '{}' via manager from path.",
+                    loaded_profile.name
+                );
+
+                self.app_session_data.current_profile_name = Some(loaded_profile.name.clone());
+                self.app_session_data.root_path_for_scan = loaded_profile.root_folder.clone();
+
+                if let Err(e) = self
+                    .config_manager
+                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &loaded_profile.name)
+                {
+                    app_warn!(
+                        self,
+                        "Failed to save last profile name '{}': {:?}",
+                        loaded_profile.name,
+                        e
+                    );
+                }
+                let status_msg = format!("Profile '{}' loaded and scanned.", profile_name_clone);
+                self._activate_profile_and_show_window(window_id, loaded_profile, status_msg);
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Failed to load profile from {:?} via manager: {:?}",
+                    profile_file_path,
+                    e
+                );
+                self.app_session_data.current_profile_name = None;
+                self.app_session_data.current_profile_cache = None;
+                if let Some(ui_state_mut) = self.ui_state.as_mut() {
+                    // Safe to check again after error
+                    ui_state_mut.current_archive_status_for_ui = None;
+                }
             }
         }
     }
 
     fn handle_menu_save_profile_as_clicked(&mut self) {
         log::debug!("MenuAction::SaveProfileAs action received by AppLogic.");
-        if let Some(ui_state_mut) = self.ui_state.as_mut() {
-            // Check ui_state and get mutable ref
-            let profile_dir_opt = self
-                .profile_manager
-                .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-            let base_name = self
-                .app_session_data
-                .current_profile_name // Use app_session_data
-                .as_ref()
-                .map_or_else(|| "new_profile".to_string(), |name| name.clone());
-            let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
-            let default_filename = format!("{}.json", sanitized_current_name);
+        let ui_state_mut = match self.ui_state.as_mut() {
+            Some(s) => s,
+            None => {
+                log::warn!("Cannot handle SaveProfileAs: No UI state (main window).");
+                return;
+            }
+        };
 
-            ui_state_mut.pending_action = Some(PendingAction::SavingProfile); // Use ui_state
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::ShowSaveFileDialog {
-                    window_id: ui_state_mut.window_id, // Use window_id from ui_state
-                    title: "Save Profile As".to_string(),
-                    default_filename,
-                    filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                    initial_dir: profile_dir_opt,
-                });
-        } else {
-            log::warn!("Cannot handle SaveProfileAs: No UI state (main window).");
-        }
+        let profile_dir_opt = self
+            .profile_manager
+            .get_profile_dir_path(APP_NAME_FOR_PROFILES);
+        let base_name = self
+            .app_session_data
+            .current_profile_name
+            .as_ref()
+            .map_or_else(|| "new_profile".to_string(), |name| name.clone());
+        let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
+        let default_filename = format!("{}.json", sanitized_current_name);
+
+        ui_state_mut.pending_action = Some(PendingAction::SavingProfile);
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowSaveFileDialog {
+                window_id: ui_state_mut.window_id,
+                title: "Save Profile As".to_string(),
+                default_filename,
+                filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
+                initial_dir: profile_dir_opt,
+            });
     }
 
     fn handle_file_save_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        // This method manages pending_action, which is now in ui_state.
-        // It needs mutable access to ui_state if the window_id matches.
-        if let Some(ui_state_mut) = self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
-            let action = ui_state_mut.pending_action.take(); // Take from ui_state
+        let ui_state_mut_option = self.ui_state.as_mut().filter(|s| s.window_id == window_id);
+        let ui_state_mut = match ui_state_mut_option {
+            Some(s) => s,
+            None => {
+                log::warn!(
+                    "FileSaveDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
+                    window_id
+                );
+                return;
+            }
+        };
 
-            match action {
-                Some(PendingAction::SettingArchivePath) => {
-                    if let Some(path) = result {
-                        log::debug!("Archive path selected: {:?}", path);
-                        // current_profile_cache is in app_session_data
-                        if let Some(profile) = &mut self.app_session_data.current_profile_cache {
-                            profile.archive_path = Some(path.clone());
-                            match self
-                                .profile_manager
-                                .save_profile(profile, APP_NAME_FOR_PROFILES)
-                            {
-                                Ok(_) => {
-                                    app_info!(
-                                        self,
-                                        "Archive path set to '{}' for profile '{}' and saved.",
-                                        path.display(),
-                                        profile.name
-                                    );
-                                    self._update_window_title_with_profile_and_archive(window_id);
-                                    self.update_current_archive_status();
-                                    self._update_generate_archive_menu_item_state(window_id);
-                                }
-                                Err(e) => {
-                                    app_error!(
-                                        self,
-                                        "Failed to save profile '{}' after setting archive path: {}",
-                                        profile.name,
-                                        e
-                                    );
-                                }
-                            }
-                        } else {
-                            app_error!(self, "No profile active to set archive path for.");
-                        }
-                    } else {
+        let action = ui_state_mut.pending_action.take();
+        match action {
+            Some(PendingAction::SettingArchivePath) => {
+                let path = match result {
+                    Some(p) => p,
+                    None => {
                         log::debug!("Set archive path cancelled.");
+                        self._update_generate_archive_menu_item_state(window_id); // window_id is from event
+                        return;
+                    }
+                };
+
+                log::debug!("Archive path selected: {:?}", path);
+                let profile = match &mut self.app_session_data.current_profile_cache {
+                    Some(p) => p,
+                    None => {
+                        app_error!(self, "No profile active to set archive path for.");
+                        return;
+                    }
+                };
+
+                profile.archive_path = Some(path.clone());
+                match self
+                    .profile_manager
+                    .save_profile(profile, APP_NAME_FOR_PROFILES)
+                {
+                    Ok(_) => {
+                        app_info!(
+                            self,
+                            "Archive path set to '{}' for profile '{}' and saved.",
+                            path.display(),
+                            profile.name
+                        );
+                        self._update_window_title_with_profile_and_archive(window_id);
+                        self.update_current_archive_status();
                         self._update_generate_archive_menu_item_state(window_id);
                     }
-                }
-                Some(PendingAction::SavingArchive) => {
-                    app_warn!(
-                        self,
-                        "Obsolete 'SavingArchive' action handled. This should not happen."
-                    );
-                    if result.is_none() {
-                        log::debug!("Save archive (obsolete path) cancelled.");
+                    Err(e) => {
+                        app_error!(
+                            self,
+                            "Failed to save profile '{}' after setting archive path: {}",
+                            profile.name,
+                            e
+                        );
                     }
-                }
-                Some(PendingAction::SavingProfile) => {
-                    if let Some(profile_save_path) = result {
-                        log::debug!("Profile save path selected: {:?}", profile_save_path);
-                        if let Some(profile_name_osstr) = profile_save_path.file_stem() {
-                            if let Some(profile_name_str) =
-                                profile_name_osstr.to_str().map(|s| s.to_string())
-                            {
-                                if profile_name_str.trim().is_empty()
-                                    || !profile_name_str
-                                        .chars()
-                                        .all(core::profiles::is_valid_profile_name_char)
-                                {
-                                    app_error!(
-                                        self,
-                                        "Invalid profile name extracted from path: '{}'. Profile not saved.",
-                                        profile_name_str
-                                    );
-                                } else {
-                                    // create_profile_from_current_state uses app_session_data
-                                    let new_profile =
-                                        self.app_session_data.create_profile_from_session_state(
-                                            profile_name_str.clone(),
-                                            &*self.token_counter_manager,
-                                        );
-                                    let profile_name_clone = new_profile.name.clone();
-                                    match self
-                                        .profile_manager
-                                        .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
-                                    {
-                                        Ok(()) => {
-                                            log::debug!(
-                                                "Successfully saved profile as '{}' via manager.",
-                                                new_profile.name
-                                            );
-                                            // Update app_session_data
-                                            self.app_session_data.current_profile_name =
-                                                Some(new_profile.name.clone());
-                                            self.app_session_data.current_profile_cache =
-                                                Some(new_profile.clone());
-                                            self.app_session_data.root_path_for_scan = self
-                                                .app_session_data
-                                                .current_profile_cache
-                                                .as_ref()
-                                                .unwrap() // Safe: just set it
-                                                .root_folder
-                                                .clone();
-
-                                            self._update_window_title_with_profile_and_archive(
-                                                window_id,
-                                            );
-
-                                            if let Err(e) =
-                                                self.config_manager.save_last_profile_name(
-                                                    APP_NAME_FOR_PROFILES,
-                                                    &new_profile.name,
-                                                )
-                                            {
-                                                app_warn!(
-                                                    self,
-                                                    "Failed to save last profile name '{}': {:?}",
-                                                    new_profile.name,
-                                                    e
-                                                );
-                                            }
-                                            self.update_current_archive_status();
-                                            self._update_generate_archive_menu_item_state(
-                                                window_id,
-                                            );
-                                            app_info!(
-                                                self,
-                                                "Profile '{}' saved.",
-                                                profile_name_clone
-                                            );
-                                        }
-                                        Err(e) => {
-                                            app_error!(
-                                                self,
-                                                "Failed to save profile (via manager) as '{}': {}",
-                                                new_profile.name,
-                                                e
-                                            );
-                                        }
-                                    }
-                                }
-                            } else {
-                                app_error!(
-                                    self,
-                                    "Profile save filename stem not valid UTF-8. Profile not saved."
-                                );
-                            }
-                        } else {
-                            app_error!(
-                                self,
-                                "Could not extract profile name from save path. Profile not saved."
-                            );
-                        }
-                    } else {
-                        log::debug!("Save profile cancelled.");
-                    }
-                }
-                Some(PendingAction::CreatingNewProfileGetName)
-                | Some(PendingAction::CreatingNewProfileGetRoot) => {
-                    app_error!(
-                        self,
-                        "Unexpected FileSaveDialogCompleted with pending action: {:?}",
-                        action
-                    );
-                }
-                None => {
-                    app_warn!(
-                        self,
-                        "FileSaveDialogCompleted received but no pending action was set."
-                    );
                 }
             }
-        } else {
-            log::warn!(
-                "FileSaveDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
-                window_id
-            );
+            Some(PendingAction::SavingArchive) => {
+                app_warn!(
+                    self,
+                    "Obsolete 'SavingArchive' action handled. This should not happen."
+                );
+                if result.is_none() {
+                    log::debug!("Save archive (obsolete path) cancelled.");
+                }
+            }
+            Some(PendingAction::SavingProfile) => {
+                let profile_save_path = match result {
+                    Some(psp) => psp,
+                    None => {
+                        log::debug!("Save profile cancelled.");
+                        return;
+                    }
+                };
+
+                log::debug!("Profile save path selected: {:?}", profile_save_path);
+                let profile_name_osstr = match profile_save_path.file_stem() {
+                    Some(name) => name,
+                    None => {
+                        app_error!(
+                            self,
+                            "Could not extract profile name from save path. Profile not saved."
+                        );
+                        return;
+                    }
+                };
+
+                let profile_name_str = match profile_name_osstr.to_str().map(|s| s.to_string()) {
+                    Some(name_str) => name_str,
+                    None => {
+                        app_error!(
+                            self,
+                            "Profile save filename stem not valid UTF-8. Profile not saved."
+                        );
+                        return;
+                    }
+                };
+
+                if profile_name_str.trim().is_empty()
+                    || !profile_name_str
+                        .chars()
+                        .all(core::profiles::is_valid_profile_name_char)
+                {
+                    app_error!(
+                        self,
+                        "Invalid profile name extracted from path: '{}'. Profile not saved.",
+                        profile_name_str
+                    );
+                    return;
+                }
+
+                let new_profile = self.app_session_data.create_profile_from_session_state(
+                    profile_name_str.clone(),
+                    &*self.token_counter_manager,
+                );
+                let profile_name_clone = new_profile.name.clone();
+                match self
+                    .profile_manager
+                    .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
+                {
+                    Ok(()) => {
+                        log::debug!(
+                            "Successfully saved profile as '{}' via manager.",
+                            new_profile.name
+                        );
+                        self.app_session_data.current_profile_name = Some(new_profile.name.clone());
+                        self.app_session_data.current_profile_cache = Some(new_profile.clone());
+                        self.app_session_data.root_path_for_scan = self
+                            .app_session_data
+                            .current_profile_cache
+                            .as_ref()
+                            .unwrap()
+                            .root_folder
+                            .clone();
+
+                        self._update_window_title_with_profile_and_archive(window_id);
+
+                        if let Err(e) = self
+                            .config_manager
+                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile.name)
+                        {
+                            app_warn!(
+                                self,
+                                "Failed to save last profile name '{}': {:?}",
+                                new_profile.name,
+                                e
+                            );
+                        }
+                        self.update_current_archive_status();
+                        self._update_generate_archive_menu_item_state(window_id);
+                        app_info!(self, "Profile '{}' saved.", profile_name_clone);
+                    }
+                    Err(e) => {
+                        app_error!(
+                            self,
+                            "Failed to save profile (via manager) as '{}': {}",
+                            new_profile.name,
+                            e
+                        );
+                    }
+                }
+            }
+            Some(PendingAction::CreatingNewProfileGetName)
+            | Some(PendingAction::CreatingNewProfileGetRoot) => {
+                app_error!(
+                    self,
+                    "Unexpected FileSaveDialogCompleted with pending action: {:?}",
+                    action
+                );
+            }
+            None => {
+                app_warn!(
+                    self,
+                    "FileSaveDialogCompleted received but no pending action was set."
+                );
+            }
         }
     }
 
     fn handle_window_resized(&mut self, _window_id: WindowId, _width: i32, _height: i32) {
-        // Currently does not generate commands. Log if needed.
         log::debug!(
             "Window resized: ID {:?}, W:{}, H:{}",
             _window_id,
@@ -848,7 +890,6 @@ impl MyAppLogic {
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
         log::debug!("MenuAction::RefreshFileList action received by AppLogic.");
-        // This action inherently requires the main window and its state.
         let main_window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
             Some(id) => id,
             None => {
@@ -857,7 +898,6 @@ impl MyAppLogic {
             }
         };
 
-        // current_profile_cache is in app_session_data
         let current_profile_clone = match self.app_session_data.current_profile_cache.clone() {
             Some(profile) => profile,
             None => {
@@ -875,14 +915,14 @@ impl MyAppLogic {
 
         match self.file_system_scanner.scan_directory(&root_path_to_scan) {
             Ok(new_nodes) => {
-                self.app_session_data.file_nodes_cache = new_nodes; // Update app_session_data
+                self.app_session_data.file_nodes_cache = new_nodes;
                 log::debug!(
                     "Scan successful, {} top-level nodes found.",
                     self.app_session_data.file_nodes_cache.len()
                 );
 
                 self.state_manager.apply_profile_to_tree(
-                    &mut self.app_session_data.file_nodes_cache, // Mutate app_session_data
+                    &mut self.app_session_data.file_nodes_cache,
                     &current_profile_clone,
                 );
                 log::debug!(
@@ -916,6 +956,7 @@ impl MyAppLogic {
         profile_to_activate: Profile,
         initial_operation_status_message: String,
     ) {
+        // This assert remains valuable.
         assert!(
             self.ui_state
                 .as_ref()
@@ -924,7 +965,7 @@ impl MyAppLogic {
         );
 
         let scan_result = self.app_session_data.activate_and_populate_data(
-            profile_to_activate, // Consumes profile_to_activate
+            profile_to_activate,
             &*self.file_system_scanner,
             &*self.state_manager,
             &*self.token_counter_manager,
@@ -932,21 +973,17 @@ impl MyAppLogic {
 
         let (scan_was_successful, final_status_message) = match scan_result {
             Ok(_) => (true, initial_operation_status_message),
-            Err(scan_error_message) => {
-                // The error message from AppSessionData::activate_and_populate_data
-                // should be comprehensive enough for UI display.
-                (false, scan_error_message)
-            }
+            Err(scan_error_message) => (false, scan_error_message),
         };
 
-        // `update_token_count` is now called within `activate_and_populate_data`.
-        // `_update_token_count_and_request_display` will still be called later to queue the UI update for tokens.
-
-        // Update window title (doesn't need to access self.ui_state content beyond window_id)
         self._update_window_title_with_profile_and_archive(window_id);
 
         {
-            let ui_state_mut = self.ui_state.as_mut().expect("UI state must exist here");
+            // Scope for ui_state_mut borrow
+            let ui_state_mut = self
+                .ui_state
+                .as_mut()
+                .expect("UI state must exist here for _activate_profile_and_show_window");
             ui_state_mut.next_tree_item_id_counter = 1;
             ui_state_mut.path_to_tree_item_id.clear();
 
@@ -960,32 +997,20 @@ impl MyAppLogic {
                     window_id,
                     items: descriptors,
                 });
-        } // `ui_state_mut` borrow ends here.
+        }
 
-        // Update `current_archive_status_for_ui` in `self.ui_state`
-        // The method `update_current_archive_status` itself handles borrowing `self.ui_state.as_mut()`.
-        // It also calls `app_error!` or `log::debug!`.
-        // This needs to be called when `self.ui_state` is not already exclusively borrowed.
-        self.update_current_archive_status(); // This will internally get `&mut self.ui_state` if Some.
+        self.update_current_archive_status();
 
-        // Token count has been updated by activate_and_populate_data.
-        // Now, just queue the UI update for the token count using the cached value.
         let token_count_for_display = self.app_session_data.cached_current_token_count;
         app_info!(self, "Tokens: {}", token_count_for_display);
 
-        // Display the overall status message from loading/scanning
-        // This must happen AFTER any mutable borrows of self.ui_state needed by the macros are done,
-        // or if the macros are robust enough. The current macros try an immutable borrow.
         if scan_was_successful {
             app_info!(self, "{}", final_status_message);
         } else {
             app_error!(self, "{}", final_status_message);
         }
 
-        // Update save button state
         self._update_generate_archive_menu_item_state(window_id);
-
-        // Show the window (very last step)
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
@@ -993,7 +1018,7 @@ impl MyAppLogic {
     // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {
         log::debug!("Initiating profile selection or creation flow.");
-        // Ensure we are operating on the main window
+        // This assert remains valuable.
         assert!(
             self.ui_state
                 .as_ref()
@@ -1024,7 +1049,7 @@ impl MyAppLogic {
                 );
                 self.synchronous_command_queue.push_back(
                     PlatformCommand::ShowProfileSelectionDialog {
-                        window_id, // Use passed window_id
+                        window_id,
                         available_profiles,
                         title,
                         prompt,
@@ -1049,70 +1074,85 @@ impl MyAppLogic {
         create_new_requested: bool,
         user_cancelled: bool,
     ) {
-        // Ensure this event is for the main window managed by ui_state
-        if self
+        if !self
             .ui_state
             .as_ref()
             .map_or(false, |s| s.window_id == window_id)
         {
             log::debug!(
-                "ProfileSelectionDialogCompleted event received: chosen: {:?}, create_new: {}, cancelled: {}",
-                chosen_profile_name,
-                create_new_requested,
-                user_cancelled
+                "ProfileSelectionDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
+                window_id
             );
+            return;
+        }
 
-            if user_cancelled {
-                log::debug!("Profile selection was cancelled by user. Quitting application.");
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::QuitApplication);
-                return;
-            }
+        log::debug!(
+            "ProfileSelectionDialogCompleted event received: chosen: {:?}, create_new: {}, cancelled: {}",
+            chosen_profile_name,
+            create_new_requested,
+            user_cancelled
+        );
 
-            if create_new_requested {
-                log::debug!("User requested to create a new profile.");
-                self.start_new_profile_creation_flow(window_id);
-            } else if let Some(profile_name) = chosen_profile_name {
-                log::debug!("User chose profile '{}'. Attempting to load.", profile_name);
-                match self
-                    .profile_manager
-                    .load_profile(&profile_name, APP_NAME_FOR_PROFILES)
-                {
-                    Ok(profile) => {
-                        log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
-                        let operation_status_message =
-                            format!("Profile '{}' loaded.", profile.name);
-                        if let Err(e) = self
-                            .config_manager
-                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
-                        {
-                            app_warn!(
-                                self,
-                                "Failed to save last profile name '{}': {:?}",
-                                profile.name,
-                                e
-                            );
-                        }
-                        self._activate_profile_and_show_window(
-                            window_id, // Use window_id from event
-                            profile,
-                            operation_status_message,
-                        );
-                    }
-                    Err(e) => {
-                        app_error!(
-                            self,
-                            "Could not load profile '{}': {:?}. Please try again or create a new one.",
-                            profile_name,
-                            e
-                        );
-                        self.initiate_profile_selection_or_creation(window_id);
-                    }
-                }
-            } else {
+        if user_cancelled {
+            log::debug!("Profile selection was cancelled by user. Quitting application.");
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::QuitApplication);
+            return;
+        }
+
+        if create_new_requested {
+            log::debug!("User requested to create a new profile.");
+            self.start_new_profile_creation_flow(window_id);
+            return;
+        }
+
+        let profile_name_to_load = match chosen_profile_name {
+            Some(name) => name,
+            None => {
+                // Not cancelled, not create_new, but no profile name. This implies an unexpected state.
                 app_warn!(
                     self,
                     "ProfileSelectionDialogCompleted in unexpected state (no choice, not create, not cancelled). Re-initiating."
+                );
+                self.initiate_profile_selection_or_creation(window_id);
+                return;
+            }
+        };
+
+        log::debug!(
+            "User chose profile '{}'. Attempting to load.",
+            profile_name_to_load
+        );
+        match self
+            .profile_manager
+            .load_profile(&profile_name_to_load, APP_NAME_FOR_PROFILES)
+        {
+            Ok(profile) => {
+                log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
+                let operation_status_message = format!("Profile '{}' loaded.", profile.name);
+                if let Err(e) = self
+                    .config_manager
+                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
+                {
+                    app_warn!(
+                        self,
+                        "Failed to save last profile name '{}': {:?}",
+                        profile.name,
+                        e
+                    );
+                }
+                self._activate_profile_and_show_window(
+                    window_id,
+                    profile,
+                    operation_status_message,
+                );
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Could not load profile '{}': {:?}. Please try again or create a new one.",
+                    profile_name_to_load,
+                    e
                 );
                 self.initiate_profile_selection_or_creation(window_id);
             }
@@ -1122,16 +1162,17 @@ impl MyAppLogic {
     // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     fn start_new_profile_creation_flow(&mut self, window_id: WindowId) {
         log::debug!("Starting new profile creation flow (Step 1: Get Name).");
+        // .expect() is used here as this function's contract assumes valid ui_state.
         let ui_state_mut = self
             .ui_state
             .as_mut()
             .filter(|s| s.window_id == window_id)
-            .expect("UI state must exist for start_new_profile_creation_flow");
+            .expect("UI state must exist and match window_id for start_new_profile_creation_flow");
 
-        ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetName); // Use ui_state
+        ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetName);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowInputDialog {
-                window_id, // Use passed window_id
+                window_id,
                 title: "New Profile (1/2): Name".to_string(),
                 prompt: "Enter a name for the new profile:".to_string(),
                 default_text: None,
@@ -1141,111 +1182,96 @@ impl MyAppLogic {
 
     fn handle_input_dialog_completed(
         &mut self,
-        window_id: WindowId,
+        window_id: WindowId, // This is the event's window_id
         text: Option<String>,
         context_tag: Option<String>,
     ) {
-        // This method manages pending_action and pending_new_profile_name, now in ui_state.
-        // Check if the event is for the main window and ui_state exists.
-        // We release the mutable borrow `ui_state_mut` before calling macros that might take `&self.ui_state`
-        // and then re-acquire it if needed.
-
-        let main_window_exists_and_matches = self
+        // Ensure the event is for the main window managed by ui_state.
+        if !self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id);
-
-        if main_window_exists_and_matches {
-            log::debug!(
-                "InputDialogCompleted: text: {:?}, context_tag: {:?}",
-                text,
-                context_tag
-            );
-
-            // Take a snapshot of necessary values from ui_state if they might be cleared by subsequent logic.
-            // Here, context_tag is from the event, so it's fine.
-            // The pending_action is what we'll check and potentially clear.
-            // We need to be careful: if a branch calls initiate_profile_selection_or_creation,
-            // which might need to mutably borrow ui_state, we must ensure our current borrow is released.
-
-            // Handling logic that uses `self.ui_state.as_mut()` must be careful with macros.
-            // Option 1: Perform actions on ui_state_mut, then log.
-            // Option 2: Log, then re-borrow ui_state_mut. (Chosen here for the problematic case)
-
-            match context_tag.as_deref() {
-                Some("NewProfileName") => {
-                    // This branch needs `ui_state_mut` to set pending_new_profile_name and pending_action.
-                    // It also calls other methods on `self` that might use `ui_state`.
-                    // Let's get `ui_state_mut` specifically for this scope.
-                    let ui_state_mut = self.ui_state.as_mut().unwrap(); // Safe due to main_window_exists_and_matches
-
-                    if let Some(profile_name) = text {
-                        if profile_name.trim().is_empty()
-                            || !profile_name
-                                .chars()
-                                .all(core::profiles::is_valid_profile_name_char)
-                        {
-                            app_warn!(
-                                // This macro call is okay if ui_state_mut is not used *after* it in this scope.
-                                self,
-                                "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens."
-                            );
-                            // pending_action remains CreatingNewProfileGetName implicitly by re-showing dialog
-                            self.synchronous_command_queue
-                                .push_back(PlatformCommand::ShowInputDialog {
-                                window_id, // Use window_id from event
-                                title: "New Profile (1/2): Name".to_string(),
-                                prompt:
-                                    "Enter a name for the new profile (invalid previous attempt):"
-                                        .to_string(),
-                                default_text: Some(profile_name),
-                                context_tag: Some("NewProfileName".to_string()),
-                            });
-                            // ui_state_mut.pending_action is NOT changed here, it should remain CreatingNewProfileGetName
-                            // which was set by start_new_profile_creation_flow.
-                            return;
-                        }
-                        log::debug!(
-                            "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
-                            profile_name
-                        );
-                        ui_state_mut.pending_new_profile_name = Some(profile_name);
-                        ui_state_mut.pending_action =
-                            Some(PendingAction::CreatingNewProfileGetRoot);
-                        self.synchronous_command_queue.push_back(
-                            PlatformCommand::ShowFolderPickerDialog {
-                                window_id,
-                                title: "New Profile (2/2): Select Root Folder".to_string(),
-                                initial_dir: None,
-                            },
-                        );
-                    } else {
-                        log::debug!(
-                            "New profile name input cancelled. Returning to profile selection."
-                        );
-                        ui_state_mut.pending_action = None;
-                        ui_state_mut.pending_new_profile_name = None;
-                        self.initiate_profile_selection_or_creation(window_id);
-                    }
-                }
-                _ => {
-                    // This was the problematic branch
-                    app_warn!(
-                        // Log first. This attempts an immutable borrow of self.ui_state.
-                        self,
-                        "InputDialogCompleted with unhandled context: {:?}",
-                        context_tag
-                    );
-                    // After the macro, we can safely get a new mutable borrow if needed.
-                    let ui_state_mut = self.ui_state.as_mut().unwrap(); // Safe due to main_window_exists_and_matches
-                    ui_state_mut.pending_action = None; // Clear in ui_state
-                }
-            }
-        } else {
+            .map_or(false, |s| s.window_id == window_id)
+        {
             log::warn!(
                 "InputDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
                 window_id
             );
+            return;
+        }
+        // Now we know self.ui_state is Some and its window_id matches the event's window_id.
+
+        log::debug!(
+            "InputDialogCompleted: text: {:?}, context_tag: {:?}",
+            text,
+            context_tag
+        );
+
+        match context_tag.as_deref() {
+            Some("NewProfileName") => {
+                let profile_name_text = match text {
+                    Some(t) => t,
+                    None => {
+                        log::debug!(
+                            "New profile name input cancelled. Returning to profile selection."
+                        );
+                        let ui_state_mut = self.ui_state.as_mut().unwrap(); // Safe due to initial check
+                        ui_state_mut.pending_action = None;
+                        ui_state_mut.pending_new_profile_name = None;
+                        self.initiate_profile_selection_or_creation(window_id);
+                        return;
+                    }
+                };
+
+                if profile_name_text.trim().is_empty()
+                    || !profile_name_text
+                        .chars()
+                        .all(core::profiles::is_valid_profile_name_char)
+                {
+                    // Log the warning.
+                    app_warn!(
+                        self,
+                        "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens."
+                    );
+                    // Re-show dialog.
+                    self.synchronous_command_queue
+                        .push_back(PlatformCommand::ShowInputDialog {
+                            window_id, // Use event's window_id
+                            title: "New Profile (1/2): Name".to_string(),
+                            prompt: "Enter a name for the new profile (invalid previous attempt):"
+                                .to_string(),
+                            default_text: Some(profile_name_text), // Pass back the invalid attempt
+                            context_tag: Some("NewProfileName".to_string()),
+                        });
+                    // pending_action in ui_state should remain CreatingNewProfileGetName (was set by start_new_profile_creation_flow)
+                    return;
+                }
+
+                log::debug!(
+                    "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
+                    profile_name_text
+                );
+                // Now, safely get ui_state_mut to modify it.
+                let ui_state_mut = self.ui_state.as_mut().unwrap(); // Safe due to initial check
+                ui_state_mut.pending_new_profile_name = Some(profile_name_text);
+                ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
+
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::ShowFolderPickerDialog {
+                        window_id, // Use event's window_id
+                        title: "New Profile (2/2): Select Root Folder".to_string(),
+                        initial_dir: None,
+                    });
+            }
+            _ => {
+                // Log first, then mutate ui_state if necessary.
+                app_warn!(
+                    self,
+                    "InputDialogCompleted with unhandled context: {:?}",
+                    context_tag
+                );
+                let ui_state_mut = self.ui_state.as_mut().unwrap(); // Safe due to initial check
+                ui_state_mut.pending_action = None;
+            }
         }
     }
 
@@ -1254,67 +1280,84 @@ impl MyAppLogic {
         window_id: WindowId,
         path: Option<PathBuf>,
     ) {
-        // Manages pending_action and pending_new_profile_name from ui_state.
-        if let Some(ui_state_mut) = self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
-            log::debug!("FolderPickerDialogCompleted: path: {:?}", path);
-            ui_state_mut.pending_action = None; // Clear in ui_state
+        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+            Some(s) => s,
+            None => {
+                log::warn!(
+                    "FolderPickerDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
+                    window_id
+                );
+                return;
+            }
+        };
+        // `ui_state_mut` is now a mutable reference to MainWindowUiState.
 
-            if let Some(root_folder_path) = path {
-                // Take pending_new_profile_name from ui_state
-                if let Some(profile_name) = ui_state_mut.pending_new_profile_name.take() {
-                    log::debug!(
-                        "Creating new profile '{}' with root folder {:?}.",
-                        profile_name,
-                        root_folder_path
-                    );
-                    let new_profile = Profile::new(profile_name.clone(), root_folder_path.clone());
+        log::debug!("FolderPickerDialogCompleted: path: {:?}", path);
+        ui_state_mut.pending_action = None; // Clear regardless of path outcome for this action type.
 
-                    match self
-                        .profile_manager
-                        .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
-                    {
-                        Ok(_) => {
-                            log::debug!("Successfully saved new profile '{}'.", new_profile.name);
-                            let operation_status_message =
-                                format!("New profile '{}' created and loaded.", new_profile.name);
+        let root_folder_path = match path {
+            Some(p) => p,
+            None => {
+                log::debug!("Root folder selection cancelled. Returning to profile selection.");
+                ui_state_mut.pending_new_profile_name = None; // Clear pending name
+                self.initiate_profile_selection_or_creation(window_id);
+                return;
+            }
+        };
 
-                            if let Err(e) = self
-                                .config_manager
-                                .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile.name)
-                            {
-                                app_warn!(
-                                    self,
-                                    "Failed to save last profile name '{}': {:?}",
-                                    new_profile.name,
-                                    e
-                                );
-                            }
-                            self._activate_profile_and_show_window(
-                                window_id, // Use window_id from event
-                                new_profile,
-                                operation_status_message,
-                            );
-                        }
-                        Err(e) => {
-                            app_error!(
-                                self,
-                                "Failed to save new profile '{}': {:?}. Please try again.",
-                                profile_name,
-                                e
-                            );
-                            self.initiate_profile_selection_or_creation(window_id);
-                        }
-                    }
-                } else {
+        let profile_name = match ui_state_mut.pending_new_profile_name.take() {
+            // Take from ui_state_mut
+            Some(name) => name,
+            None => {
+                app_warn!(
+                    self,
+                    "FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection."
+                );
+                self.initiate_profile_selection_or_creation(window_id);
+                return;
+            }
+        };
+
+        log::debug!(
+            "Creating new profile '{}' with root folder {:?}.",
+            profile_name,
+            root_folder_path
+        );
+        let new_profile = Profile::new(profile_name.clone(), root_folder_path.clone());
+
+        match self
+            .profile_manager
+            .save_profile(&new_profile, APP_NAME_FOR_PROFILES)
+        {
+            Ok(_) => {
+                log::debug!("Successfully saved new profile '{}'.", new_profile.name);
+                let operation_status_message =
+                    format!("New profile '{}' created and loaded.", new_profile.name);
+
+                if let Err(e) = self
+                    .config_manager
+                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile.name)
+                {
                     app_warn!(
                         self,
-                        "FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection."
+                        "Failed to save last profile name '{}': {:?}",
+                        new_profile.name,
+                        e
                     );
-                    self.initiate_profile_selection_or_creation(window_id);
                 }
-            } else {
-                log::debug!("Root folder selection cancelled. Returning to profile selection.");
-                ui_state_mut.pending_new_profile_name = None; // Clear in ui_state
+                self._activate_profile_and_show_window(
+                    window_id,
+                    new_profile,
+                    operation_status_message,
+                );
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Failed to save new profile '{}': {:?}. Please try again.",
+                    profile_name,
+                    e
+                );
                 self.initiate_profile_selection_or_creation(window_id);
             }
         }
@@ -1322,7 +1365,6 @@ impl MyAppLogic {
 
     // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     fn _update_window_title_with_profile_and_archive(&mut self, window_id: WindowId) {
-        // Ensure we are operating on the main window
         assert!(
             self.ui_state
                 .as_ref()
@@ -1335,9 +1377,6 @@ impl MyAppLogic {
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
 
-    // TODO: This method needs to be adapted if we want to dynamically enable/disable the menu item.
-    // For now, it does nothing as menu items are always enabled. The check is done in _do_generate_archive.
-    // If `PlatformCommand::SetMenuItemEnabled` is added later, this function would queue that command.
     fn _update_generate_archive_menu_item_state(&mut self, window_id: WindowId) {
         assert!(
             self.ui_state
@@ -1346,7 +1385,6 @@ impl MyAppLogic {
             "_update_generate_archive_menu_item_state called with mismatching window ID or no UI state."
         );
 
-        // current_profile_cache is in app_session_data
         let enabled = self
             .app_session_data
             .current_profile_cache
@@ -1354,6 +1392,8 @@ impl MyAppLogic {
             .and_then(|p| p.archive_path.as_ref())
             .is_some();
 
+        // Currently, menu item enabled state is not dynamically managed by commands.
+        // Logic is checked when action is triggered. This log indicates if action *can* succeed.
         if enabled {
             log::debug!("'Generate Archive' menu item can now function (archive path is set).");
         } else {
@@ -1364,58 +1404,60 @@ impl MyAppLogic {
     }
 
     fn handle_menu_set_archive_path_clicked(&mut self) {
-        if let Some(ui_state_mut) = self.ui_state.as_mut() {
-            // Requires mutable ui_state for pending_action
-            log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
-            // current_profile_cache is in app_session_data
-            if self.app_session_data.current_profile_cache.is_some() {
-                ui_state_mut.pending_action = Some(PendingAction::SettingArchivePath); // Set in ui_state
-
-                let default_filename = self
-                    .app_session_data
-                    .current_profile_cache
-                    .as_ref()
-                    .and_then(|p| p.archive_path.as_ref().and_then(|ap| ap.file_name()))
-                    .map(|os_name| os_name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| {
-                        self.app_session_data
-                            .current_profile_cache
-                            .as_ref()
-                            .map(|p| core::profiles::sanitize_profile_name(&p.name) + ".txt")
-                            .unwrap_or_else(|| "archive.txt".to_string())
-                    });
-
-                let initial_dir_for_dialog = self
-                    .app_session_data
-                    .current_profile_cache
-                    .as_ref()
-                    .and_then(|p| {
-                        p.archive_path
-                            .as_ref()
-                            .and_then(|ap| ap.parent().map(PathBuf::from))
-                    })
-                    .or_else(|| {
-                        self.app_session_data
-                            .current_profile_cache
-                            .as_ref()
-                            .map(|p| p.root_folder.clone())
-                    });
-
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::ShowSaveFileDialog {
-                        window_id: ui_state_mut.window_id, // Use window_id from ui_state
-                        title: "Set Archive File Path".to_string(),
-                        default_filename,
-                        filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0"
-                            .to_string(),
-                        initial_dir: initial_dir_for_dialog,
-                    });
-            } else {
-                app_warn!(self, "Cannot set archive path: No profile is active.");
+        let ui_state_mut = match self.ui_state.as_mut() {
+            Some(s) => s,
+            None => {
+                log::warn!("Cannot handle SetArchivePath: No UI state (main window).");
+                return;
             }
-        } else {
-            log::warn!("Cannot handle SetArchivePath: No UI state (main window).");
+        };
+
+        log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
+        if self.app_session_data.current_profile_cache.is_none() {
+            app_warn!(self, "Cannot set archive path: No profile is active.");
+            return;
         }
+
+        ui_state_mut.pending_action = Some(PendingAction::SettingArchivePath);
+
+        let default_filename = self
+            .app_session_data
+            .current_profile_cache
+            .as_ref()
+            .and_then(|p| p.archive_path.as_ref().and_then(|ap| ap.file_name()))
+            .map(|os_name| os_name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                self.app_session_data
+                    .current_profile_cache
+                    .as_ref()
+                    .map(|p| core::profiles::sanitize_profile_name(&p.name) + ".txt")
+                    .unwrap_or_else(|| "archive.txt".to_string())
+            });
+
+        let initial_dir_for_dialog = self
+            .app_session_data
+            .current_profile_cache
+            .as_ref()
+            .and_then(|p| {
+                p.archive_path
+                    .as_ref()
+                    .and_then(|ap| ap.parent().map(PathBuf::from))
+            })
+            .or_else(|| {
+                self.app_session_data
+                    .current_profile_cache
+                    .as_ref()
+                    .map(|p| p.root_folder.clone())
+            });
+
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowSaveFileDialog {
+                window_id: ui_state_mut.window_id,
+                title: "Set Archive File Path".to_string(),
+                default_filename,
+                filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0".to_string(),
+                initial_dir: initial_dir_for_dialog,
+            });
     }
 }
 
@@ -1425,7 +1467,6 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     fn handle_event(&mut self, event: AppEvent) {
-        // Note: window_id is passed in events. Methods should verify if it's the main window.
         match event {
             AppEvent::WindowCloseRequestedByUser { window_id } => {
                 self.handle_window_close_requested(window_id);
@@ -1447,15 +1488,18 @@ impl PlatformEventHandler for MyAppLogic {
                 self.handle_button_clicked(window_id, control_id);
             }
             AppEvent::MenuActionClicked {
-                window_id: _, // Menu actions are global for now, not tied to a specific window_id by source
+                window_id: _,
                 action,
-            } => match action {
-                MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
-                MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
-                MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
-                MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
-                MenuAction::GenerateArchive => self._do_generate_archive(),
-            },
+            } => {
+                // window_id from menu events often not used if actions are global
+                match action {
+                    MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
+                    MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
+                    MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
+                    MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
+                    MenuAction::GenerateArchive => self._do_generate_archive(),
+                }
+            }
             AppEvent::FileOpenProfileDialogCompleted { window_id, result } => {
                 self.handle_file_open_dialog_completed(window_id, result);
             }
@@ -1501,8 +1545,8 @@ impl PlatformEventHandler for MyAppLogic {
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
 
-        // current_profile_name is in app_session_data
-        if let Some(active_profile_name) = self.app_session_data.current_profile_name.clone() {
+        let active_profile_name_opt = self.app_session_data.current_profile_name.clone();
+        if let Some(active_profile_name) = active_profile_name_opt {
             if !active_profile_name.is_empty() {
                 let profile_to_save = self.app_session_data.create_profile_from_session_state(
                     active_profile_name.clone(),
@@ -1529,7 +1573,6 @@ impl PlatformEventHandler for MyAppLogic {
             }
         }
 
-        // current_profile_name is in app_session_data
         let profile_name_to_save_in_config = self
             .app_session_data
             .current_profile_name
@@ -1708,9 +1751,6 @@ impl MyAppLogic {
     pub(crate) fn test_config_manager(&self) -> &Arc<dyn ConfigManagerOperations> {
         &self.config_manager
     }
-    // pub(crate) fn test_set_config_manager(&mut self, v: Arc<dyn ConfigManagerOperations>) {
-    //     self.config_manager = v;
-    // } // Setters for Arc<dyn Trait> are usually not needed in tests if set via new()
 
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
         self.synchronous_command_queue.drain(..).collect()
