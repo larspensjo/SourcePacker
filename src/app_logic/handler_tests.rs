@@ -1460,8 +1460,10 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     );
 
     // Verify specific archive status message
-    let archive_status_text_for_dedicated_label = format!("Archive: {:?}", archive_error_status);
-    let archive_status_text_for_general_status = format!("Archive: {:?}", archive_error_status); // app_error! also uses this.
+    // For the dedicated label, we expect the plain English string.
+    let archive_status_text_for_dedicated_label = "Archive: Error: file not found.".to_string();
+    let archive_status_text_for_general_status =
+        format!("Archive status error: {:?}", archive_error_status); // General label uses Debug format.
 
     // 1. Dedicated archive label
     assert!(
@@ -1950,7 +1952,8 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
 
     // Case 1: ArchiveStatus is an error
     let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));
-    let error_text = format!("Archive: {:?}", error_status);
+    // For the dedicated label, we expect the plain English string.
+    let expected_dedicated_error_text = "Archive: Error: permission denied.".to_string();
     mock_archiver.set_check_archive_status_result(error_status.clone());
 
     // Act 1
@@ -1963,18 +1966,20 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
         find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID &&
-               text == &error_text &&
+               text == &expected_dedicated_error_text &&
                *severity == MessageSeverity::Error
         )).is_some(),
         "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Error). Got: {:?}",
         cmds_error
     );
     // Check for general status update (Error, via app_error!)
+    // The general status label will use the Debug representation.
+    let expected_general_error_text = format!("Archive status error: {:?}", error_status);
     assert!(
         find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && // From app_error!
-               text == &error_text &&
+               text == &expected_general_error_text  &&
                *severity == MessageSeverity::Error
         )).is_some(),
         "Expected UpdateLabelText for STATUS_LABEL_GENERAL_ID from app_error! (Error). Got: {:?}",
@@ -1983,7 +1988,8 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
 
     // Case 2: ArchiveStatus is informational (e.g., UpToDate)
     let info_status = ArchiveStatus::UpToDate;
-    let info_text = format!("Archive: {:?}", info_status);
+    // For the dedicated label, we expect the plain English string.
+    let expected_dedicated_info_text = "Archive: Up to date.".to_string();
     mock_archiver.set_check_archive_status_result(info_status.clone());
 
     // Act 2
@@ -1996,7 +2002,7 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
         find_command(&cmds_info, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID &&
-               text == &info_text &&
+               text == &expected_dedicated_info_text && // Use the plain English text
                *severity == MessageSeverity::Information
         )).is_some(),
         "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Information). Got: {:?}",

@@ -138,22 +138,6 @@ pub const STATUS_LABEL_TOKENS_ID: i32 = 1013;
         *   Adjust `LayoutRule` for `ui_constants::STATUS_BAR_PANEL_ID`'s `order` if needed (e.g., ensure it's `order: 0` or appropriate for the primary bottom-docked item).
 *   **Functionality Check:** Application compiles and runs. Only the new multi-element status bar (panel with labels) is visible. General, archive, and token messages update correctly in their respective labels with appropriate styling. The old status bar is gone.
 
-**Step 5.G: Testing (Ongoing throughout the phase)**
-*   **Platform Layer:**
-    *   After 5.B: Test processing of `CreatePanel`, `CreateLabel`, `UpdateLabelText`.
-    *   After 5.C: Verify new panel and labels are created and laid out correctly (alongside old bar). Test resizing and internal layout of panel children.
-    *   After 5.D: Test `UpdateLabelText` changes text and `WM_CTLCOLORSTATIC` applies styling to new labels.
-    *   After 5.F: Retest layout of elements within the panel during resize, ensuring only new system is active.
-*   **Application Logic (`handler_tests.rs`):**
-    *   After 5.D: Verify `status_message!` queues `UpdateLabelText` for the general label (with its logical ID) *and still* queues old `UpdateStatusBarText`.
-    *   After 5.E: Verify archive/token updates queue `UpdateLabelText` for their respective labels (with logical IDs) *and still* contribute to old `UpdateStatusBarText`.
-    *   After 5.F: Verify `MyAppLogic` now *only* queues the correct `UpdateLabelText` commands with the appropriate logical `label_id`s, text, and severity.
-*   **Manual UI Testing (after each relevant step):**
-    *   5.C: Confirm new panel and labels are visible. Old bar still updates.
-    *   5.D: Confirm general messages update in new general label (with color) AND old bar.
-    *   5.E: Confirm archive/token messages update in new labels AND old bar.
-    *   5.F: Confirm only new status bar elements are visible and correctly positioned/laid out. Confirm they update independently and correctly. Confirm error/warning styling applies. Check window resize behavior.
-
 ---
 
 ## Phase 6: Future Enhancements (Optional)

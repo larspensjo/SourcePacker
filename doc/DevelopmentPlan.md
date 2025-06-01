@@ -64,6 +64,8 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   When you click on a button or click on a menu item, the execution flow is different. But it should be harmonized. The event should be made independent of the source.
     * For example, when I changed a regular button into a menu item, I had to change code in types.rs, ui_descrptive_layer, handler.rs
 
+### P2.11.7: SHould the treeview be createed from ui_descriptive_layer?
+
 ## P2.13: Improved Profile management
 *   Implement a proper dialog for profile selection in the platform layer (not a stub).
 *   Implement a user-friendly UI for listing, selecting, creating, and deleting profiles within the application.
