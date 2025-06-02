@@ -2,25 +2,16 @@ use super::handler::*;
 use crate::app_logic::ui_constants;
 
 use crate::core::{
-    self, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
-    CoreConfigManagerForConfig, FileNode, FileState, FileSystemError, FileSystemScannerOperations,
-    Profile, ProfileError, ProfileManagerOperations, StateManagerOperations,
-    TokenCounterOperations,
+    ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode, FileState,
+    FileSystemError, FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
+    StateManagerOperations, TokenCounterOperations,
 };
 use crate::platform_layer::{
-    AppEvent,
-    CheckState,
-    MessageSeverity,
-    PlatformCommand,
-    PlatformEventHandler,
-    TreeItemDescriptor,
-    TreeItemId,
-    WindowId,
-    types::MenuAction, // Ensure MenuAction is in scope
+    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
+    WindowId, types::MenuAction,
 };
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fs::{self, File};
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -1749,7 +1740,7 @@ fn test_token_count_handles_file_read_errors_gracefully_and_displays() {
 #[test]
 fn test_menu_action_generate_archive_triggers_logic() {
     // Arrange
-    let (mut logic, _, mock_profile_manager, _, mock_archiver, _, _) = setup_logic_with_mocks();
+    let (mut logic, _, _, _, mock_archiver, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
@@ -2165,7 +2156,6 @@ fn test_is_tree_item_new_logic() {
         checksum: None,
     };
 
-    let path3 = PathBuf::from("/file3.txt");
     let item_id3 = TreeItemId(3);
     // Node 3 is not added to file_nodes_cache to test not found scenario for node
 
