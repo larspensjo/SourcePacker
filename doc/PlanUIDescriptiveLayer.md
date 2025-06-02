@@ -98,7 +98,3 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
 **Step A.III.2: Future Exploration: Advanced Layout and Deeper Decomposition (A.6)**
     *   This remains a longer-term goal. Consider advanced layout managers (e.g., grid, stack panels) as generic offerings within `platform_layer`, configurable by `ui_description_layer` via `PlatformCommand`s.
     *   Evaluate if `NativeWindowData` itself can be made more generic or if control-specific state can be fully encapsulated within their respective handlers.
-
----
-
-## Phase B: Change `platform_layer` into a separate crate

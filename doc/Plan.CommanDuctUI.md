@@ -2,6 +2,8 @@
 
 **Goal:** Create a high-quality, reusable Rust library named `CommanDuctUI` from the existing `platform_layer` code, suitable for publishing to `crates.io` and use in other projects.
 
+Dependency: We should first complete the [UI Descriptive Layer plan](PlanUIDescriptiveLayer.md).
+
 ---
 
 ## Phase 1: Library Creation and Code Migration
