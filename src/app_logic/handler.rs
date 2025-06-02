@@ -1,7 +1,7 @@
 use crate::core::{
-    self, AppSessionData, ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
-    FileNode, FileState, FileSystemScannerOperations, Profile, ProfileError,
-    ProfileManagerOperations, StateManagerOperations, TokenCounterOperations,
+    self, AppSessionData, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode,
+    FileState, FileSystemScannerOperations, Profile, ProfileManagerOperations,
+    StateManagerOperations, TokenCounterOperations,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -10,15 +10,15 @@ use crate::platform_layer::{
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 // Import log macros
-use log::{debug, error, info, trace, warn};
+use log::{error, info, warn};
 
-pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002;
+pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002; // TODO Not used in thie file. Where should it go?
 pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 
 // These type aliases are used by MainWindowUiState.

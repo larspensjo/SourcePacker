@@ -10,76 +10,91 @@ Whenever you want to change how your window looks like or population of controls
 
 ## Phase A: MVP Refinements, Platform Layer Restructuring, and Generic Layout
 
-**Goal:** Further refine the separation of concerns according to MVP principles, focusing on making the `platform_layer` a truly generic View. This involves ensuring all UI-specific knowledge (beyond what's needed to render generic controls and translate events) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter). This phase also focuses on restructuring the `platform_layer` code (primarily `app.rs` and `window_common.rs`) for better maintainability and implements a generic layout mechanism.
+**Goal:** Further refine the separation of concerns according to MVP principles, making the `platform_layer` a truly generic View. This involves:
+1.  Ensuring all UI-specific knowledge (including layout definitions and application-specific control IDs) resides in the `ui_description_layer` (View definition) or `app_logic` (Presenter).
+2.  Enhancing the `platform_layer`'s layout engine to support dynamic and proportional sizing driven by generic `LayoutRule`s.
+3.  Generalizing `platform_layer` commands for controls (like TreeView) to be targetable by logical `control_id`s.
+4.  Restructuring `platform_layer` code for better maintainability (e.g., by migrating control-specific logic to dedicated handlers).
+The `ui_description_layer` must fully define the UI structure and layout via `PlatformCommand`s, and `platform_layer` must become UI-agnostic, processing these commands generically.
 
 **Sub-Phase A.I: Initial Command-Driven UI Creation (If not fully complete)**
-    *   *(Existing steps, ensure `CreateStatusBar` is part of this if it wasn't fully command-driven yet, though it will be replaced soon).*
+    *   *(Existing steps, ensure `CreateStatusBar` is part of this if it wasn't fully command-driven yet, though it will be replaced soon by panel and labels).*
 
-**Sub-Phase A.II: Implementing Generic Layout & Control Handler Modules**
+**Sub-Phase A.II: Implementing Generic Layout, Controls, and Handlers**
 
-**Step A.II.1: Implement Generic Layout Command `PlatformCommand::DefineLayout`**
-    *   *(Existing step)*
-    *   **Addition:** When designing the `DefineLayout` executor (`execute_define_layout` in `command_executor.rs` and its use in `handle_wm_size`), consider how it will arrange multiple horizontal segments for the new status bar. You might need:
-        *   A way to specify a fixed width for some segments and have one segment "fill" the rest.
-        *   Or, allow `LayoutRule` to specify a `width_proportion` or `weight` for horizontal distribution within a parent area (the status bar's bottom-docked region).
-        *   A simple start: Dock segments left, use `fixed_size` for width, and `margin.left` to position them sequentially. One segment can `DockStyle::Fill` to take remaining space.
+**Step A.II.1: Enhance `PlatformCommand::DefineLayout` for Proportional Sizing and Solidify Generic Layout Engine**
+    *   **Action a (Platform Layer):**
+        1.  Extend `platform_layer::types::LayoutRule` to support proportional sizing. For example, add `weight: Option<f32>` or `size_proportion: Option<f32>` applicable when a control is docked within a parent that supports proportional distribution of space (e.g., a parent panel whose own layout rule allows its children to be distributed).
+        2.  Modify `platform_layer::command_executor::execute_define_layout` to store these enhanced rules.
+        3.  Significantly refactor `platform_layer::window_common::handle_wm_size` to *exclusively* use the stored `LayoutRule`s.
+            *   **Crucially, remove all old hardcoded layout logic and fallback paths from `handle_wm_size`.** The `platform_layer` must assume `ui_description_layer` provides complete and sufficient rules for all managed controls.
+            *   The layout engine in `handle_wm_size` must now correctly interpret and apply the new proportional sizing rules (e.g., for children of a panel, based on their weights/proportions relative to sibling controls within that panel), alongside existing `DockStyle` and `fixed_size` rules.
+    *   **Action b (UI Description Layer):**
+        1.  Modify `ui_description_layer::build_main_window_static_layout` to generate `LayoutRule`s that utilize the new proportional sizing capabilities, especially for the status bar label segments within their parent panel.
+        2.  Ensure `ui_description_layer` provides a *complete* set of `LayoutRule`s for all controls it defines. Constants like `STATUS_BAR_HEIGHT` (if used by `ui_description_layer` for a fixed-height status bar *area/panel*) are defined and used solely within `ui_description_layer`.
+    *   *Verification:* Compiles. Main window layout is entirely driven by `DefineLayout` commands. `handle_wm_size` in `platform_layer` is generic and contains no application-specific layout code or fallbacks. Status bar segments (labels) are laid out proportionally within their parent panel, according to rules originating from `ui_description_layer`.
 
-**Step A.II.1.5: Introduce Generic Static Text Control Creation**
-    *   **Action a:** Define a new `PlatformCommand::CreateStaticText { window_id, control_id, initial_text, ... }` (or a more generic `PlatformCommand::CreateControl { ..., control_type: ControlType::StaticText, ... }`).
-    *   **Action b:** Implement `command_executor::execute_create_static_text` to create a `WC_STATIC` control. This will be used for the status bar segments.
-    *   **Action c:** Modify `ui_description_layer::describe_main_window_layout`:
-        *   Remove the old `PlatformCommand::CreateStatusBar`.
-        *   Instead, generate multiple `CreateStaticText` commands for each status bar segment (e.g., "Tokens", "Files", "Operation Result", and separators if they are also static text controls). Assign unique `control_id`s to each (e.g., `ID_STATUS_SEGMENT_TOKENS`, `ID_STATUS_SEGMENT_SEPARATOR_1`, etc. - define these constants).
-    *   **Action d:** Update `PlatformCommand::DefineLayout` rules in `ui_description_layer` to position these new static text segments horizontally within the status bar area at the bottom of the window.
-    *   *Verification:* Compiles. The main window appears. Instead of one status bar, you see multiple static text controls at the bottom, likely unstyled and un-updated initially. Layout might be preliminary.
+**Step A.II.2: Introduce Generic Control Creation (e.g., Static Text/Labels)**
+    *   **Action a (Platform Layer - Types):** Define a new `PlatformCommand::CreateControl { window_id, parent_control_id: Option<i32>, control_id: i32, control_type: ControlType, initial_properties: ControlProperties }` or specific commands like `PlatformCommand::CreateLabel { window_id, parent_panel_id: i32, label_id: i32, initial_text: String }`.
+    *   **Action b (Platform Layer - Implementation):** Implement the executor function(s) in `command_executor.rs` (e.g., `execute_create_label`) to create the native control (e.g., `WC_STATIC` for labels) and store its `HWND` in `NativeWindowData::controls` mapped by the provided `control_id`.
+    *   **Action c (UI Description Layer):** Modify `ui_description_layer::build_main_window_static_layout`:
+        *   Remove any old direct status bar creation command (e.g., `PlatformCommand::CreateStatusBar`).
+        *   Instead, generate `CreatePanel` for the status bar area, then multiple `CreateLabel` (or generic `CreateControl`) commands for each status bar segment (e.g., "Tokens", "General", "Archive").
+        *   Assign unique `control_id`s to each, ensuring these IDs are defined in and imported from `app_logic::ui_constants` (e.g., `ui_constants::STATUS_LABEL_TOKENS_ID`, `ui_constants::STATUS_LABEL_GENERAL_ID`).
+    *   **Action d (UI Description Layer):** Update `PlatformCommand::DefineLayout` rules in `ui_description_layer` to position the status bar *panel* and then, using the new proportional layout rules from Step A.II.1, define how the label segments are laid out *within* that panel.
+    *   *Verification:* Compiles. The main window appears. The status bar consists of a panel containing multiple label controls. Their initial text is set, and their layout within the panel is governed by `DefineLayout` rules (potentially proportional).
 
-**Step A.II.1.6: Generic Control Update Mechanism**
-    *   **Action a:** Define a new `PlatformCommand::UpdateControlText { window_id, control_id, text, severity }`. This will replace the specific `UpdateStatusBarText`.
-    *   **Action b:** Implement `command_executor::execute_update_control_text`. This function will:
+**Step A.II.3: Generic Control Update Mechanism (e.g., UpdateControlText)**
+    *   **Action a (Platform Layer - Types):** Define a new `PlatformCommand::UpdateControlText { window_id, control_id, text, severity }`. This will replace any specific status bar update commands.
+    *   **Action b (Platform Layer - Implementation):** Implement `command_executor::execute_update_control_text`. This function will:
         1.  Find the `HWND` for `control_id` in `NativeWindowData::controls`.
         2.  Call `SetWindowTextW`.
-        3.  Store the `severity` associated with this `control_id` (perhaps in a new `HashMap<i32, MessageSeverity>` in `NativeWindowData` or by extending `NativeWindowData::controls` to store more than just `HWND`). This is for `WM_CTLCOLORSTATIC`.
+        3.  Store the `severity` associated with this `control_id` in `NativeWindowData::label_severities` (or similar map).
         4.  Call `InvalidateRect` to trigger a repaint (and thus `WM_CTLCOLORSTATIC`).
-    *   **Action c:** Modify `app_logic::MyAppLogic` to use `UpdateControlText` for status updates, targeting the specific segment IDs.
-    *   **Action d:** Modify `window_common::handle_window_message` (specifically `WM_CTLCOLORSTATIC` handler):
-        *   It should now iterate through the `controls` or the new severity map in `NativeWindowData`.
-        *   If the `hwnd_static_ctrl_from_msg` matches a known status segment's `HWND`, use its stored severity to set the text color.
-    *   *Verification:* Compiles. Status bar segments now update their text and color independently based on commands from `MyAppLogic`. `MyAppLogic` can now, for example, show "Tokens: 123" in normal color and "Error: File not found" in red, simultaneously in different segments.
+    *   **Action c (App Logic):** Modify `app_logic::MyAppLogic` to use `UpdateControlText` for all status updates, targeting the specific segment IDs (from `app_logic::ui_constants`).
+    *   **Action d (Platform Layer - WndProc):** Modify `window_common::handle_window_message` (specifically `WM_CTLCOLORSTATIC` handler):
+        *   It should use `NativeWindowData::label_severities` to look up the severity for the `hwnd_static_ctrl_from_msg` and set text color accordingly. This logic should be generic.
+    *   *Verification:* Compiles. Status bar label segments now update their text and color independently based on generic `UpdateControlText` commands from `MyAppLogic`.
 
-**Step A.II.2: Remove Old Hardcoded Layout from `handle_wm_size`**
-    *   **Action:** Once Step A.II.1.6 is verified (meaning the new status segments are laid out by `DefineLayout` and update correctly), proceed with removing old hardcoded layout logic. The constant `STATUS_BAR_HEIGHT` will still be used by `ui_description_layer` when defining the `fixed_size` for the status bar *area* or for individual segments if they have fixed heights.
-    *   *Verification:* Compiles. App runs. Layout is correct and entirely driven by `PlatformCommand::DefineLayout`. `handle_wm_size` is now generic. The status bar consists of multiple segments correctly positioned.
+**Step A.II.4: Generic TreeView Control Commands**
+    *   **Action a (Platform Layer - Types):**
+        1.  Modify `platform_layer::types::PlatformCommand::CreateTreeView` to include `control_id: i32`.
+        2.  Modify other TreeView-related commands (`PopulateTreeView`, `UpdateTreeItemVisualState`, `RedrawTreeItem`) to include the target `control_id: i32`.
+    *   **Action b (Platform Layer - Implementation):**
+        1.  Update `platform_layer::command_executor::execute_create_treeview` to use the provided `control_id` when creating and storing the TreeView's `HWND` in `NativeWindowData::controls`.
+        2.  Update functions in `platform_layer::control_treeview` (e.g., `populate_treeview`, `update_treeview_item_visual_state`) to accept `control_id` and use it to retrieve the correct TreeView `HWND`.
+    *   **Action c (UI Description Layer):**
+        1.  Modify `ui_description_layer::build_main_window_static_layout` to generate `PlatformCommand::CreateTreeView { ..., control_id: ui_constants::MAIN_TREEVIEW_ID }` (where `MAIN_TREEVIEW_ID` is defined in `app_logic::ui_constants`).
+    *   **Action d (App Logic):**
+        1.  Modify `app_logic::MyAppLogic` to use the `control_id` (e.g., `ui_constants::MAIN_TREEVIEW_ID`) when issuing commands like `PopulateTreeView`.
+    *   *Verification:* Compiles. TreeView is created and functions correctly, targeted by its logical ID specified by `ui_description_layer` and used by `app_logic`.
 
-**Step A.II.3: Create `controls` Sub-Module and `*_handler.rs` Skeletons**
+**Step A.II.5: Create `controls` Sub-Module and Handler Skeletons**
     *   **Action a:** Create `src/platform_layer/controls/` directory and `mod.rs`.
-    *   **Action b:** Create empty or skeleton `menu_handler.rs`, `button_handler.rs`, `static_text_handler.rs` (for status segments and other static labels), etc.
+    *   **Action b:** Create empty or skeleton `menu_handler.rs`, `button_handler.rs`, `label_handler.rs` (for status segments and other static labels), etc., in the new `controls` module.
     *   **Action c:** Rename `control_treeview.rs` to `src/platform_layer/controls/treeview_handler.rs` and update references.
-    *   *Verification:* Compiles. App runs as before.
+    *   *Verification:* Compiles. App runs as before. Project structure for control handlers is in place.
 
-**Step A.II.4: Migrate Control Logic to Handlers (Iteratively, one control type at a time)**
-    *   **For each control type (e.g., Button, then Menu, then StaticText, then TreeView):**
+**Step A.II.6: Migrate Control-Specific Logic to Handlers (Iteratively)**
+    *   **For each control type (e.g., Button, then Menu, then Label, then TreeView):**
         *   **Action a (Command Handling):**
-            1.  Identify the function in `command_executor.rs` that handles its creation (e.g., `execute_create_button`, `execute_create_static_text`).
-            2.  Move this function's implementation into the appropriate `*_handler.rs` (e.g., `button_handler::handle_create_button_command`, `static_text_handler::handle_create_static_text_command`).
-            3.  Update `command_executor.rs` (or `_execute_platform_command` directly) to call the new handler function.
+            1.  Identify the function in `command_executor.rs` that handles its creation (e.g., `execute_create_button`, `execute_create_label`).
+            2.  Move this function's implementation into the appropriate `*_handler.rs` (e.g., `button_handler::handle_create_button_command`, `label_handler::handle_create_label_command`).
+            3.  Update `command_executor.rs` (or `Win32ApiInternalState::_execute_platform_command` directly) to call the new handler function.
             *   *Verification:* Compiles. The specific control is still created correctly. App functional.
         *   **Action b (Notification/Message Handling):**
-            1.  Identify the parts of `Win32ApiInternalState::handle_wm_command`, `handle_wm_notify`, or `handle_wm_ctlcolorstatic` (in `window_common.rs`) that deal with this specific control's events/drawing.
-            2.  Move this logic into a new function within the control's `*_handler.rs` (e.g., `button_handler::handle_wm_command(...)`, `static_text_handler::handle_wm_ctlcolorstatic(...)`). This function will take necessary parameters.
+            1.  Identify the parts of `Win32ApiInternalState::handle_window_message` (e.g., `WM_COMMAND` for buttons, `WM_CTLCOLORSTATIC` for labels, `WM_NOTIFY` for TreeView) in `window_common.rs` that deal with this specific control's events or drawing.
+            2.  Move this logic into a new function within the control's `*_handler.rs` (e.g., `button_handler::handle_wm_command(...)`, `label_handler::handle_wm_ctlcolorstatic(...)`). This function will take necessary parameters (like `Win32ApiInternalState`, `HWND` of control, message params).
             3.  Modify the relevant message handlers in `window_common.rs` to call this new handler function from the control's module.
-            *   *Verification:* Compiles. Events/drawing for that specific control are still processed correctly. App functional.
-    *   **Note:** The new `static_text_handler.rs` will be particularly relevant for the status bar segments. It would handle their creation and potentially parts of `WM_CTLCOLORSTATIC` if you choose to centralize that logic per control type.
+            *   *Verification:* Compiles. Events/drawing for that specific control are still processed correctly by its dedicated handler. App functional.
+    *   **Note:** The new `label_handler.rs` will be particularly relevant for the status bar segments, handling their creation and `WM_CTLCOLORSTATIC` logic.
 
 ---
 
 **Step A.III.1: Review and Remove Residual UI-Specific Knowledge (A.5)**
-    *   **Action:** After all control logic is migrated, perform the thorough review as described previously.
-    *   *Verification:* Code review confirms increased generality. App functional.
+    *   **Action:** After all control logic is migrated, perform a thorough review of `platform_layer` (especially `window_common.rs` and `command_executor.rs`) to ensure no SourcePacker-specific UI logic, layout assumptions, or control ID knowledge remains. All such specifics should be driven by `PlatformCommand`s generated by `ui_description_layer` or decisions made in `app_logic`.
+    *   *Verification:* Code review confirms increased generality. `platform_layer` acts as a generic command executor and event translator. App functional.
 
 **Step A.III.2: Future Exploration: Advanced Layout and Deeper Decomposition (A.6)**
-    *   This remains a longer-term goal, to be approached after the core refactoring is stable. The "fully functional after each minor step" applies less directly here as it's about new features or major architectural shifts.
-
-
----
-
-## Phase B: Change `platform_layer` into a separate crate
+    *   This remains a longer-term goal. Consider advanced layout managers (e.g., grid, stack panels) as generic offerings within `platform_layer`, configurable by `ui_description_layer` via `PlatformCommand`s.
+    *   Evaluate if `NativeWindowData` itself can be made more generic or if control-specific state can be fully encapsulated within their respective handlers.

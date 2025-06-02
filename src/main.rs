@@ -12,10 +12,11 @@ use core::{
     CoreStateManager, CoreTikTokenCounter,
 };
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
-use std::fs::File;
 use std::sync::{Arc, Mutex};
 
-use simplelog::{CombinedLogger, ConfigBuilder, LevelFilter, WriteLogger};
+use simplelog::{ConfigBuilder, LevelFilter};
+
+#[cfg(not(test))]
 use time::macros::format_description;
 
 /*
