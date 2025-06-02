@@ -632,11 +632,7 @@ impl MyAppLogic {
         {
             Ok(content) => match self.archiver.save_archive_content(archive_path, &content) {
                 Ok(_) => {
-                    app_info!(
-                        self,
-                        "Archive successfully saved to '{}'.",
-                        archive_path.display()
-                    );
+                    app_info!(self, "Archive saved to '{}'.", archive_path.display());
                     self.update_current_archive_status();
                 }
                 Err(e) => {

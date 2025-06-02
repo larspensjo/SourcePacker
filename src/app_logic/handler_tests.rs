@@ -439,7 +439,7 @@ impl StateManagerOperations for MockStateManager {
             } else if profile.deselected_paths.contains(&node.path) {
                 node.state = FileState::Deselected;
             } else {
-                node.state = FileState::Unknown;
+                node.state = FileState::New;
             }
             if node.is_dir && !node.children.is_empty() {
                 self.apply_profile_to_tree(&mut node.children, profile);
@@ -1658,7 +1658,7 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_a_path.clone(),
             name: "fileA.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown,
+            state: FileState::New,
             children: Vec::new(),
             checksum: None,
         },
@@ -1666,7 +1666,7 @@ fn test_token_count_updates_on_profile_activation() {
             path: file_b_path.clone(),
             name: "fileB.txt".to_string(),
             is_dir: false,
-            state: FileState::Unknown,
+            state: FileState::New,
             children: Vec::new(),
             checksum: None,
         },

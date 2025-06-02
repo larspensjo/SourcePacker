@@ -63,7 +63,7 @@ impl StateManagerOperations for CoreStateManager {
             } else if profile.deselected_paths.contains(&node.path) {
                 node.state = FileState::Deselected;
             } else {
-                node.state = FileState::Unknown;
+                node.state = FileState::New;
             }
 
             if node.is_dir && !node.children.is_empty() {
@@ -97,7 +97,7 @@ mod tests {
                 path: PathBuf::from("/root/file1.txt"),
                 name: "file1.txt".to_string(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: vec![],
                 checksum: None,
             },
@@ -105,13 +105,13 @@ mod tests {
                 path: PathBuf::from("/root/dir1"),
                 name: "dir1".to_string(),
                 is_dir: true,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: vec![
                     FileNode {
                         path: PathBuf::from("/root/dir1/file2.txt"),
                         name: "file2.txt".to_string(),
                         is_dir: false,
-                        state: FileState::Unknown,
+                        state: FileState::New,
                         children: vec![],
                         checksum: None,
                     },
@@ -119,12 +119,12 @@ mod tests {
                         path: PathBuf::from("/root/dir1/subdir"),
                         name: "subdir".to_string(),
                         is_dir: true,
-                        state: FileState::Unknown,
+                        state: FileState::New,
                         children: vec![FileNode {
                             path: PathBuf::from("/root/dir1/subdir/file3.txt"),
                             name: "file3.txt".to_string(),
                             is_dir: false,
-                            state: FileState::Unknown,
+                            state: FileState::New,
                             children: vec![],
                             checksum: None,
                         }],
@@ -137,7 +137,7 @@ mod tests {
                 path: PathBuf::from("/root/file4.ext"), // Different extension
                 name: "file4.ext".to_string(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: vec![],
                 checksum: None,
             },
@@ -172,11 +172,11 @@ mod tests {
             manager.apply_profile_to_tree(&mut tree, &profile);
 
             assert_eq!(tree[0].state, FileState::Selected);
-            assert_eq!(tree[1].state, FileState::Unknown);
+            assert_eq!(tree[1].state, FileState::New);
             assert_eq!(tree[1].children[0].state, FileState::Deselected);
-            assert_eq!(tree[1].children[1].state, FileState::Unknown);
+            assert_eq!(tree[1].children[1].state, FileState::New);
             assert_eq!(tree[1].children[1].children[0].state, FileState::Selected);
-            assert_eq!(tree[2].state, FileState::Unknown);
+            assert_eq!(tree[2].state, FileState::New);
         });
     }
 
@@ -193,7 +193,7 @@ mod tests {
 
             manager.apply_profile_to_tree(&mut tree, &profile);
 
-            assert_eq!(tree[0].state, FileState::Unknown);
+            assert_eq!(tree[0].state, FileState::New);
             assert_eq!(tree[1].children[0].state, FileState::Selected);
         });
     }
@@ -208,7 +208,7 @@ mod tests {
             assert_eq!(tree[1].children[0].state, FileState::Selected);
             assert_eq!(tree[1].children[1].state, FileState::Selected);
             assert_eq!(tree[1].children[1].children[0].state, FileState::Selected);
-            assert_eq!(tree[0].state, FileState::Unknown);
+            assert_eq!(tree[0].state, FileState::New);
         });
     }
 

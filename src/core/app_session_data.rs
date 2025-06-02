@@ -66,7 +66,7 @@ impl AppSessionData {
                 FileState::Deselected => {
                     deselected.insert(node.path.clone());
                 }
-                FileState::Unknown => {}
+                FileState::New => {}
             }
             if node.is_dir && !node.children.is_empty() {
                 Self::gather_selected_deselected_paths_recursive(
@@ -225,7 +225,7 @@ impl AppSessionData {
                                     );
                                 } else {
                                     // Checksum mismatch
-                                    log::warn!(
+                                    log::debug!(
                                         "TokenCount (Cache STALE): File {:?} checksum mismatch (disk: {}, cache: {}). Using fallback.",
                                         node.path,
                                         node_checksum,
@@ -234,14 +234,14 @@ impl AppSessionData {
                                 }
                             } else {
                                 // FileNode has no checksum (e.g., scan error for this file)
-                                log::warn!(
+                                log::debug!(
                                     "TokenCount (Cache UNAVAILABLE): File {:?} has no disk checksum. Using fallback.",
                                     node.path
                                 );
                             }
                         } else {
                             // File not in cache
-                            log::warn!(
+                            log::debug!(
                                 "TokenCount (Cache MISS): File {:?} not found in token cache. Using fallback.",
                                 node.path
                             );
@@ -605,7 +605,7 @@ mod tests {
                     if !profile.deselected_paths.contains(&node.path)
                         && !profile.selected_paths.contains(&node.path)
                     {
-                        node.state = FileState::Unknown;
+                        node.state = FileState::New;
                     }
                 }
                 if node.is_dir {
@@ -1226,7 +1226,7 @@ mod tests {
                 path: file1_path.clone(),
                 name: "f1.txt".into(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: Vec::new(),
                 checksum: Some(file1_checksum_disk.clone()),
             },
@@ -1234,7 +1234,7 @@ mod tests {
                 path: file2_path.clone(),
                 name: "f2.txt".into(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: Vec::new(),
                 checksum: Some(file2_checksum_disk.clone()),
             },
@@ -1242,7 +1242,7 @@ mod tests {
                 path: file3_path.clone(),
                 name: "f3.txt".into(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: Vec::new(),
                 checksum: Some(file3_checksum_disk.clone()),
             },
@@ -1250,7 +1250,7 @@ mod tests {
                 path: file4_path.clone(),
                 name: "f4.txt".into(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: Vec::new(),
                 checksum: Some(file4_checksum_disk.clone()),
             },
@@ -1258,7 +1258,7 @@ mod tests {
                 path: file5_path.clone(),
                 name: "f5.txt".into(),
                 is_dir: false,
-                state: FileState::Unknown,
+                state: FileState::New,
                 children: Vec::new(),
                 checksum: None,
             },

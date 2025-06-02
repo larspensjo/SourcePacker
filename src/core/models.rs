@@ -12,12 +12,12 @@ use std::path::PathBuf;
 pub enum FileState {
     Selected,
     Deselected,
-    Unknown,
+    New,
 }
 
 impl Default for FileState {
     fn default() -> Self {
-        FileState::Unknown
+        FileState::New
     }
 }
 
@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(n.path, p);
         assert_eq!(n.name, "foo");
         assert_eq!(n.is_dir, false);
-        assert_eq!(n.state, FileState::Unknown);
+        assert_eq!(n.state, FileState::New);
         assert!(n.children.is_empty());
         assert!(n.checksum.is_none());
     }

@@ -300,7 +300,7 @@ mod archiver_tests {
                     base_path,
                     "subdir",
                     true,
-                    FileState::Unknown,
+                    FileState::New,
                     vec![new_test_file_node(
                         &subdir_path,
                         "file2.rs",
@@ -467,7 +467,7 @@ mod archiver_tests {
                     dir.path(),
                     "file2.txt",
                     false,
-                    FileState::Unknown, // Not selected
+                    FileState::New, // Not selected
                     vec![],
                 ),
             ];
@@ -580,7 +580,7 @@ mod archiver_tests {
             let base_path = dir.path();
             let nodes = vec![
                 new_test_file_node(base_path, "file1.txt", false, FileState::Deselected, vec![]),
-                new_test_file_node(base_path, "file2.txt", false, FileState::Unknown, vec![]),
+                new_test_file_node(base_path, "file2.txt", false, FileState::New, vec![]),
             ];
             let archive = archiver.create_archive_content(&nodes, base_path)?;
             // Expect only the global header line if no files are selected.
