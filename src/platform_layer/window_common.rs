@@ -1140,72 +1140,93 @@ impl Win32ApiInternalState {
             CDDS_ITEMPOSTPAINT => {
                 let tree_item_id_val = nmtvcd.nmcd.lItemlParam;
                 let tree_item_id = TreeItemId(tree_item_id_val.0 as u64);
-                log::trace!(
-                    "NM_CUSTOMDRAW TreeView ({:?}): CDDS_ITEMPOSTPAINT for TreeItemId {:?}",
-                    window_id,
-                    tree_item_id
-                );
 
                 let mut should_draw_indicator = false;
                 if let Some(handler_arc) = event_handler_opt {
                     if let Ok(handler_guard) = handler_arc.lock() {
-                        if handler_guard.is_tree_item_new(window_id, tree_item_id) {
-                            should_draw_indicator = true;
-                        }
+                        // We know it is a new ite, or we would not have requested CDRF_NOTIFYPOSTPAINT
+                        should_draw_indicator = true;
                     } else {
                         log::warn!(
-                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPOSTPAINT.",
+                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPOSTPAINT check.",
                             window_id
                         );
                     }
                 } else {
                     log::warn!(
-                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPOSTPAINT.",
+                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPOSTPAINT check.",
                         window_id
                     );
                 }
 
                 if should_draw_indicator {
-                    log::trace!(
-                        "NM_CUSTOMDRAW TreeView ({:?}): Drawing 'New' indicator for item {:?}",
-                        window_id,
-                        tree_item_id
-                    );
                     let hdc = nmtvcd.nmcd.hdc;
-                    let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize);
+                    let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize); // Actual HTREEITEM
                     let hwnd_treeview = nmtvcd.nmcd.hdr.hwndFrom;
 
-                    let mut item_rect = RECT::default();
-                    // For TVM_GETITEMRECT, wParam = FALSE (0) gets the text-only rectangle.
-                    let get_rect_param = LPARAM(&mut item_rect as *mut _ as isize);
+                    let mut item_rect_data = RECT::default(); // This will receive the coordinates
+
+                    // Prepare the RECT structure for TVM_GETITEMRECT.
+                    // The HTREEITEM must be written into the beginning of the RECT's memory block.
                     unsafe {
+                        // Cast the pointer to item_rect_data to *mut HTREEITEM and write h_item_native.
+                        // This relies on the TreeView control correctly interpreting this memory layout.
+                        let p_hitem_in_rect = &mut item_rect_data as *mut RECT as *mut HTREEITEM;
+                        *p_hitem_in_rect = h_item_native;
+                    }
+
+                    let lparam_for_getrect = LPARAM(&mut item_rect_data as *mut _ as isize);
+
+                    let get_rect_success = unsafe {
                         SendMessageW(
                             hwnd_treeview,
                             TVM_GETITEMRECT,
                             Some(WPARAM(0)), // FALSE for text-only part of the item
-                            Some(get_rect_param),
+                            Some(lparam_for_getrect),
+                        )
+                    };
+
+                    if get_rect_success != LRESULT(0) {
+                        // Non-zero means success
+                        // item_rect_data now contains the valid rectangle for the item's text.
+                        let x1 = item_rect_data.left;
+                        let y1 = item_rect_data.top;
+                        let x2 = item_rect_data.left + CIRCLE_DIAMETER;
+                        let y2 = item_rect_data.top + CIRCLE_DIAMETER;
+
+                        log::debug!(
+                            "NM_CUSTOMDRAW TreeView ({:?}): Drawing 'New' indicator for item {:?} (HTREEITEM {:?}) at text_rect: ({:?})",
+                            window_id,
+                            tree_item_id,
+                            h_item_native,
+                            item_rect_data
                         );
-                    }
 
-                    let x1 = item_rect.left;
-                    let y1 = item_rect.top;
-                    let x2 = item_rect.left + CIRCLE_DIAMETER;
-                    let y2 = item_rect.top + CIRCLE_DIAMETER;
+                        unsafe {
+                            let h_brush = CreateSolidBrush(CIRCLE_COLOR_BLUE);
+                            if !h_brush.is_invalid() {
+                                let brush_obj = HGDIOBJ(h_brush.0);
+                                let old_brush_obj = SelectObject(hdc, brush_obj);
 
-                    unsafe {
-                        let brush = CreateSolidBrush(CIRCLE_COLOR_BLUE);
-                        if !brush.is_invalid() {
-                            let brush_obj = HGDIOBJ(brush.0);
-                            let old_brush = SelectObject(hdc, brush_obj);
-                            Ellipse(hdc, x1, y1, x2, y2);
-                            SelectObject(hdc, old_brush);
-                            DeleteObject(brush_obj);
-                        } else {
-                            log::error!(
-                                "NM_CUSTOMDRAW TreeView ({:?}): Failed to create brush for 'New' indicator.",
-                                window_id
-                            );
+                                Ellipse(hdc, x1, y1, x2, y2);
+
+                                SelectObject(hdc, old_brush_obj); // Restore old brush
+                                DeleteObject(brush_obj); // Delete the brush we created
+                            } else {
+                                log::error!(
+                                    "NM_CUSTOMDRAW TreeView ({:?}): Failed to create brush for 'New' indicator. LastError: {:?}",
+                                    window_id,
+                                    GetLastError()
+                                );
+                            }
                         }
+                    } else {
+                        log::error!(
+                            "NM_CUSTOMDRAW TreeView ({:?}): TVM_GETITEMRECT FAILED for HTREEITEM {:?}. GetLastError: {:?}",
+                            window_id,
+                            h_item_native,
+                            unsafe { GetLastError() }
+                        );
                     }
                 }
                 return LRESULT(CDRF_DODEFAULT as isize);

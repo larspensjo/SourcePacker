@@ -1748,7 +1748,14 @@ impl PlatformEventHandler for MyAppLogic {
 
         // Find the FileNode for the path in the cache.
         match Self::find_filenode_ref(&self.app_session_data.file_nodes_cache, path) {
-            Some(node) => node.state == FileState::New,
+            Some(node) => {
+                log::debug!(
+                    "is_tree_item_new: Found FileNode for path {:?} with state {:?}.",
+                    path,
+                    node.state,
+                );
+                node.state == FileState::New && !node.is_dir // This is a hack for now, do not show directories as "new".
+            }
             None => {
                 log::trace!(
                     "is_tree_item_new: FileNode not found for path {:?}. Returning false.",
