@@ -167,14 +167,14 @@ pub fn initialize_logging() {
 
         let config = config_builder
             .set_thread_level(LevelFilter::Off)
-            .set_location_level(LevelFilter::Debug)
+            .set_location_level(LevelFilter::Trace)
             .build();
 
         // TermLogger is good for console output
         // Use `CombinedLogger` if you still want some tests to log to a file OR if you want multiple terminal loggers
         // For simple stdout, TermLogger is often enough.
         if simplelog::TermLogger::init(
-            simplelog::LevelFilter::Debug, // Or a higher level like Info if Debug is too noisy
+            simplelog::LevelFilter::Trace, // Or a higher level like Info if Debug is too noisy
             config,
             simplelog::TerminalMode::Mixed, // Or ::Stdout
             simplelog::ColorChoice::Auto,

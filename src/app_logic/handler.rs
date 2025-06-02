@@ -1566,6 +1566,7 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     fn handle_event(&mut self, event: AppEvent) {
+        log::trace!("AppLogic: Handling event: {:?}", event);
         match event {
             AppEvent::WindowCloseRequestedByUser { window_id } => {
                 self.handle_window_close_requested(window_id);
@@ -1706,6 +1707,56 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
         self
+    }
+
+    /*
+     * Queries if a specific tree item is currently in the "New" state.
+     * This implementation retrieves the `FileNode` associated with the given
+     * `window_id` and `item_id` and checks its `state` field. If the item
+     * cannot be found or its state is not `FileState::New`, it returns `false`.
+     */
+    fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool {
+        // Ensure ui_state exists and matches the window_id.
+        let ui_state = match &self.ui_state {
+            Some(s) if s.window_id == window_id => s,
+            _ => {
+                log::trace!(
+                    "is_tree_item_new: UI state not found or window ID mismatch for {:?}. Returning false.",
+                    window_id
+                );
+                return false;
+            }
+        };
+
+        // Find the path associated with the TreeItemId.
+        let path_opt = ui_state
+            .path_to_tree_item_id
+            .iter()
+            .find(|(_path_candidate, id_in_map)| **id_in_map == item_id)
+            .map(|(path_key, _id_value)| path_key);
+
+        let path = match path_opt {
+            Some(p) => p,
+            None => {
+                log::trace!(
+                    "is_tree_item_new: Path not found for TreeItemId {:?}. Returning false.",
+                    item_id
+                );
+                return false;
+            }
+        };
+
+        // Find the FileNode for the path in the cache.
+        match Self::find_filenode_ref(&self.app_session_data.file_nodes_cache, path) {
+            Some(node) => node.state == FileState::New,
+            None => {
+                log::trace!(
+                    "is_tree_item_new: FileNode not found for path {:?}. Returning false.",
+                    path
+                );
+                false
+            }
+        }
     }
 }
 

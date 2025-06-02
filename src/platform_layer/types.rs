@@ -311,6 +311,10 @@ pub enum PlatformCommand {
         text: String,
         severity: MessageSeverity,
     },
+    RedrawTreeItem {
+        window_id: WindowId,
+        item_id: TreeItemId,
+    },
 }
 
 // --- Trait for App Logic to Handle Events ---
@@ -335,4 +339,11 @@ pub trait PlatformEventHandler: Send + Sync + 'static {
     // Attempts to dequeue a single `PlatformCommand` from the internal queue.
     // This is called by the platform layer's run loop.
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand>;
+
+    /*
+     * Queries if a specific tree item is currently in the "New" state.
+     * The platform layer uses this during custom drawing to determine if the
+     * "New" visual indicator (e.g., a blue circle) should be rendered for the item.
+     */
+    fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool;
 }

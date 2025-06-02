@@ -294,6 +294,9 @@ impl Win32ApiInternalState {
             } => command_executor::execute_update_label_text(
                 self, window_id, label_id, text, severity,
             ),
+            PlatformCommand::RedrawTreeItem { window_id, item_id } => {
+                todo!("RedrawTreeItem command not yet implemented")
+            }
         }
     }
 }

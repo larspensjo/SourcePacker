@@ -1772,6 +1772,8 @@ fn test_menu_action_generate_archive_triggers_logic() {
 
     mock_archiver.set_create_archive_content_result(Ok("Test Archive Content".to_string()));
     mock_archiver.set_save_archive_content_result(Ok(()));
+    // When update_current_archive_status is called after saving, let's say it's UpToDate
+    mock_archiver.set_check_archive_status_result(ArchiveStatus::UpToDate);
 
     // Act
     logic.handle_event(AppEvent::MenuActionClicked {
@@ -1797,8 +1799,9 @@ fn test_menu_action_generate_archive_triggers_logic() {
     assert_eq!(save_calls[0].1, "Test Archive Content");
 
     let cmds = logic.test_drain_commands();
+    // Corrected success_text to match the actual app_info! message
     let success_text = format!(
-        "Archive successfully saved to '{}'.",
+        "Archive saved to '{}'.", // "successfully" removed
         archive_path.display()
     );
     assert!(
@@ -1809,6 +1812,19 @@ fn test_menu_action_generate_archive_triggers_logic() {
         )
         .is_some(),
         "Expected new label success message. Got: {:?}",
+        cmds
+    );
+
+    // Also verify the archive status update command
+    let archive_status_update_text = "Archive: Up to date.".to_string();
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && severity == &MessageSeverity::Information && text == &archive_status_update_text)
+        )
+        .is_some(),
+        "Expected archive status label update. Got: {:?}",
         cmds
     );
 }
@@ -2117,5 +2133,89 @@ fn test_update_token_count_routes_to_dedicated_label() {
         2,
         "Expected 2 commands for token update. Got: {:?}",
         cmds
+    );
+}
+
+#[test]
+fn test_is_tree_item_new_logic() {
+    // Arrange
+    let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
+    let main_window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+    let path1 = PathBuf::from("/file1.txt");
+    let item_id1 = TreeItemId(1);
+    let node1 = FileNode {
+        path: path1.clone(),
+        name: "file1.txt".to_string(),
+        is_dir: false,
+        state: FileState::New, // Item 1 is New
+        children: vec![],
+        checksum: None,
+    };
+
+    let path2 = PathBuf::from("/file2.txt");
+    let item_id2 = TreeItemId(2);
+    let node2 = FileNode {
+        path: path2.clone(),
+        name: "file2.txt".to_string(),
+        is_dir: false,
+        state: FileState::Selected, // Item 2 is Selected
+        children: vec![],
+        checksum: None,
+    };
+
+    let path3 = PathBuf::from("/file3.txt");
+    let item_id3 = TreeItemId(3);
+    // Node 3 is not added to file_nodes_cache to test not found scenario for node
+
+    let path4 = PathBuf::from("/file4.txt");
+    let item_id4 = TreeItemId(4);
+    let node4 = FileNode {
+        path: path4.clone(),
+        name: "file4.txt".to_string(),
+        is_dir: false,
+        state: FileState::Deselected, // Item 4 is Deselected
+        children: vec![],
+        checksum: None,
+    };
+
+    logic.test_set_file_nodes_cache(vec![node1.clone(), node2.clone(), node4.clone()]);
+    logic.test_path_to_tree_item_id_insert(&path1, item_id1);
+    logic.test_path_to_tree_item_id_insert(&path2, item_id2);
+    // item_id3 path is not inserted into path_to_tree_item_id to test path not found
+    logic.test_path_to_tree_item_id_insert(&path4, item_id4);
+
+    // Act & Assert
+    assert!(
+        logic.is_tree_item_new(main_window_id, item_id1),
+        "Item 1 should be New"
+    );
+    assert!(
+        !logic.is_tree_item_new(main_window_id, item_id2),
+        "Item 2 should not be New (it's Selected)"
+    );
+    assert!(
+        !logic.is_tree_item_new(main_window_id, TreeItemId(99)),
+        "Non-existent ItemId (99) should not be New"
+    );
+    assert!(
+        !logic.is_tree_item_new(WindowId(2), item_id1),
+        "Item 1 with wrong window_id should not be New (UI state mismatch)"
+    );
+    assert!(
+        !logic.is_tree_item_new(main_window_id, item_id3),
+        "Item 3 (path not in map) should not be New"
+    );
+    assert!(
+        !logic.is_tree_item_new(main_window_id, item_id4),
+        "Item 4 should not be New (it's Deselected)"
+    );
+
+    // Test with no UI state
+    logic.test_clear_ui_state();
+    assert!(
+        !logic.is_tree_item_new(main_window_id, item_id1),
+        "Item 1 should not be New when UI state is None"
     );
 }
