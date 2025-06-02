@@ -21,11 +21,20 @@ use windows::{
             RECT, WPARAM,
         },
         Graphics::Gdi::{
-            BeginPaint, COLOR_WINDOW, COLOR_WINDOWTEXT, EndPaint, FillRect, GetSysColor,
-            GetSysColorBrush, HBRUSH, HDC, InvalidateRect, PAINTSTRUCT, ScreenToClient, SetBkMode,
-            SetTextColor, TRANSPARENT,
+            BeginPaint, COLOR_WINDOW, COLOR_WINDOWTEXT, CreateSolidBrush, DeleteObject, Ellipse,
+            EndPaint, FillRect, GetSysColor, GetSysColorBrush, HBRUSH, HDC, HGDIOBJ,
+            InvalidateRect, PAINTSTRUCT, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
+            TRANSPARENT,
         },
-        UI::Controls::*,
+        UI::Controls::{
+            CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT,
+            CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NM_CLICK, NM_CUSTOMDRAW, NMHDR,
+            NMTREEVIEWW, NMTVCUSTOMDRAW, TVHITTESTINFO, TVHITTESTINFO_FLAGS, TVHT_ONITEMSTATEICON,
+            TVI_LAST, TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW,
+            TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMEXW, TVITEMEXW_CHILDREN, TVM_DELETEITEM,
+            TVM_GETITEMRECT, TVM_GETITEMW, TVM_HITTEST, TVM_INSERTITEMW, TVM_SETITEMW,
+            TVN_ITEMCHANGEDW,
+        },
         UI::WindowsAndMessaging::*,
     },
     core::{BOOL, HSTRING, PCWSTR},
@@ -37,7 +46,6 @@ use std::sync::{Arc, Mutex};
 
 // Control IDs
 pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
-// pub(crate) const ID_STATUS_BAR_CTRL: i32 = 1003; // Removed as per Step 5.F
 
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
@@ -51,12 +59,16 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 pub const BUTTON_AREA_HEIGHT: i32 = 50;
 pub const STATUS_BAR_HEIGHT: i32 = 25;
 pub(crate) const BUTTON_X_PADDING: i32 = 10;
-const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // Used by old layout logic, new logic uses rule margins
+const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // No longer used by new layout logic
 pub(crate) const BUTTON_WIDTH: i32 = 150;
 pub(crate) const BUTTON_HEIGHT: i32 = 30;
 
 // A constant for an invalid HWND, useful for initializing or comparisons.
 pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
+
+// Constants for the "New" item indicator circle
+const CIRCLE_DIAMETER: i32 = 6;
+const CIRCLE_COLOR_BLUE: COLORREF = COLORREF(0x00FF0000); // BGR format for Blue
 
 /*
  * Holds native data associated with a specific window managed by the platform layer.
@@ -357,15 +369,29 @@ impl Win32ApiInternalState {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
             }
             WM_NCDESTROY => {
-                // Important: GWLP_USERDATA is cleaned up in facade_wnd_proc_router after this call.
-                // No further access to Win32ApiInternalState should happen for this HWND after this.
                 return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
             }
             WM_PAINT => {
                 lresult_override = Some(self.handle_wm_paint(hwnd, wparam, lparam, window_id));
             }
             WM_NOTIFY => {
-                event_to_send = self.handle_wm_notify(hwnd, wparam, lparam, window_id);
+                // TODO: Move this to a separate function
+                let nmhdr_ptr = lparam.0 as *const NMHDR;
+                if !nmhdr_ptr.is_null() {
+                    let nmhdr = unsafe { &*nmhdr_ptr };
+                    if nmhdr.idFrom as i32 == control_treeview::ID_TREEVIEW_CTRL
+                        && nmhdr.code == NM_CUSTOMDRAW
+                    {
+                        lresult_override = Some(self.handle_nm_customdraw_treeview(
+                            window_id,
+                            lparam,
+                            event_handler_opt.as_ref(),
+                        ));
+                    } else {
+                        event_to_send =
+                            self.handle_wm_notify_general(hwnd, wparam, lparam, window_id, nmhdr);
+                    }
+                }
             }
             WM_APP_TREEVIEW_CHECKBOX_CLICKED => {
                 event_to_send =
@@ -376,7 +402,7 @@ impl Win32ApiInternalState {
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
             }
             WM_CTLCOLORSTATIC => {
-                // TODO: Break this out into a separate function
+                // TODO: Move this to a separate function
                 let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
                 let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
 
@@ -390,9 +416,9 @@ impl Win32ApiInternalState {
                         {
                             unsafe {
                                 let color = match severity {
-                                    MessageSeverity::Error => COLORREF(0x000000FF), // Red
-                                    MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish for warning (FFA500 -> BGR is 00A5FF)
-                                    _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)), // Default text color
+                                    MessageSeverity::Error => COLORREF(0x000000FF),
+                                    MessageSeverity::Warning => COLORREF(0x0000A5FF),
+                                    _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
                                 };
                                 SetTextColor(hdc_static_ctrl, color);
                                 SetBkMode(hdc_static_ctrl, TRANSPARENT);
@@ -404,7 +430,6 @@ impl Win32ApiInternalState {
                     }
                 }
                 if !handled {
-                    // If not handled by above, use default processing.
                     return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
                 }
             }
@@ -422,7 +447,6 @@ impl Win32ApiInternalState {
                 }
             } else {
                 log::warn!(
-                    // Changed to warn as this might be expected during shutdown
                     "Platform: Event handler not available in handle_window_message for event {:?}.",
                     event
                 );
@@ -553,15 +577,12 @@ impl Win32ApiInternalState {
         if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
                 if window_data.has_main_layout_rules() {
-                    // Check if any rules are defined
                     log::debug!(
-                        "Platform: WM_SIZE for WinID {:?} using new rule-based layout. Client: {}x{}",
+                        "Platform: WM_SIZE for WinID {:?} using rule-based layout. Client: {}x{}",
                         window_id,
                         client_width,
                         client_height
                     );
-                    // New rule-based layout logic for main window elements
-                    // Sort rules by order
                     let empty_vec = Vec::new();
                     let layout_rules_ref = window_data.layout_rules.as_ref().unwrap_or(&empty_vec);
                     let mut sorted_rules: Vec<&LayoutRule> = layout_rules_ref.iter().collect();
@@ -588,7 +609,7 @@ impl Win32ApiInternalState {
                         let control_hwnd = control_hwnd_opt.unwrap();
 
                         match rule.dock_style {
-                            // TODO break out each case into a separate function
+                            // TODO: break out each case into a separate function
                             DockStyle::Bottom => {
                                 let height = rule.fixed_size.unwrap_or(0);
                                 let margin_top = rule.margin.0;
@@ -614,7 +635,6 @@ impl Win32ApiInternalState {
                                 }
                                 current_available_bottom = y - margin_top;
 
-                                // Specific layout for children of STATUS_BAR_PANEL_ID
                                 if rule.control_id == ui_constants::STATUS_BAR_PANEL_ID {
                                     let panel_client_width = item_width.max(0);
                                     let panel_client_height = height.max(0);
@@ -626,7 +646,7 @@ impl Win32ApiInternalState {
                                     ];
                                     let num_labels = label_ids.len() as i32;
                                     if num_labels > 0 {
-                                        // Example: 50% general, 25% archive, 25% tokens
+                                        // Example: 50% general, 25% archive, 25% tokens. TODO: This should be configurable from ui_descriptive_layer
                                         let general_width =
                                             (panel_client_width as f32 * 0.50) as i32;
                                         let archive_width =
@@ -648,7 +668,7 @@ impl Win32ApiInternalState {
                                                         MoveWindow(
                                                             label_hwnd,
                                                             current_x_in_panel,
-                                                            0, // Y is 0 relative to panel's client area
+                                                            0,
                                                             label_width.max(0),
                                                             panel_client_height.max(0),
                                                             true,
@@ -745,10 +765,9 @@ impl Win32ApiInternalState {
                         }
                     }
 
-                    // After all other docking, position the Fill control
                     if let Some(hwnd_fill) = fill_control_hwnd {
-                        let x = current_available_left + fill_control_margins.3; // margin.left
-                        let y = current_available_top + fill_control_margins.0; // margin.top
+                        let x = current_available_left + fill_control_margins.3;
+                        let y = current_available_top + fill_control_margins.0;
                         let width = (current_available_right - current_available_left)
                             - fill_control_margins.3
                             - fill_control_margins.1;
@@ -760,17 +779,14 @@ impl Win32ApiInternalState {
                         }
                     }
                 } else {
-                    // Original hardcoded layout logic (fallback if no rules defined)
-                    log::debug!(
+                    log::warn!(
                         "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
                         window_id,
                         client_width,
                         client_height
                     );
-                    // This fallback path might become less relevant or removed if DefineLayout becomes mandatory.
-                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT; // STATUS_BAR_HEIGHT for the new bar
+                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
                     let button_area_y_pos = treeview_height;
-                    let status_bar_y_pos = treeview_height + BUTTON_AREA_HEIGHT;
 
                     if let Some(hwnd_tv) =
                         window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
@@ -805,7 +821,6 @@ impl Win32ApiInternalState {
                             }
                         }
                     }
-                    // No old status bar (ID_STATUS_BAR_CTRL) to lay out here anymore
                 }
             }
         }
@@ -826,21 +841,16 @@ impl Win32ApiInternalState {
      */
     fn handle_wm_command(
         self: &Arc<Self>,
-        _hwnd_parent: HWND, // The HWND of the window that received WM_COMMAND
+        _hwnd_parent: HWND,
         wparam: WPARAM,
         lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
-        let command_id = loword_from_wparam(wparam); // This is the menu ID or control ID (as i32)
-        let notification_code_raw = highord_from_wparam(wparam); // Notification code or 0/1 for menu/accel (as i32)
-        let hwnd_control_lparam = HWND(lparam.0 as *mut c_void); // HWND of control if msg from control
+        let command_id = loword_from_wparam(wparam);
+        let notification_code_raw = highord_from_wparam(wparam);
+        // let hwnd_control_lparam = HWND(lparam.0 as *mut c_void);
 
-        // Determine if it's a menu/accelerator or control notification
-        // For menu: lparam is 0, HIWORD(wparam) is 0.
-        // For accelerator: lparam is 0, HIWORD(wparam) is 1.
-        // For control: lparam is HWND of control.
         if lparam.0 == 0 && (notification_code_raw == 0 || notification_code_raw == 1) {
-            // Menu item or Accelerator
             if let Ok(windows_guard) = self.active_windows.read() {
                 if let Some(window_data) = windows_guard.get(&window_id) {
                     if let Some(action) = window_data.menu_action_map.get(&command_id) {
@@ -868,39 +878,29 @@ impl Win32ApiInternalState {
                 );
             }
         } else if lparam.0 != 0 {
-            // Control notification
-            let control_id_from_wparam = command_id; // LOWORD(wparam) is control ID
+            let control_id_from_wparam = command_id;
             let control_notification_code = notification_code_raw as u32;
 
             if control_notification_code == BN_CLICKED {
-                // Check against all known button IDs that app_logic might care about
-                // For Phase 5, only ID_BUTTON_GENERATE_ARCHIVE is actively handled by app_logic for clicks.
                 if control_id_from_wparam == ID_BUTTON_GENERATE_ARCHIVE {
                     log::debug!(
-                        "Platform: Button ID {} (HWND {:?}) clicked for window {:?}.",
+                        "Platform: Button ID {} clicked for window {:?}.",
                         control_id_from_wparam,
-                        hwnd_control_lparam,
-                        window_id
+                        window_id // hwnd_control_lparam removed for brevity
                     );
                     return Some(AppEvent::ButtonClicked {
                         window_id,
                         control_id: control_id_from_wparam,
                     });
                 } else {
-                    // It could be another button if more are added later, or a non-button control that sends BN_CLICKED.
-                    // For now, just log if it's not the one we explicitly handle.
                     log::trace!(
-                        // Use trace for less important unhandled clicks for now
-                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled/untraced control ID {} (HWND {:?}) in window {:?}.",
+                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled/untraced control ID {} in window {:?}.",
                         control_id_from_wparam,
-                        hwnd_control_lparam,
-                        window_id
+                        window_id // hwnd_control_lparam removed
                     );
                 }
             }
-            // Potentially handle other control notifications here in the future
         } else {
-            // Unhandled WM_COMMAND variant
             log::warn!(
                 "Platform: Unhandled WM_COMMAND variant: command_id={}, notification_code={}, lparam={:?} for window {:?}",
                 command_id,
@@ -948,7 +948,7 @@ impl Win32ApiInternalState {
                 window_id
             );
         }
-        self.check_if_should_quit_after_window_close(); // This will post WM_QUIT if it's the last window or quit was signaled.
+        self.check_if_should_quit_after_window_close();
         Some(AppEvent::WindowDestroyed { window_id })
     }
 
@@ -975,31 +975,21 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Handles the WM_NOTIFY message, which is sent by common controls to their parent window.
+     * Handles general WM_NOTIFY messages (excluding NM_CUSTOMDRAW for TreeView, which is handled separately).
      * This function specifically looks for notifications from the TreeView control,
      * such as NM_CLICK (for checkbox interactions) or TVN_ITEMCHANGEDW (for other state changes).
      * For NM_CLICK on a state icon (checkbox), it posts a custom `WM_APP_TREEVIEW_CHECKBOX_CLICKED`
      * message to handle the state change logic.
      * It translates TVN_ITEMCHANGEDW into appropriate `AppEvent`s via `control_treeview` module.
      */
-    fn handle_wm_notify(
+    fn handle_wm_notify_general(
         self: &Arc<Self>,
-        hwnd: HWND,
-        _wparam: WPARAM, // This is the control ID sending the message, but NMHDR also has it.
+        hwnd_parent: HWND,
+        _wparam: WPARAM,
         lparam: LPARAM,
         window_id: WindowId,
+        nmhdr: &NMHDR,
     ) -> Option<AppEvent> {
-        let nmhdr_ptr = lparam.0 as *const NMHDR;
-        if nmhdr_ptr.is_null() {
-            return None;
-        }
-        let nmhdr = unsafe { &*nmhdr_ptr };
-
-        if nmhdr.idFrom as i32 != control_treeview::ID_TREEVIEW_CTRL {
-            // Could also be notifications from other common controls if added later
-            return None;
-        }
-
         match nmhdr.code {
             NM_CLICK => {
                 // IMPORTANT: NMMOUSE doesn't give a reliable nmtv.pt. Only solution I have found is to manually call GetCursorPos+ScreenToClient.
@@ -1028,7 +1018,7 @@ impl Win32ApiInternalState {
                             != window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
                         {
                             log::warn!(
-                                "Platform: NM_CLICK received from HWND {:?} which is not the registered TreeView HWND for WinID {:?}",
+                                "Platform: NM_CLICK from HWND {:?} not registered TreeView for WinID {:?}",
                                 hwnd_tv_from_notify,
                                 window_id
                             );
@@ -1036,7 +1026,7 @@ impl Win32ApiInternalState {
                         }
                         if window_data.treeview_state.is_none() {
                             log::warn!(
-                                "Platform: NM_CLICK received for TreeView, but no treeview_state for WinID {:?}",
+                                "Platform: NM_CLICK for TreeView, but no treeview_state for WinID {:?}",
                                 window_id
                             );
                             return None;
@@ -1062,9 +1052,9 @@ impl Win32ApiInternalState {
                         if h_item_hit.0 != 0 && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0 {
                             unsafe {
                                 PostMessageW(
-                                    Some(hwnd), // Post to parent window
+                                    Some(hwnd_parent),
                                     WM_APP_TREEVIEW_CHECKBOX_CLICKED,
-                                    WPARAM(h_item_hit.0 as usize), // Pass HTREEITEM as WPARAM
+                                    WPARAM(h_item_hit.0 as usize),
                                     LPARAM(0),
                                 )
                                 .unwrap_or_else(|e| {
@@ -1077,10 +1067,9 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
-                return None; // NM_CLICK itself doesn't directly yield an AppEvent here.
+                return None;
             }
             TVN_ITEMCHANGEDW => {
-                // For TVN_ITEMCHANGEDW, lparam is a pointer to NMTREEVIEWW
                 return control_treeview::handle_treeview_itemchanged_notification(
                     self, window_id, lparam,
                 );
@@ -1090,10 +1079,152 @@ impl Win32ApiInternalState {
         None
     }
 
+    /*
+     * Handles the NM_CUSTOMDRAW notification specifically for the TreeView control.
+     * This function orchestrates the custom drawing stages to render a "New" item indicator.
+     * It interacts with the `PlatformEventHandler` (application logic) to determine if an
+     * item is "New" and then performs the drawing operations on the item's HDC.
+     */
+    fn handle_nm_customdraw_treeview(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        lparam: LPARAM,
+        event_handler_opt: Option<&Arc<Mutex<dyn super::types::PlatformEventHandler>>>,
+    ) -> LRESULT {
+        let nmtvcd = unsafe { &*(lparam.0 as *const NMTVCUSTOMDRAW) };
+
+        match nmtvcd.nmcd.dwDrawStage {
+            CDDS_PREPAINT => {
+                log::trace!("NM_CUSTOMDRAW TreeView ({:?}): CDDS_PREPAINT", window_id);
+                return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
+            }
+            CDDS_ITEMPREPAINT => {
+                let tree_item_id_val = nmtvcd.nmcd.lItemlParam;
+                let tree_item_id = TreeItemId(tree_item_id_val.0 as u64);
+                log::trace!(
+                    "NM_CUSTOMDRAW TreeView ({:?}): CDDS_ITEMPREPAINT for TreeItemId {:?}",
+                    window_id,
+                    tree_item_id
+                );
+
+                if let Some(handler_arc) = event_handler_opt {
+                    if let Ok(handler_guard) = handler_arc.lock() {
+                        if handler_guard.is_tree_item_new(window_id, tree_item_id) {
+                            log::trace!(
+                                "NM_CUSTOMDRAW TreeView ({:?}): Item {:?} IS NEW. Requesting CDRF_NOTIFYPOSTPAINT.",
+                                window_id,
+                                tree_item_id
+                            );
+                            return LRESULT(CDRF_NOTIFYPOSTPAINT as isize);
+                        } else {
+                            log::trace!(
+                                "NM_CUSTOMDRAW TreeView ({:?}): Item {:?} IS NOT NEW. Requesting CDRF_DODEFAULT.",
+                                window_id,
+                                tree_item_id
+                            );
+                        }
+                    } else {
+                        log::warn!(
+                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPREPAINT.",
+                            window_id
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPREPAINT.",
+                        window_id
+                    );
+                }
+                return LRESULT(CDRF_DODEFAULT as isize);
+            }
+            CDDS_ITEMPOSTPAINT => {
+                let tree_item_id_val = nmtvcd.nmcd.lItemlParam;
+                let tree_item_id = TreeItemId(tree_item_id_val.0 as u64);
+                log::trace!(
+                    "NM_CUSTOMDRAW TreeView ({:?}): CDDS_ITEMPOSTPAINT for TreeItemId {:?}",
+                    window_id,
+                    tree_item_id
+                );
+
+                let mut should_draw_indicator = false;
+                if let Some(handler_arc) = event_handler_opt {
+                    if let Ok(handler_guard) = handler_arc.lock() {
+                        if handler_guard.is_tree_item_new(window_id, tree_item_id) {
+                            should_draw_indicator = true;
+                        }
+                    } else {
+                        log::warn!(
+                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPOSTPAINT.",
+                            window_id
+                        );
+                    }
+                } else {
+                    log::warn!(
+                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPOSTPAINT.",
+                        window_id
+                    );
+                }
+
+                if should_draw_indicator {
+                    log::trace!(
+                        "NM_CUSTOMDRAW TreeView ({:?}): Drawing 'New' indicator for item {:?}",
+                        window_id,
+                        tree_item_id
+                    );
+                    let hdc = nmtvcd.nmcd.hdc;
+                    let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize);
+                    let hwnd_treeview = nmtvcd.nmcd.hdr.hwndFrom;
+
+                    let mut item_rect = RECT::default();
+                    // For TVM_GETITEMRECT, wParam = FALSE (0) gets the text-only rectangle.
+                    let get_rect_param = LPARAM(&mut item_rect as *mut _ as isize);
+                    unsafe {
+                        SendMessageW(
+                            hwnd_treeview,
+                            TVM_GETITEMRECT,
+                            Some(WPARAM(0)), // FALSE for text-only part of the item
+                            Some(get_rect_param),
+                        );
+                    }
+
+                    let x1 = item_rect.left;
+                    let y1 = item_rect.top;
+                    let x2 = item_rect.left + CIRCLE_DIAMETER;
+                    let y2 = item_rect.top + CIRCLE_DIAMETER;
+
+                    unsafe {
+                        let brush = CreateSolidBrush(CIRCLE_COLOR_BLUE);
+                        if !brush.is_invalid() {
+                            let brush_obj = HGDIOBJ(brush.0);
+                            let old_brush = SelectObject(hdc, brush_obj);
+                            Ellipse(hdc, x1, y1, x2, y2);
+                            SelectObject(hdc, old_brush);
+                            DeleteObject(brush_obj);
+                        } else {
+                            log::error!(
+                                "NM_CUSTOMDRAW TreeView ({:?}): Failed to create brush for 'New' indicator.",
+                                window_id
+                            );
+                        }
+                    }
+                }
+                return LRESULT(CDRF_DODEFAULT as isize);
+            }
+            _ => {
+                log::trace!(
+                    "NM_CUSTOMDRAW TreeView ({:?}): Unhandled dwDrawStage: {:?}",
+                    window_id,
+                    nmtvcd.nmcd.dwDrawStage
+                );
+            }
+        }
+        LRESULT(CDRF_DODEFAULT as isize)
+    }
+
     fn handle_wm_app_treeview_checkbox_clicked(
         self: &Arc<Self>,
         _hwnd: HWND,
-        wparam: WPARAM, // Contains HTREEITEM
+        wparam: WPARAM,
         _lparam: LPARAM,
         window_id: WindowId,
     ) -> Option<AppEvent> {
@@ -1174,7 +1305,6 @@ pub(crate) fn send_close_message(
         "Platform: send_close_message received for WindowId {:?}, attempting to destroy native window.",
         window_id
     );
-    // This will trigger WM_DESTROY and subsequently WM_NCDESTROY if successful.
     destroy_native_window(internal_state, window_id)
 }
 
@@ -1191,26 +1321,27 @@ pub(crate) fn destroy_native_window(
 ) -> PlatformResult<()> {
     let hwnd_to_destroy: Option<HWND>;
     {
-        // Scope for the read lock to get the HWND.
-        let windows_read_guard = internal_state
-            .active_windows
-            .read()
-            .map_err(|e| {
-                log::error!("Platform: Failed to acquire read lock on active_windows for destroy_native_window (WinID {:?}): {:?}", window_id, e);
-                PlatformError::OperationFailed(format!("Failed to lock active_windows for read (destroy_native_window): {}", e))
-            })?;
+        let windows_read_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "Platform: Failed to lock active_windows for read (destroy_native_window): {}",
+                e
+            );
+            PlatformError::OperationFailed(format!(
+                "Failed to lock active_windows for read (destroy_native_window): {}",
+                e
+            ))
+        })?;
 
         hwnd_to_destroy = windows_read_guard.get(&window_id).map(|data| data.hwnd);
 
         if hwnd_to_destroy.is_none() {
             log::warn!(
-                "Platform: Attempted to destroy native window for WindowId {:?}, but it was not found in active_windows map.",
+                "Platform: WindowId {:?} not found in active_windows for destroy_native_window.",
                 window_id
             );
-            // It might have already been destroyed and removed. Consider this not an error.
             return Ok(());
         }
-    } // Read lock released.
+    }
 
     if let Some(hwnd) = hwnd_to_destroy {
         if !hwnd.is_invalid() {
@@ -1222,27 +1353,23 @@ pub(crate) fn destroy_native_window(
             unsafe {
                 if DestroyWindow(hwnd).is_err() {
                     let last_error = GetLastError();
-                    // ERROR_INVALID_WINDOW_HANDLE can occur if the window is already being destroyed
-                    // or was destroyed by other means. Don't treat as critical error.
                     if last_error.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
                         log::error!(
-                            "Platform: DestroyWindow for HWND {:?} (WindowId {:?}) failed: {:?}. Potential resource leak or unexpected state.",
+                            "Platform: DestroyWindow for HWND {:?} (WinID {:?}) failed: {:?}.",
                             hwnd,
                             window_id,
                             last_error
                         );
-                        // Depending on strictness, this could be an Err result.
-                        // For now, just logging, as the window might be gone.
                     } else {
                         log::debug!(
-                            "Platform: DestroyWindow for HWND {:?} (WindowId {:?}) reported invalid handle, likely already destroyed.",
+                            "Platform: DestroyWindow for HWND {:?} (WinID {:?}) reported invalid handle.",
                             hwnd,
                             window_id
                         );
                     }
                 } else {
                     log::debug!(
-                        "Platform: DestroyWindow call succeeded for HWND {:?} (WindowId {:?}). WM_DESTROY should follow.",
+                        "Platform: DestroyWindow call succeeded for HWND {:?} (WinID {:?}).",
                         hwnd,
                         window_id
                     );
@@ -1255,7 +1382,5 @@ pub(crate) fn destroy_native_window(
             );
         }
     }
-    // If hwnd_to_destroy was None, it means the window was already removed from the map,
-    // so no action is needed. This is considered success.
     Ok(())
 }
