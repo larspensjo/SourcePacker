@@ -35,6 +35,7 @@ pub trait ArchiverOperations: Send + Sync {
      * Checks the synchronization status of a profile's archive file.
      * Compares the archive's timestamp against the newest timestamp among the
      * selected source files within the `file_nodes_tree`.
+     * TODO: This shouldn't take a Profile
      */
     fn check_archive_status(
         &self,

@@ -25,6 +25,7 @@ use super::handler::{PathToTreeItemIdMap, PendingAction};
  * and interaction logic of the main window, separating it from the core
  * application data (`AppSessionData`) and the central orchestrator (`MyAppLogic`).
  */
+#[derive(Debug)]
 pub struct MainWindowUiState {
     /* The unique identifier for the main application window. */
     pub window_id: WindowId,
@@ -67,13 +68,16 @@ impl MainWindowUiState {
      */
     pub fn compose_window_title(app_session_data: &AppSessionData) -> String {
         let mut title = "SourcePacker".to_string();
-        if let Some(profile_cache) = &app_session_data.current_profile_cache {
-            title = format!("{} - [{}]", title, profile_cache.name);
-            if let Some(archive_path) = &profile_cache.archive_path {
+        if let Some(profile_name) = &app_session_data.current_profile_name {
+            title = format!("{} - [{}]", title, profile_name);
+            if let Some(archive_path) = &app_session_data.current_archive_path {
                 title = format!("{} - [{}]", title, archive_path.display());
             } else {
                 title = format!("{} - [No Archive Set]", title);
             }
+        } else {
+            // If no profile name, don't show archive path either
+            title = format!("{} - [No Profile Loaded]", title);
         }
         title
     }
@@ -114,13 +118,13 @@ impl MainWindowUiState {
             },
         });
 
-        // 3. Token Count (General Label and Dedicated Token Label)
+        // 3. Token Count (Dedicated Token Label, and General Label via app_info! in MyAppLogic)
         let token_text = format!("Tokens: {}", app_session_data.cached_current_token_count);
         // Update dedicated token label
         commands.push(PlatformCommand::UpdateLabelText {
             window_id,
             label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
-            text: token_text,
+            text: token_text, // MyAppLogic will also send this to general via app_info!
             severity: MessageSeverity::Information,
         });
 
@@ -128,35 +132,45 @@ impl MainWindowUiState {
         // Relies on self.current_archive_status_for_ui being up-to-date.
         // MyAppLogic should call its update_current_archive_status (which updates this field)
         // before calling this command builder.
-        if let Some(status) = &self.current_archive_status_for_ui {
-            let archive_status_text = format!("Archive: {:?}", status);
-            let archive_severity = if matches!(status, ArchiveStatus::ErrorChecking(_)) {
-                MessageSeverity::Error
-            } else {
-                MessageSeverity::Information
-            };
+        if app_session_data.current_profile_name.is_some() {
+            if let Some(status) = &self.current_archive_status_for_ui {
+                // Use plain string for dedicated label, MyAppLogic uses Debug for general error.
+                let plain_status_string =
+                    crate::app_logic::handler::MyAppLogic::archive_status_to_plain_string(status);
+                let archive_label_text = format!("Archive: {}", plain_status_string);
 
-            // Update dedicated archive label
-            commands.push(PlatformCommand::UpdateLabelText {
-                window_id,
-                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                text: archive_status_text.clone(),
-                severity: archive_severity,
-            });
+                let archive_severity = if matches!(status, ArchiveStatus::ErrorChecking(_)) {
+                    MessageSeverity::Error
+                } else {
+                    MessageSeverity::Information
+                };
 
-            // If it's an error, also update the general status label
-            if archive_severity == MessageSeverity::Error {
+                // Update dedicated archive label
                 commands.push(PlatformCommand::UpdateLabelText {
                     window_id,
-                    label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
-                    text: archive_status_text,
-                    severity: MessageSeverity::Error,
+                    label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                    text: archive_label_text.clone(),
+                    severity: archive_severity,
+                });
+
+                // If it's an error, also update the general status label via app_error! in MyAppLogic.
+                // This command builder doesn't need to queue it for general if MyAppLogic's update_current_archive_status does.
+            } else {
+                // This case implies archive status hasn't been determined yet *after* profile load.
+                // MyAppLogic.update_current_archive_status should handle setting this.
+                // For initial display, if it's None here, it means MyAppLogic hasn't run update_current_archive_status yet
+                // after this profile became active. We can send a default "unknown" or let MyAppLogic handle it.
+                // Let's send a neutral message for the dedicated label.
+                let unknown_archive_status_text = "Archive: Status pending...".to_string();
+                commands.push(PlatformCommand::UpdateLabelText {
+                    window_id,
+                    label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                    text: unknown_archive_status_text,
+                    severity: MessageSeverity::Information,
                 });
             }
         } else {
-            // Case: No profile or archive status not yet determined.
-            // MyAppLogic.update_current_archive_status handles this message for active UI.
-            // If this command builder is called before that, we send a default.
+            // Case: No profile loaded.
             let no_profile_msg_archive_label = "Archive: No profile loaded".to_string();
             commands.push(PlatformCommand::UpdateLabelText {
                 window_id,
@@ -164,22 +178,11 @@ impl MainWindowUiState {
                 text: no_profile_msg_archive_label.clone(),
                 severity: MessageSeverity::Information,
             });
-            // Also update general status if no profile, consistent with update_current_archive_status
-            commands.push(PlatformCommand::UpdateLabelText {
-                window_id,
-                label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
-                text: "No profile loaded".to_string(), // Shorter message for general status
-                severity: MessageSeverity::Information,
-            });
         }
 
         // 5. Save Button State (This button ID might be from an older design phase)
         // The Step 5.F plan does not remove this button, so the command is retained.
-        let save_button_enabled = app_session_data
-            .current_profile_cache
-            .as_ref()
-            .and_then(|p| p.archive_path.as_ref())
-            .is_some();
+        let save_button_enabled = app_session_data.current_archive_path.is_some();
         commands.push(PlatformCommand::SetControlEnabled {
             window_id,
             control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
@@ -195,13 +198,14 @@ impl MainWindowUiState {
 mod tests {
     use super::*;
     use crate::app_logic::ui_constants;
-    use crate::core::ArchiveStatus;
+    use crate::core::{ArchiveStatus, models::FileTokenDetails}; // Added FileTokenDetails
     use crate::platform_layer::WindowId;
+    use std::collections::HashMap; // Added for HashMap
 
     #[test]
     fn test_main_window_ui_state_new() {
-        crate::initialize_logging(); // Assuming this is desired for your test setup
         // Arrange
+        crate::initialize_logging();
         let test_window_id = WindowId(42);
 
         // Act
@@ -218,21 +222,24 @@ mod tests {
 
     #[test]
     fn test_build_initial_profile_display_commands_generates_update_label_text() {
-        crate::initialize_logging(); // Assuming this is desired
         // Arrange
+        crate::initialize_logging();
         let window_id = WindowId(1);
         let mut ui_state = MainWindowUiState::new(window_id);
-        let mut app_session_data = AppSessionData::new();
-        app_session_data.cached_current_token_count = 123;
+        let mut app_session_data = AppSessionData {
+            current_profile_name: Some("TestProfile".to_string()),
+            root_path_for_scan: PathBuf::from("/root"),
+            current_archive_path: Some(PathBuf::from("/root/archive.txt")),
+            file_nodes_cache: vec![],
+            cached_current_token_count: 123,
+            cached_file_token_details: HashMap::new(), // Initialize new field
+        };
 
         ui_state.current_archive_status_for_ui = Some(ArchiveStatus::UpToDate);
 
         let initial_status_msg_text = "Profile loaded.".to_string();
         let token_msg_text = "Tokens: 123".to_string();
-
-        // The build_initial_profile_display_commands function currently uses Debug for archive status
-        // when current_archive_status_for_ui is Some.
-        let archive_msg_text_debug = format!("Archive: {:?}", ArchiveStatus::UpToDate);
+        let archive_msg_text_plain = "Archive: Up to date.".to_string();
 
         // Act
         let commands = ui_state.build_initial_profile_display_commands(
@@ -250,12 +257,9 @@ mod tests {
 
         // Assert
         let mut general_initial_status_found = false;
-        // This flag is no longer expected to be true based on the provided main_window_ui_state.rs
-        // let mut general_token_status_found = false;
         let mut dedicated_token_status_found = false;
         let mut dedicated_archive_status_found = false;
-        let mut general_archive_error_status_found = false; // For if archive status was an error
-        let mut general_no_profile_archive_fallback_found = false; // For archive status None
+        let mut general_no_profile_archive_fallback_found = false;
 
         for cmd in &commands {
             if let PlatformCommand::UpdateLabelText {
@@ -272,22 +276,15 @@ mod tests {
                     }
                     // Check for the "No profile loaded" message if current_archive_status_for_ui was None
                     if text == "No profile loaded" && *severity == MessageSeverity::Information {
+                        // Not expected here
                         general_no_profile_archive_fallback_found = true;
-                    }
-                    // Check for archive error message on general label
-                    if text.starts_with("Archive status error:")
-                        && *severity == MessageSeverity::Error
-                    {
-                        general_archive_error_status_found = true;
                     }
                 } else if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID {
                     if text == &token_msg_text && *severity == MessageSeverity::Information {
                         dedicated_token_status_found = true;
                     }
                 } else if *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID {
-                    // As current_archive_status_for_ui is Some(ArchiveStatus::UpToDate),
-                    // the code uses format!("Archive: {:?}", status)
-                    if text == &archive_msg_text_debug && *severity == MessageSeverity::Information
+                    if text == &archive_msg_text_plain && *severity == MessageSeverity::Information
                     {
                         dedicated_archive_status_found = true;
                     }
@@ -299,28 +296,18 @@ mod tests {
             general_initial_status_found,
             "Initial status message for general label not found or incorrect."
         );
-        // The following assertion is removed because the code does not send token count to general label
-        // assert!(
-        //     general_token_status_found,
-        //     "Token status message for general label not found or incorrect."
-        // );
         assert!(
             dedicated_token_status_found,
             "Token status message for dedicated token label not found or incorrect."
         );
         assert!(
             dedicated_archive_status_found,
-            "Archive status for dedicated archive label not found or incorrect. Expected debug format."
+            "Archive status for dedicated archive label not found or incorrect. Expected plain format."
         );
-
-        // Verify that the fallback "No profile loaded" for archive status was NOT sent to general,
-        // because current_archive_status_for_ui was Some.
-        if ui_state.current_archive_status_for_ui.is_some() {
-            assert!(
-                !general_no_profile_archive_fallback_found,
-                "General label should not have fallback archive message when status is Some."
-            );
-        }
+        assert!(
+            !general_no_profile_archive_fallback_found,
+            "General label should not have fallback archive message when profile name is Some."
+        );
 
         // Check for SetWindowTitle and SetControlEnabled as well
         assert!(
@@ -328,6 +315,7 @@ mod tests {
                 .iter()
                 .any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { .. }))
         );
-        assert!(commands.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, .. } if *control_id == crate::app_logic::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC)));
+        assert!(commands.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled, .. }
+            if *control_id == crate::app_logic::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC && *enabled)));
     }
 }
