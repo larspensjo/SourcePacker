@@ -265,7 +265,7 @@ struct MockArchiver {
     create_archive_content_result: Mutex<io::Result<String>>,
     create_archive_content_calls: Mutex<Vec<(Vec<FileNode>, PathBuf)>>,
     check_archive_status_result: Mutex<ArchiveStatus>,
-    check_archive_status_calls: Mutex<Vec<(Profile, Vec<FileNode>)>>, // Stays Profile for now
+    check_archive_status_calls: Mutex<Vec<(Option<PathBuf>, Vec<FileNode>)>>,
     save_archive_content_result: Mutex<io::Result<()>>,
     save_archive_content_calls: Mutex<Vec<(PathBuf, String)>>,
     get_file_timestamp_results: Mutex<HashMap<PathBuf, io::Result<SystemTime>>>,
@@ -300,7 +300,7 @@ impl MockArchiver {
     }
 
     #[allow(dead_code)]
-    fn get_check_archive_status_calls(&self) -> Vec<(Profile, Vec<FileNode>)> {
+    fn get_check_archive_status_calls(&self) -> Vec<(Option<PathBuf>, Vec<FileNode>)> {
         self.check_archive_status_calls.lock().unwrap().clone()
     }
 
@@ -350,13 +350,13 @@ impl ArchiverOperations for MockArchiver {
 
     fn check_archive_status(
         &self,
-        profile: &Profile, // ArchiverOperations trait still expects Profile
+        archive_path_opt: Option<&Path>,
         file_nodes_tree: &[FileNode],
     ) -> ArchiveStatus {
-        self.check_archive_status_calls
-            .lock()
-            .unwrap()
-            .push((profile.clone(), file_nodes_tree.to_vec()));
+        self.check_archive_status_calls.lock().unwrap().push((
+            archive_path_opt.map(|p| p.to_path_buf()),
+            file_nodes_tree.to_vec(),
+        ));
         *self.check_archive_status_result.lock().unwrap()
     }
 
@@ -506,13 +506,13 @@ fn setup_logic_with_mocks() -> (
     Arc<MockStateManager>,
     Arc<MockTokenCounter>,
 ) {
-    crate::initialize_logging(); // Ensure logging is initialized for tests
+    crate::initialize_logging();
     let mock_config_manager_arc = Arc::new(MockConfigManager::new());
     let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
     let mock_file_system_scanner_arc = Arc::new(MockFileSystemScanner::new());
     let mock_archiver_arc = Arc::new(MockArchiver::new());
-    let mock_state_manager_arc = Arc::new(MockStateManager::new()); // Use new MockStateManager
-    let mock_token_counter_arc = Arc::new(MockTokenCounter::new(1)); // Default to 1 token if not specified
+    let mock_state_manager_arc = Arc::new(MockStateManager::new());
+    let mock_token_counter_arc = Arc::new(MockTokenCounter::new(1));
 
     let logic = MyAppLogic::new(
         Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
@@ -579,16 +579,14 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     let mock_file_path = startup_profile_root.join("mock_startup_file.txt");
     selected_paths_for_profile.insert(mock_file_path.clone());
 
-    // This is the Profile object that load_profile would return
     let mock_loaded_profile_dto = Profile {
         name: last_profile_name_to_load.to_string(),
         root_folder: startup_profile_root.clone(),
         selected_paths: selected_paths_for_profile.clone(),
         deselected_paths: HashSet::new(),
         archive_path: Some(startup_archive_path.clone()),
-        file_details: HashMap::new(), // Initial empty, will be populated by activate
+        file_details: HashMap::new(),
     };
-    // MockProfileManager still deals with Profile DTOs for load/save operations
     mock_profile_manager.set_load_profile_result(
         last_profile_name_to_load,
         Ok(mock_loaded_profile_dto.clone()),
@@ -604,20 +602,17 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
     profile_selected_paths_for_dto.insert(concrete_file_path.clone());
 
     let mut file_details_for_dto = HashMap::new();
-    // Simulate that the profile, when loaded, might have some cached details.
-    // activate_and_populate_data will then update these based on current checksums.
-    // For this test, let's assume the loaded DTO had this matching detail.
     file_details_for_dto.insert(
         concrete_file_path.clone(),
         FileTokenDetails {
-            checksum: "dummy_checksum_for_startup_test".to_string(), // This needs to match FileNode checksum
+            checksum: "dummy_checksum_for_startup_test".to_string(),
             token_count: 5,
         },
     );
 
     let mock_loaded_profile_with_temp_file_dto = Profile {
         name: last_profile_name_to_load.to_string(),
-        root_folder: temp_dir.path().to_path_buf(), // This root will be used for scan
+        root_folder: temp_dir.path().to_path_buf(),
         selected_paths: profile_selected_paths_for_dto,
         deselected_paths: HashSet::new(),
         archive_path: Some(startup_archive_path.clone()),
@@ -632,9 +627,9 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         path: concrete_file_path.clone(),
         name: "startup_content.txt".into(),
         is_dir: false,
-        state: FileState::New, // Will be updated by apply_profile_to_tree
+        state: FileState::New,
         children: vec![],
-        checksum: Some("dummy_checksum_for_startup_test".to_string()), // Match DTO for cache hit
+        checksum: Some("dummy_checksum_for_startup_test".to_string()),
     }];
 
     mock_file_system_scanner
@@ -718,29 +713,23 @@ fn test_menu_set_archive_path_cancelled() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    // Set up AppSessionData to have an active profile context
     logic.test_app_session_data_mut().current_profile_name = Some("Test".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from(".");
-    // current_archive_path can be None or Some, doesn't matter for cancellation path
 
     logic.test_set_pending_action(PendingAction::SettingArchivePath);
 
     // Act
     logic.handle_event(AppEvent::FileSaveDialogCompleted {
         window_id: main_window_id,
-        result: None, // Simulate cancellation
+        result: None,
     });
-    let cmds = logic.test_drain_commands();
+    let _cmds = logic.test_drain_commands(); // Drain commands to avoid interference if any are logged
 
     // Assert
-    // No specific command is expected here now other than potential status updates.
-    // The main thing is that `pending_action` should be cleared and no error should occur.
     assert!(
         logic.test_pending_action().is_none(),
         "Pending action should be cleared on cancel"
     );
-    // If _update_generate_archive_menu_item_state logs, we might see a status update.
-    // For this test, mainly ensure no crash and pending_action is cleared.
 }
 
 #[test]
@@ -764,14 +753,13 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let profile_json_path_from_dialog =
         PathBuf::from(format!("/dummy/profiles/{}.json", profile_name));
 
-    // This is the DTO that load_profile_from_path returns
     let mock_profile_to_load_dto = Profile {
         name: profile_name.to_string(),
         root_folder: root_folder_for_profile.clone(),
-        selected_paths: HashSet::new(), // Assume empty for simplicity here
+        selected_paths: HashSet::new(),
         deselected_paths: HashSet::new(),
         archive_path: Some(archive_file_for_profile.clone()),
-        file_details: HashMap::new(), // Empty, activate will handle if needed
+        file_details: HashMap::new(),
     };
     mock_profile_manager_arc.set_load_profile_from_path_result(
         &profile_json_path_from_dialog,
@@ -791,6 +779,19 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let cmds = logic.test_drain_commands();
 
     // Assert
+    // Check that check_archive_status was called with the correct archive path
+    let archiver_calls = mock_archiver_arc.get_check_archive_status_calls();
+    assert_eq!(
+        archiver_calls.len(),
+        1,
+        "check_archive_status should be called once"
+    );
+    assert_eq!(
+        archiver_calls[0].0,
+        Some(archive_file_for_profile.clone()),
+        "Archive path mismatch in mock call"
+    );
+
     assert!(
         find_command(&cmds, |cmd| matches!(
             cmd,
@@ -830,7 +831,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         cmds
     );
 
-    let token_text = "Tokens: 0"; // Since no files were scanned and selected
+    let token_text = "Tokens: 0";
     assert!(
         find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information )).is_some(),
         "Expected UpdateLabelText for general label for 'Tokens: 0'. Got: {:?}", cmds
@@ -852,7 +853,6 @@ fn test_menu_action_generate_archive_triggers_logic() {
     let archive_path = PathBuf::from("/test/archive.txt");
     let root_folder = PathBuf::from("/test/root");
 
-    // Set up AppSessionData directly
     logic.test_app_session_data_mut().current_profile_name = Some(profile_name.to_string());
     logic.test_app_session_data_mut().root_path_for_scan = root_folder.clone();
     logic.test_app_session_data_mut().current_archive_path = Some(archive_path.clone());
@@ -861,7 +861,6 @@ fn test_menu_action_generate_archive_triggers_logic() {
         "file.txt".into(),
         false,
     )];
-    // cached_file_token_details can be empty for this test focus
 
     mock_archiver.set_create_archive_content_result(Ok("Test Archive Content".to_string()));
     mock_archiver.set_save_archive_content_result(Ok(()));
@@ -872,6 +871,7 @@ fn test_menu_action_generate_archive_triggers_logic() {
         window_id: main_window_id,
         action: MenuAction::GenerateArchive,
     });
+    let cmds = logic.test_drain_commands();
 
     // Assert
     let create_calls = mock_archiver.get_create_archive_content_calls();
@@ -890,7 +890,6 @@ fn test_menu_action_generate_archive_triggers_logic() {
     assert_eq!(save_calls[0].0, archive_path);
     assert_eq!(save_calls[0].1, "Test Archive Content");
 
-    let cmds = logic.test_drain_commands();
     let success_text = format!("Archive saved to '{}'.", archive_path.display());
     assert!(
         find_command(
@@ -916,16 +915,16 @@ fn test_menu_action_generate_archive_no_profile_shows_error() {
     let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
-    logic.test_app_session_data_mut().current_profile_name = None; // No profile loaded
+    logic.test_app_session_data_mut().current_profile_name = None;
 
     // Act
     logic.handle_event(AppEvent::MenuActionClicked {
         window_id: main_window_id,
         action: MenuAction::GenerateArchive,
     });
+    let cmds = logic.test_drain_commands();
 
     // Assert
-    let cmds = logic.test_drain_commands();
     assert!(
         find_command(
             &cmds,
@@ -942,7 +941,6 @@ fn test_menu_action_generate_archive_no_archive_path_shows_error() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    // Set up AppSessionData with a profile name but no archive path
     logic.test_app_session_data_mut().current_profile_name =
         Some("NoArchivePathProfile".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from("/test/root");
@@ -953,9 +951,9 @@ fn test_menu_action_generate_archive_no_archive_path_shows_error() {
         window_id: main_window_id,
         action: MenuAction::GenerateArchive,
     });
+    let cmds = logic.test_drain_commands();
 
     // Assert
-    let cmds = logic.test_drain_commands();
     assert!(
         find_command(
             &cmds,
@@ -980,11 +978,10 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    // Set up AppSessionData with an active profile name
     logic.test_app_session_data_mut().current_profile_name = Some("TestProfile".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from("/root");
-    // current_archive_path is relevant for check_archive_status, set if needed by test case
-    // For this test, its presence/absence is handled by check_archive_status logic.
+    logic.test_app_session_data_mut().current_archive_path =
+        Some(PathBuf::from("/root/archive.txt"));
 
     // Case 1: ArchiveStatus is an error
     let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));
@@ -1043,7 +1040,8 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     );
 
     // Case 3: No profile loaded
-    logic.test_app_session_data_mut().current_profile_name = None; // Clear profile name
+    logic.test_app_session_data_mut().current_profile_name = None;
+    logic.test_app_session_data_mut().current_archive_path = None; // Also clear archive path
     let no_profile_msg_archive_label = "Archive: No profile loaded";
     let no_profile_msg_general = "No profile loaded";
 

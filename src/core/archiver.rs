@@ -32,14 +32,14 @@ pub trait ArchiverOperations: Send + Sync {
     ) -> io::Result<String>;
 
     /*
-     * Checks the synchronization status of a profile's archive file.
-     * Compares the archive's timestamp against the newest timestamp among the
-     * selected source files within the `file_nodes_tree`.
-     * TODO: This shouldn't take a Profile
+     * Checks the synchronization status of an archive file.
+     * Compares the archive's timestamp (if `archive_path` is Some and exists)
+     * against the newest timestamp among the selected source files within `file_nodes_tree`.
+     * TODO: Does the path have to be an Option?
      */
     fn check_archive_status(
         &self,
-        profile: &Profile,
+        archive_path: Option<&Path>,
         file_nodes_tree: &[FileNode],
     ) -> ArchiveStatus;
 
@@ -118,47 +118,46 @@ impl ArchiverOperations for CoreArchiver {
                         }
                     }
                     Err(e) => {
-                        // If an error occurs reading a file, the content added so far (including the global header
-                        // and any previous file headers/content) is effectively discarded as the function returns Err.
-                        // This behavior is maintained. The original code included the error message in the content
-                        // AND returned an error, which is a bit unusual. I'll keep the return Err(e) part.
-                        // The line archive_content.push_str(&format!("!!! ERROR READING FILE: ..."))
-                        // from the original prompt is actually not reachable if Err(e) is returned immediately.
-                        // I will stick to the provided code's structure: return Err(e) on first file read error.
                         return Err(e);
                     }
                 }
-                // The "--- END FILE ---" marker was commented out in the original code, so it remains so.
             }
         }
         Ok(archive_content)
     }
 
     fn get_file_timestamp(&self, path: &Path) -> io::Result<SystemTime> {
-        // Logic moved from the old free function
         fs::metadata(path)?.modified()
     }
 
     fn check_archive_status(
         &self,
-        profile: &Profile,
+        archive_file_path_opt: Option<&Path>,
         file_nodes_tree: &[FileNode],
     ) -> ArchiveStatus {
-        // Logic moved from the old free function, uses self.get_file_timestamp
-        let archive_path = match &profile.archive_path {
+        let current_archive_path = match archive_file_path_opt {
             Some(p) => p,
-            None => return ArchiveStatus::NotYetGenerated,
+            None => {
+                log::debug!(
+                    "Archiver: check_archive_status - No archive path provided, status is NotYetGenerated."
+                );
+                return ArchiveStatus::NotYetGenerated;
+            }
         };
 
-        let archive_timestamp = match self.get_file_timestamp(archive_path) {
+        let archive_timestamp = match self.get_file_timestamp(current_archive_path) {
             Ok(ts) => ts,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                log::debug!(
+                    "Archiver: check_archive_status - Archive file {:?} missing.",
+                    current_archive_path
+                );
                 return ArchiveStatus::ArchiveFileMissing;
             }
             Err(e) => {
                 log::error!(
-                    "Error getting archive timestamp for {:?}: {}",
-                    archive_path,
+                    "Archiver: Error getting archive timestamp for {:?}: {}",
+                    current_archive_path,
                     e
                 );
                 return ArchiveStatus::ErrorChecking(Some(e.kind()));
@@ -168,10 +167,10 @@ impl ArchiverOperations for CoreArchiver {
         let mut newest_selected_file_timestamp: Option<SystemTime> = None;
         let mut has_selected_files = false;
 
-        // Helper recursive function to iterate through nodes and find selected files
-        // It now needs to take `&dyn ArchiverOperations` to call `get_file_timestamp`.
+        /* Helper recursive function to iterate through nodes and find selected files.
+         * It now needs to take `&dyn ArchiverOperations` to call `get_file_timestamp`. */
         fn find_newest_selected(
-            archiver: &dyn ArchiverOperations, // Pass self or a reference to the trait object
+            archiver: &dyn ArchiverOperations,
             nodes: &[FileNode],
             current_newest: &mut Option<SystemTime>,
             has_any_selected: &mut bool,
@@ -186,7 +185,6 @@ impl ArchiverOperations for CoreArchiver {
                     )?;
                 } else if node.state == FileState::Selected {
                     *has_any_selected = true;
-                    // Call via the archiver trait object
                     let file_ts = archiver.get_file_timestamp(&node.path)?;
                     if let Some(newest) = current_newest {
                         if file_ts > *newest {
@@ -200,32 +198,47 @@ impl ArchiverOperations for CoreArchiver {
             Ok(())
         }
 
-        match find_newest_selected(
-            self, // Pass self as the ArchiverOperations impl
+        if let Err(e) = find_newest_selected(
+            self,
             file_nodes_tree,
             &mut newest_selected_file_timestamp,
             &mut has_selected_files,
         ) {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("Error checking source file timestamps: {}", e);
-                return ArchiveStatus::ErrorChecking(Some(e.kind()));
-            }
+            log::error!("Archiver: Error checking source file timestamps: {}", e);
+            return ArchiveStatus::ErrorChecking(Some(e.kind()));
         }
 
         if !has_selected_files {
+            log::debug!("Archiver: check_archive_status - No files selected.");
             return ArchiveStatus::NoFilesSelected;
         }
 
         match newest_selected_file_timestamp {
             Some(newest_src_ts) => {
                 if newest_src_ts > archive_timestamp {
+                    log::debug!(
+                        "Archiver: check_archive_status - Archive {:?} is OUTDATED.",
+                        current_archive_path
+                    );
                     ArchiveStatus::OutdatedRequiresUpdate
                 } else {
+                    log::debug!(
+                        "Archiver: check_archive_status - Archive {:?} is UP TO DATE.",
+                        current_archive_path
+                    );
                     ArchiveStatus::UpToDate
                 }
             }
-            None => ArchiveStatus::ErrorChecking(None),
+            None => {
+                /* This case should ideally not be reached if has_selected_files is true,
+                 * but implies an issue like a selected file not having a timestamp.
+                 * find_newest_selected would usually return Err in such a case. */
+                log::warn!(
+                    "Archiver: check_archive_status - Files selected, but newest_selected_file_timestamp is None for archive {:?}. Defaulting to ErrorChecking.",
+                    current_archive_path
+                );
+                ArchiveStatus::ErrorChecking(None)
+            }
         }
     }
 
@@ -276,6 +289,7 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_create_archive_from_selected_files() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let base_path = dir.path();
 
@@ -293,7 +307,7 @@ mod archiver_tests {
             drop(f2);
 
             let file3_path = base_path.join("file3.md");
-            File::create(&file3_path)?.sync_all()?; // Create an empty file for this test case
+            File::create(&file3_path)?.sync_all()?;
 
             let nodes = vec![
                 new_test_file_node(base_path, "file1.txt", false, FileState::Selected, vec![]),
@@ -310,17 +324,13 @@ mod archiver_tests {
                         vec![],
                     )],
                 ),
-                new_test_file_node(
-                    base_path,
-                    "file3.md",
-                    false,
-                    FileState::Deselected, // This file is deselected
-                    vec![],
-                ),
+                new_test_file_node(base_path, "file3.md", false, FileState::Deselected, vec![]),
             ];
 
+            // Act
             let archive = archiver.create_archive_content(&nodes, base_path)?;
 
+            // Assert
             let path1_display = "file1.txt";
             let path2_display_os_specific = PathBuf::from("subdir").join("file2.rs");
             let path2_display_str = path2_display_os_specific.to_string_lossy();
@@ -343,12 +353,15 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_save_archive_content() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_path = dir.path().join("my_archive.txt");
             let content = "This is the test archive content.";
 
+            // Act
             archiver.save_archive_content(&archive_path, content)?;
 
+            // Assert
             let read_content = fs::read_to_string(&archive_path)?;
             assert_eq!(read_content, content);
             Ok(())
@@ -358,24 +371,32 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_get_file_timestamp_exists() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let file_path = dir.path().join("test_ts.txt");
             File::create(&file_path)?.write_all(b"content")?;
-            thread::sleep(Duration::from_millis(10)); // Ensure time difference for timestamp
+            thread::sleep(Duration::from_millis(10));
 
+            // Act
             let ts = archiver.get_file_timestamp(&file_path)?;
-            assert!(ts <= SystemTime::now()); // Basic sanity check
+
+            // Assert
+            assert!(ts <= SystemTime::now());
             Ok(())
         })
     }
 
     #[test]
     fn test_get_file_timestamp_not_exists() {
-        // Renamed to match original, and adapted
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir().expect("Failed to create temp dir");
             let file_path = dir.path().join("non_existent_ts.txt");
+
+            // Act
             let result = archiver.get_file_timestamp(&file_path);
+
+            // Assert
             assert!(result.is_err());
             assert_eq!(result.err().unwrap().kind(), io::ErrorKind::NotFound);
         });
@@ -384,10 +405,11 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_check_archive_status_outdated() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_file_path = dir.path().join("archive.txt");
             let src_file_path1 = dir.path().join("src_file1.txt");
-            let src_file_path2 = dir.path().join("src_file2.txt"); // Newer source file
+            let src_file_path2 = dir.path().join("src_file2.txt");
 
             File::create(&archive_file_path)?.write_all(b"old archive content")?;
             thread::sleep(Duration::from_millis(20));
@@ -395,9 +417,6 @@ mod archiver_tests {
             File::create(&src_file_path1)?.write_all(b"source1")?;
             thread::sleep(Duration::from_millis(20));
             File::create(&src_file_path2)?.write_all(b"source2")?;
-
-            let mut profile = Profile::new("test".into(), dir.path().to_path_buf());
-            profile.archive_path = Some(archive_file_path);
 
             let file_nodes = vec![
                 new_test_file_node(
@@ -416,7 +435,10 @@ mod archiver_tests {
                 ),
             ];
 
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+            // Act
+            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+
+            // Assert
             assert_eq!(status, ArchiveStatus::OutdatedRequiresUpdate);
             Ok(())
         })
@@ -425,9 +447,13 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_check_archive_status_not_generated() {
         test_with_archiver(|archiver| {
-            let profile = Profile::new("test".into(), PathBuf::from("/root")); // No archive_path
+            // Arrange
             let file_nodes = vec![];
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+
+            // Act
+            let status = archiver.check_archive_status(None, &file_nodes);
+
+            // Assert
             assert_eq!(status, ArchiveStatus::NotYetGenerated);
         });
     }
@@ -435,12 +461,15 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_check_archive_status_archive_file_missing() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
-            let mut profile = Profile::new("test".into(), PathBuf::from("/root"));
-            profile.archive_path = Some(dir.path().join("missing_archive.txt")); // Path set, but file won't exist
-
+            let missing_archive_path = dir.path().join("missing_archive.txt");
             let file_nodes = vec![];
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+
+            // Act
+            let status = archiver.check_archive_status(Some(&missing_archive_path), &file_nodes);
+
+            // Assert
             assert_eq!(status, ArchiveStatus::ArchiveFileMissing);
             Ok(())
         })
@@ -449,30 +478,26 @@ mod archiver_tests {
     #[test]
     fn test_core_archiver_check_archive_status_no_files_selected() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_file_path = dir.path().join("archive.txt");
             File::create(&archive_file_path)?.write_all(b"archive content")?;
-
-            let mut profile = Profile::new("test".into(), dir.path().to_path_buf());
-            profile.archive_path = Some(archive_file_path);
 
             let file_nodes = vec![
                 new_test_file_node(
                     dir.path(),
                     "file1.txt",
                     false,
-                    FileState::Deselected, // Not selected
+                    FileState::Deselected,
                     vec![],
                 ),
-                new_test_file_node(
-                    dir.path(),
-                    "file2.txt",
-                    false,
-                    FileState::New, // Not selected
-                    vec![],
-                ),
+                new_test_file_node(dir.path(), "file2.txt", false, FileState::New, vec![]),
             ];
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+
+            // Act
+            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+
+            // Assert
             assert_eq!(status, ArchiveStatus::NoFilesSelected);
             Ok(())
         })
@@ -481,17 +506,14 @@ mod archiver_tests {
     #[test]
     fn test_check_archive_status_up_to_date() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_file_path = dir.path().join("archive.txt");
             let src_file_path = dir.path().join("src_file.txt");
 
             File::create(&src_file_path)?.write_all(b"source")?;
             thread::sleep(Duration::from_millis(20));
-
             File::create(&archive_file_path)?.write_all(b"archive content")?;
-
-            let mut profile = Profile::new("test".into(), dir.path().to_path_buf());
-            profile.archive_path = Some(archive_file_path);
 
             let file_nodes = vec![new_test_file_node(
                 dir.path(),
@@ -501,7 +523,10 @@ mod archiver_tests {
                 vec![],
             )];
 
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+            // Act
+            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+
+            // Assert
             assert_eq!(status, ArchiveStatus::UpToDate);
             Ok(())
         })
@@ -510,17 +535,14 @@ mod archiver_tests {
     #[test]
     fn test_check_archive_status_up_to_date_empty_archive_selected_older() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_file_path = dir.path().join("archive.txt");
             let src_file_path = dir.path().join("src_file.txt");
 
             File::create(&src_file_path)?.write_all(b"source")?;
             thread::sleep(Duration::from_millis(20));
-
-            File::create(&archive_file_path)?.write_all(b"")?; // Empty archive
-
-            let mut profile = Profile::new("test".into(), dir.path().to_path_buf());
-            profile.archive_path = Some(archive_file_path.clone());
+            File::create(&archive_file_path)?.write_all(b"")?;
 
             let file_nodes = vec![new_test_file_node(
                 dir.path(),
@@ -537,7 +559,10 @@ mod archiver_tests {
                 "Test setup: archive should be newer than source"
             );
 
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+            // Act
+            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+
+            // Assert
             assert_eq!(
                 status,
                 ArchiveStatus::UpToDate,
@@ -550,22 +575,23 @@ mod archiver_tests {
     #[test]
     fn test_check_archive_status_error_checking_src_missing() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let archive_file_path = dir.path().join("archive.txt");
             File::create(&archive_file_path)?.write_all(b"archive")?;
 
-            let mut profile = Profile::new("test".into(), dir.path().to_path_buf());
-            profile.archive_path = Some(archive_file_path);
-
             let file_nodes = vec![new_test_file_node(
                 dir.path(),
-                "missing_src.txt", // This file does not actually exist on disk
+                "missing_src.txt",
                 false,
                 FileState::Selected,
                 vec![],
             )];
 
-            let status = archiver.check_archive_status(&profile, &file_nodes);
+            // Act
+            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+
+            // Assert
             assert_eq!(
                 status,
                 ArchiveStatus::ErrorChecking(Some(io::ErrorKind::NotFound))
@@ -577,14 +603,18 @@ mod archiver_tests {
     #[test]
     fn test_create_archive_no_selected_files() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let base_path = dir.path();
             let nodes = vec![
                 new_test_file_node(base_path, "file1.txt", false, FileState::Deselected, vec![]),
                 new_test_file_node(base_path, "file2.txt", false, FileState::New, vec![]),
             ];
+
+            // Act
             let archive = archiver.create_archive_content(&nodes, base_path)?;
-            // Expect only the global header line if no files are selected.
+
+            // Assert
             let expected_content = format!("// Combined files from {}\n", base_path.display());
             assert_eq!(archive, expected_content);
             Ok(())
@@ -594,18 +624,21 @@ mod archiver_tests {
     #[test]
     fn test_create_archive_file_read_error() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let base_path = dir.path();
-
             let nodes = vec![new_test_file_node(
                 base_path,
-                "non_existent_file.txt", // This file won't exist
+                "non_existent_file.txt",
                 false,
                 FileState::Selected,
                 vec![],
             )];
 
+            // Act
             let result = archiver.create_archive_content(&nodes, base_path);
+
+            // Assert
             assert!(result.is_err());
             if let Err(e) = result {
                 assert_eq!(e.kind(), io::ErrorKind::NotFound);
@@ -617,6 +650,7 @@ mod archiver_tests {
     #[test]
     fn test_create_archive_ensure_newline_before_footer() -> io::Result<()> {
         test_with_archiver(|archiver| {
+            // Arrange
             let dir = tempdir()?;
             let base_path = dir.path();
 
@@ -633,16 +667,15 @@ mod archiver_tests {
                 vec![],
             )];
 
+            // Act
             let archive = archiver.create_archive_content(&nodes, base_path)?;
-            let root_display_str = base_path.display();
 
-            // The concept of a "footer" isn't really in the code anymore as "--- END FILE ---" is commented out.
-            // This test now effectively verifies that a newline is added after content if it's missing,
-            // and that the overall structure with the global and file headers is correct.
+            // Assert
+            let root_display_str = base_path.display();
             let expected_content = format!(
                 "// Combined files from {}\n\
                  // ===== File: no_newline.txt =====\n\
-                 Line without trailing newline\n", // archiver adds this newline
+                 Line without trailing newline\n",
                 root_display_str
             );
             assert_eq!(archive, expected_content);

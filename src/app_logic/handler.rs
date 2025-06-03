@@ -28,7 +28,7 @@ pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 // For now, `main_window_ui_state.rs` imports them using `super::handler::`.
 pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
-#[derive(Debug, PartialEq, Clone)] // Added Clone for use in MockStateManager test assertions
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PendingAction {
     SavingArchive, // TODO: This is considered obsolete but kept for now to avoid breaking unrelated tests
     SavingProfile,
@@ -41,10 +41,8 @@ pub(crate) enum PendingAction {
 macro_rules! status_message {
     ($self:expr, $severity:expr, $log_macro:ident, $($arg:tt)*) => {{
         let text = format!($($arg)*);
-        // Log using the standard `log` crate
         $log_macro!("AppLogic Status: {}", text);
 
-        // Update UI status bar
         if let Some(ui_state_ref) = &$self.ui_state {
             $self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
@@ -53,14 +51,10 @@ macro_rules! status_message {
                     text: text,
                     severity: $severity,
                 });
-        } else {
-            // Fallback if no window_id (e.g., log to console/logger, or simply do nothing if UI update is impossible)
-            // The message is already logged by $log_macro!, so no need for eprintln here for status.
         }
     }};
 }
 
-// Specific severity macros, now also call the corresponding `log` macro.
 macro_rules! app_info { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Information, info, $($arg)*) }; }
 macro_rules! app_error { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Error, error, $($arg)*) }; }
 macro_rules! app_warn { ($self:expr, $($arg:tt)*) => { status_message!($self, MessageSeverity::Warning, warn, $($arg)*) }; }
@@ -106,8 +100,8 @@ impl MyAppLogic {
     ) -> Self {
         log::debug!("MyAppLogic::new called.");
         MyAppLogic {
-            app_session_data: AppSessionData::new(), // Initialize AppSessionData
-            ui_state: None,                          // MainWindowUiState is None initially
+            app_session_data: AppSessionData::new(),
+            ui_state: None,
             config_manager,
             profile_manager,
             file_system_scanner,
@@ -118,11 +112,10 @@ impl MyAppLogic {
         }
     }
 
-    // This helper remains static for now. It's called by the above method.
     fn build_tree_item_descriptors_recursive_internal(
         nodes: &[FileNode],
-        path_to_tree_item_id: &mut PathToTreeItemIdMap, // Param
-        next_tree_item_id_counter: &mut u64,            // Param
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
     ) -> Vec<TreeItemDescriptor> {
         let mut descriptors = Vec::new();
         for node in nodes {
@@ -163,7 +156,7 @@ impl MyAppLogic {
             "Main window UI setup complete (ID: {:?}). Initializing MainWindowUiState.",
             window_id
         );
-        self.ui_state = Some(MainWindowUiState::new(window_id)); // Instantiate MainWindowUiState
+        self.ui_state = Some(MainWindowUiState::new(window_id));
 
         match self
             .config_manager
@@ -276,7 +269,7 @@ impl MyAppLogic {
             }
         };
 
-        let main_window_id = ui_state_mut.window_id; // Get window_id for commands
+        let main_window_id = ui_state_mut.window_id;
 
         if self.app_session_data.current_profile_name.is_none() {
             ui_state_mut.current_archive_status_for_ui = None;
@@ -293,24 +286,18 @@ impl MyAppLogic {
             return;
         }
 
-        // Create a temporary Profile for check_archive_status, as it still expects one.
-        // This is an interim step. Ideally, ArchiverOperations would be refactored.
-        let temp_profile_for_check = Profile {
-            name: self
-                .app_session_data
-                .current_profile_name
-                .clone()
-                .unwrap_or_default(),
-            root_folder: self.app_session_data.root_path_for_scan.clone(),
-            selected_paths: HashSet::new(), // Not used by check_archive_status directly
-            deselected_paths: HashSet::new(), // Not used by check_archive_status directly
-            archive_path: self.app_session_data.current_archive_path.clone(),
-            file_details: HashMap::new(), // Not used by check_archive_status
-        };
-
         let status = self.archiver.check_archive_status(
-            &temp_profile_for_check,
+            self.app_session_data.current_archive_path.as_deref(),
             &self.app_session_data.file_nodes_cache,
+        );
+        log::debug!(
+            "AppLogic: Checked archive status for profile '{}', archive path '{:?}', status: {:?}",
+            self.app_session_data
+                .current_profile_name
+                .as_deref()
+                .unwrap_or("N/A"),
+            self.app_session_data.current_archive_path.as_deref(),
+            status
         );
 
         ui_state_mut.current_archive_status_for_ui = Some(status.clone());
@@ -341,7 +328,6 @@ impl MyAppLogic {
         }
     }
 
-    // This static helper remains unchanged as it operates on passed-in data.
     pub(crate) fn find_filenode_mut<'a>(
         nodes: &'a mut [FileNode],
         path_to_find: &Path,
@@ -361,7 +347,6 @@ impl MyAppLogic {
         None
     }
 
-    // This static helper remains unchanged.
     pub(crate) fn find_filenode_ref<'a>(
         nodes: &'a [FileNode],
         path_to_find: &Path,
@@ -380,7 +365,6 @@ impl MyAppLogic {
         None
     }
 
-    // Relies on path_to_tree_item_id from ui_state.
     pub(crate) fn collect_visual_updates_recursive(
         &self,
         node: &FileNode,
@@ -678,14 +662,12 @@ impl MyAppLogic {
             .load_profile_from_path(&profile_file_path)
         {
             Ok(loaded_profile) => {
-                // loaded_profile is a transient Profile object
                 let profile_name_clone = loaded_profile.name.clone();
                 log::debug!(
                     "Successfully loaded profile '{}' via manager from path.",
                     profile_name_clone
                 );
 
-                // Save last profile name before activate consumes loaded_profile
                 if let Err(e) = self
                     .config_manager
                     .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile_name_clone)
@@ -707,7 +689,6 @@ impl MyAppLogic {
                     profile_file_path,
                     e
                 );
-                // Reset AppSessionData fields
                 self.app_session_data.current_profile_name = None;
                 self.app_session_data.current_archive_path = None;
                 self.app_session_data.cached_file_token_details.clear();
@@ -786,9 +767,8 @@ impl MyAppLogic {
 
                 self.app_session_data.current_archive_path = Some(path.clone());
 
-                // Create a Profile object from current session state to save
                 let profile_to_save = self.app_session_data.create_profile_from_session_state(
-                    self.app_session_data.current_profile_name.clone().unwrap(), // Safe due to check above
+                    self.app_session_data.current_profile_name.clone().unwrap(),
                     &*self.token_counter_manager,
                 );
 
@@ -814,8 +794,6 @@ impl MyAppLogic {
                             profile_to_save.name,
                             e
                         );
-                        // Revert archive_path change in session if save failed? Or leave it?
-                        // For now, session state reflects desired state, even if save failed.
                     }
                 }
             }
@@ -873,9 +851,8 @@ impl MyAppLogic {
                     return;
                 }
 
-                // Create the Profile DTO from current session state for saving
                 let profile_to_save = self.app_session_data.create_profile_from_session_state(
-                    profile_name_str.clone(), // Use the name from the save dialog path
+                    profile_name_str.clone(),
                     &*self.token_counter_manager,
                 );
 
@@ -888,7 +865,6 @@ impl MyAppLogic {
                             "Successfully saved profile as '{}' via manager.",
                             profile_to_save.name
                         );
-                        // Update AppSessionData to reflect the newly saved profile's state
                         // TODO: The profile_to_save was created from the app_session_data, why would we need this?
                         self.app_session_data.current_profile_name =
                             Some(profile_to_save.name.clone());
@@ -898,9 +874,6 @@ impl MyAppLogic {
                             profile_to_save.archive_path.clone();
                         self.app_session_data.cached_file_token_details =
                             profile_to_save.file_details.clone();
-                        // File nodes cache and token count would be updated by _activate_profile if needed,
-                        // but for a save-as, we typically consider the current state active.
-                        // For simplicity here, we update main identifiers. Full re-activation might be too much.
 
                         self._update_window_title_with_profile_and_archive(window_id);
 
@@ -973,8 +946,6 @@ impl MyAppLogic {
             }
         };
 
-        // For refresh, we need selected/deselected paths from the current session to re-apply after scan.
-        // These are derived from file_nodes_cache state, not directly from a Profile object's stored sets.
         let mut current_selected_paths = HashSet::new();
         let mut current_deselected_paths = HashSet::new();
         AppSessionData::gather_selected_deselected_paths_recursive(
@@ -999,13 +970,11 @@ impl MyAppLogic {
                     self.app_session_data.file_nodes_cache.len()
                 );
 
-                // Apply the *derived* selection state from before the scan
                 self.state_manager.apply_profile_to_tree(
                     &mut self.app_session_data.file_nodes_cache,
                     &current_selected_paths,
                     &current_deselected_paths,
                 );
-                // After applying selections, update the session's token cache
                 AppSessionData::update_cached_file_details_recursive(
                     &self.app_session_data.file_nodes_cache,
                     &mut self.app_session_data.cached_file_token_details,
@@ -1052,7 +1021,7 @@ impl MyAppLogic {
         );
 
         let scan_result = self.app_session_data.activate_and_populate_data(
-            profile_to_activate, // Consumes the profile object
+            profile_to_activate,
             &*self.file_system_scanner,
             &*self.state_manager,
             &*self.token_counter_manager,
@@ -1086,7 +1055,7 @@ impl MyAppLogic {
         }
 
         self.update_current_archive_status();
-        self._update_token_count_and_request_display(); // Update and display token count
+        self._update_token_count_and_request_display();
 
         if scan_was_successful {
             app_info!(self, "{}", final_status_message);
@@ -1099,7 +1068,6 @@ impl MyAppLogic {
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
 
-    // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {
         log::debug!("Initiating profile selection or creation flow.");
         assert!(
@@ -1210,7 +1178,6 @@ impl MyAppLogic {
             .load_profile(&profile_name_to_load, APP_NAME_FOR_PROFILES)
         {
             Ok(profile) => {
-                // profile is the loaded Profile object
                 log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                 let operation_status_message = format!("Profile '{}' loaded.", profile.name);
                 if let Err(e) = self
@@ -1242,7 +1209,6 @@ impl MyAppLogic {
         }
     }
 
-    // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     fn start_new_profile_creation_flow(&mut self, window_id: WindowId) {
         log::debug!("Starting new profile creation flow (Step 1: Get Name).");
         let ui_state_mut = self
@@ -1396,7 +1362,6 @@ impl MyAppLogic {
             profile_name,
             root_folder_path
         );
-        // Create a transient Profile object for saving
         let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
 
         match self
@@ -1419,10 +1384,9 @@ impl MyAppLogic {
                         e
                     );
                 }
-                // Pass the DTO to be activated
                 self._activate_profile_and_show_window(
                     window_id,
-                    new_profile_dto, // Pass the DTO
+                    new_profile_dto,
                     operation_status_message,
                 );
             }
@@ -1438,7 +1402,6 @@ impl MyAppLogic {
         }
     }
 
-    // Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
     fn _update_window_title_with_profile_and_archive(&mut self, window_id: WindowId) {
         assert!(
             self.ui_state
@@ -1605,7 +1568,6 @@ impl PlatformEventHandler for MyAppLogic {
         let active_profile_name_opt = self.app_session_data.current_profile_name.clone();
         if let Some(active_profile_name) = active_profile_name_opt {
             if !active_profile_name.is_empty() {
-                // Create a Profile DTO from current session state for saving
                 let profile_to_save = self.app_session_data.create_profile_from_session_state(
                     active_profile_name.clone(),
                     &*self.token_counter_manager,
@@ -1792,7 +1754,6 @@ impl MyAppLogic {
         self.app_session_data.current_profile_name = v;
     }
 
-    // New test accessors for AppSessionData's direct profile fields
     pub(crate) fn test_current_archive_path(&self) -> &Option<PathBuf> {
         &self.app_session_data.current_archive_path
     }
@@ -1815,14 +1776,13 @@ impl MyAppLogic {
             .and_then(|s| s.current_archive_status_for_ui.as_ref())
     }
 
-    // Combined setter for profile data (session) and archive status (UI)
     pub(crate) fn test_set_current_profile_session_data(
         &mut self,
         name: Option<String>,
-        root_folder: PathBuf,                              // root_path_for_scan
-        archive_path: Option<PathBuf>,                     // current_archive_path
-        token_details: HashMap<PathBuf, FileTokenDetails>, // cached_file_token_details
-        status_for_ui: Option<ArchiveStatus>,              // for ui_state
+        root_folder: PathBuf,
+        archive_path: Option<PathBuf>,
+        token_details: HashMap<PathBuf, FileTokenDetails>,
+        status_for_ui: Option<ArchiveStatus>,
     ) {
         self.app_session_data.current_profile_name = name;
         self.app_session_data.root_path_for_scan = root_folder;
