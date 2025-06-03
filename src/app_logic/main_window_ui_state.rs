@@ -119,7 +119,7 @@ impl MainWindowUiState {
         });
 
         // 3. Token Count (Dedicated Token Label, and General Label via app_info! in MyAppLogic)
-        let token_text = format!("Tokens: {}", app_session_data.cached_current_token_count);
+        let token_text = format!("Tokens: {}", app_session_data.get_cached_token_count());
         // Update dedicated token label
         commands.push(PlatformCommand::UpdateLabelText {
             window_id,
@@ -226,12 +226,13 @@ mod tests {
         crate::initialize_logging();
         let window_id = WindowId(1);
         let mut ui_state = MainWindowUiState::new(window_id);
+        // TODO: Should use a new(....) function.
         let mut app_session_data = ProfileRuntimeData {
             profile_name: Some("TestProfile".to_string()),
             root_path_for_scan: PathBuf::from("/root"),
             archive_path: Some(PathBuf::from("/root/archive.txt")),
             file_system_snapshot_nodes: vec![],
-            cached_current_token_count: 123,
+            cached_token_count: 123,
             cached_file_token_details: HashMap::new(), // Initialize new field
         };
 

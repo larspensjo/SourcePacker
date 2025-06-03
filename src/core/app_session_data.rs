@@ -34,7 +34,7 @@ pub struct ProfileRuntimeData {
     /* The root directory path from which file system scans are performed (derived from the active profile). */
     pub root_path_for_scan: PathBuf,
     /* The current estimated total token count for all selected files. */
-    pub cached_current_token_count: usize,
+    pub cached_token_count: usize,
     /* Stores cached token counts and checksums for files from the active profile.
      * This cache is updated based on current file checksums during profile activation. */
     pub cached_file_token_details: HashMap<PathBuf, FileTokenDetails>,
@@ -53,9 +53,13 @@ impl ProfileRuntimeData {
             archive_path: None,
             file_system_snapshot_nodes: Vec::new(),
             root_path_for_scan: PathBuf::from("."), // Default to current directory
-            cached_current_token_count: 0,
+            cached_token_count: 0,
             cached_file_token_details: HashMap::new(),
         }
+    }
+
+    pub fn get_cached_token_count(&self) -> usize {
+        self.cached_token_count
     }
 
     pub fn get_current_profile_name(&self) -> Option<&str> {
@@ -72,7 +76,7 @@ impl ProfileRuntimeData {
         self.archive_path = None;
         self.file_system_snapshot_nodes.clear();
         self.root_path_for_scan = PathBuf::from("."); // Reset to default current directory
-        self.cached_current_token_count = 0;
+        self.cached_token_count = 0;
         self.cached_file_token_details.clear();
     }
 
@@ -332,15 +336,15 @@ impl ProfileRuntimeData {
             token_counter,
         );
 
-        self.cached_current_token_count = total_tokens;
+        self.cached_token_count = total_tokens;
         log::debug!(
             "Token count updated: {}. Cache hits: {}, Fallbacks: {} ({} failed).",
-            self.cached_current_token_count,
+            self.cached_token_count,
             files_processed_from_cache,
             files_processed_fallback,
             files_failed_fallback
         );
-        self.cached_current_token_count
+        self.cached_token_count
     }
 
     /*
@@ -523,7 +527,7 @@ impl ProfileRuntimeData {
                 );
                 log::error!("AppSessionData: {}", error_message);
                 self.file_system_snapshot_nodes.clear();
-                self.cached_current_token_count = 0;
+                self.cached_token_count = 0;
                 // Also clear profile-specific data on scan error
                 self.profile_name = None;
                 self.archive_path = None;
@@ -744,7 +748,7 @@ mod tests {
         assert!(session_data.cached_file_token_details.is_empty());
         assert!(session_data.file_system_snapshot_nodes.is_empty());
         assert_eq!(session_data.root_path_for_scan, PathBuf::from("."));
-        assert_eq!(session_data.cached_current_token_count, 0);
+        assert_eq!(session_data.cached_token_count, 0);
     }
 
     #[test]
@@ -779,7 +783,7 @@ mod tests {
                     checksum: Some("cs2".to_string()),
                 },
             ],
-            cached_current_token_count: 0, // Not directly used by create_profile_from_session_state
+            cached_token_count: 0, // Not directly used by create_profile_from_session_state
             cached_file_token_details: HashMap::new(), // This will be ignored, new details are populated for save
         };
         let mut specific_token_counter = MockTokenCounter::new(0);
@@ -820,7 +824,7 @@ mod tests {
             root_path_for_scan: PathBuf::from("/root"),
             archive_path: None,
             file_system_snapshot_nodes: vec![],
-            cached_current_token_count: 0,
+            cached_token_count: 0,
             cached_file_token_details: HashMap::new(),
         };
         let mock_token_counter = MockTokenCounter::new(0);
@@ -886,7 +890,7 @@ mod tests {
                     checksum: Some(cs2.clone()),
                 },
             ],
-            cached_current_token_count: 0,
+            cached_token_count: 0,
         };
         let mock_token_counter = MockTokenCounter::new(0); // Default, should not be used
 
@@ -895,7 +899,7 @@ mod tests {
 
         // Assert
         assert_eq!(count, 30, "Expected 10 (f1) + 20 (f2) from cache");
-        assert_eq!(session_data.cached_current_token_count, 30);
+        assert_eq!(session_data.cached_token_count, 30);
         assert!(
             mock_token_counter.get_call_log().is_empty(),
             "Token counter should not be called on cache hits"
@@ -1071,7 +1075,7 @@ mod tests {
         // update_token_count then does a fallback for file5, reading its content and using mock_token_counter (50).
         // Total = 10 + 20 + 30 + 50 = 110.
         assert_eq!(
-            session_data.cached_current_token_count, 110,
+            session_data.cached_token_count, 110,
             "Total token count mismatch"
         );
 
@@ -1147,7 +1151,7 @@ mod tests {
         assert!(session_data.archive_path.is_none());
         assert!(session_data.cached_file_token_details.is_empty());
         assert!(session_data.file_system_snapshot_nodes.is_empty());
-        assert_eq!(session_data.cached_current_token_count, 0);
+        assert_eq!(session_data.cached_token_count, 0);
 
         assert_eq!(mock_scanner.get_scan_directory_calls().len(), 1);
         assert_eq!(

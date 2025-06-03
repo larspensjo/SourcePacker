@@ -1826,6 +1826,6 @@ impl MyAppLogic {
     }
 
     pub(crate) fn test_current_token_count(&self) -> usize {
-        self.app_session_data.cached_current_token_count
+        self.app_session_data.get_cached_token_count()
     }
 }
