@@ -25,7 +25,7 @@ pub trait ArchiverOperations: Send + Sync {
      * has `FileState::Selected`, it reads its content and prepends/appends headers.
      * The `root_path_for_display` is used to relativize paths in headers.
      */
-    fn create_archive_content(
+    fn create_content(
         &self,
         nodes: &[FileNode],
         root_path_for_display: &Path,
@@ -37,7 +37,7 @@ pub trait ArchiverOperations: Send + Sync {
      * against the newest timestamp among the selected source files within `file_nodes_tree`.
      * TODO: Does the path have to be an Option?
      */
-    fn check_archive_status(
+    fn check_status(
         &self,
         archive_path: Option<&Path>,
         file_nodes_tree: &[FileNode],
@@ -47,7 +47,7 @@ pub trait ArchiverOperations: Send + Sync {
      * Saves the provided archive `content` string to the specified `path`.
      * Implementations should handle overwriting the file if it exists.
      */
-    fn save_archive_content(&self, path: &Path, content: &str) -> io::Result<()>;
+    fn save(&self, path: &Path, content: &str) -> io::Result<()>;
 
     /*
      * Retrieves the last modification timestamp of the file at the given `path`.
@@ -67,6 +67,7 @@ impl CoreArchiver {
     /*
      * Creates a new instance of `CoreArchiver`.
      * This constructor doesn't require any parameters.
+     * TODO: We should move the path to this structure.
      */
     pub fn new() -> Self {
         CoreArchiver {}
@@ -80,7 +81,7 @@ impl Default for CoreArchiver {
 }
 
 impl ArchiverOperations for CoreArchiver {
-    fn create_archive_content(
+    fn create_content(
         &self,
         nodes: &[FileNode],
         root_path_for_display: &Path,
@@ -130,7 +131,7 @@ impl ArchiverOperations for CoreArchiver {
         fs::metadata(path)?.modified()
     }
 
-    fn check_archive_status(
+    fn check_status(
         &self,
         archive_file_path_opt: Option<&Path>,
         file_nodes_tree: &[FileNode],
@@ -242,7 +243,7 @@ impl ArchiverOperations for CoreArchiver {
         }
     }
 
-    fn save_archive_content(&self, path: &Path, content: &str) -> io::Result<()> {
+    fn save(&self, path: &Path, content: &str) -> io::Result<()> {
         fs::write(path, content)
     }
 }
@@ -328,7 +329,7 @@ mod archiver_tests {
             ];
 
             // Act
-            let archive = archiver.create_archive_content(&nodes, base_path)?;
+            let archive = archiver.create_content(&nodes, base_path)?;
 
             // Assert
             let path1_display = "file1.txt";
@@ -359,7 +360,7 @@ mod archiver_tests {
             let content = "This is the test archive content.";
 
             // Act
-            archiver.save_archive_content(&archive_path, content)?;
+            archiver.save(&archive_path, content)?;
 
             // Assert
             let read_content = fs::read_to_string(&archive_path)?;
@@ -436,7 +437,7 @@ mod archiver_tests {
             ];
 
             // Act
-            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+            let status = archiver.check_status(Some(&archive_file_path), &file_nodes);
 
             // Assert
             assert_eq!(status, ArchiveStatus::OutdatedRequiresUpdate);
@@ -451,7 +452,7 @@ mod archiver_tests {
             let file_nodes = vec![];
 
             // Act
-            let status = archiver.check_archive_status(None, &file_nodes);
+            let status = archiver.check_status(None, &file_nodes);
 
             // Assert
             assert_eq!(status, ArchiveStatus::NotYetGenerated);
@@ -467,7 +468,7 @@ mod archiver_tests {
             let file_nodes = vec![];
 
             // Act
-            let status = archiver.check_archive_status(Some(&missing_archive_path), &file_nodes);
+            let status = archiver.check_status(Some(&missing_archive_path), &file_nodes);
 
             // Assert
             assert_eq!(status, ArchiveStatus::ArchiveFileMissing);
@@ -495,7 +496,7 @@ mod archiver_tests {
             ];
 
             // Act
-            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+            let status = archiver.check_status(Some(&archive_file_path), &file_nodes);
 
             // Assert
             assert_eq!(status, ArchiveStatus::NoFilesSelected);
@@ -524,7 +525,7 @@ mod archiver_tests {
             )];
 
             // Act
-            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+            let status = archiver.check_status(Some(&archive_file_path), &file_nodes);
 
             // Assert
             assert_eq!(status, ArchiveStatus::UpToDate);
@@ -560,7 +561,7 @@ mod archiver_tests {
             );
 
             // Act
-            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+            let status = archiver.check_status(Some(&archive_file_path), &file_nodes);
 
             // Assert
             assert_eq!(
@@ -589,7 +590,7 @@ mod archiver_tests {
             )];
 
             // Act
-            let status = archiver.check_archive_status(Some(&archive_file_path), &file_nodes);
+            let status = archiver.check_status(Some(&archive_file_path), &file_nodes);
 
             // Assert
             assert_eq!(
@@ -612,7 +613,7 @@ mod archiver_tests {
             ];
 
             // Act
-            let archive = archiver.create_archive_content(&nodes, base_path)?;
+            let archive = archiver.create_content(&nodes, base_path)?;
 
             // Assert
             let expected_content = format!("// Combined files from {}\n", base_path.display());
@@ -636,7 +637,7 @@ mod archiver_tests {
             )];
 
             // Act
-            let result = archiver.create_archive_content(&nodes, base_path);
+            let result = archiver.create_content(&nodes, base_path);
 
             // Assert
             assert!(result.is_err());
@@ -668,7 +669,7 @@ mod archiver_tests {
             )];
 
             // Act
-            let archive = archiver.create_archive_content(&nodes, base_path)?;
+            let archive = archiver.create_content(&nodes, base_path)?;
 
             // Assert
             let root_display_str = base_path.display();

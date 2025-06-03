@@ -92,6 +92,7 @@ pub trait ConfigManagerOperations: Send + Sync {
  * This struct handles the actual file system interactions for loading and saving
  * application configuration, such as the last used profile name, using standard
  * local (non-roaming) project directory locations without an organization sub-folder.
+ * TOOD: We should move the profile name here.
  */
 pub struct CoreConfigManager {}
 

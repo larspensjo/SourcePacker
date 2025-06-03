@@ -331,7 +331,7 @@ fn clone_io_error(error: &io::Error) -> io::Error {
 }
 
 impl ArchiverOperations for MockArchiver {
-    fn create_archive_content(
+    fn create_content(
         &self,
         nodes: &[FileNode],
         root_path_for_display: &Path,
@@ -348,7 +348,7 @@ impl ArchiverOperations for MockArchiver {
             .map_err(|e| clone_io_error(e))
     }
 
-    fn check_archive_status(
+    fn check_status(
         &self,
         archive_path_opt: Option<&Path>,
         file_nodes_tree: &[FileNode],
@@ -360,7 +360,7 @@ impl ArchiverOperations for MockArchiver {
         *self.check_archive_status_result.lock().unwrap()
     }
 
-    fn save_archive_content(&self, path: &Path, content: &str) -> io::Result<()> {
+    fn save(&self, path: &Path, content: &str) -> io::Result<()> {
         self.save_archive_content_calls
             .lock()
             .unwrap()
@@ -419,7 +419,7 @@ impl MockStateManager {
 }
 
 impl StateManagerOperations for MockStateManager {
-    fn apply_profile_to_tree(
+    fn apply_selection_states_to_nodes(
         &self,
         tree: &mut Vec<FileNode>,
         selected_paths: &HashSet<PathBuf>,
@@ -441,7 +441,11 @@ impl StateManagerOperations for MockStateManager {
                 node.state = FileState::New;
             }
             if node.is_dir && !node.children.is_empty() {
-                self.apply_profile_to_tree(&mut node.children, selected_paths, deselected_paths);
+                self.apply_selection_states_to_nodes(
+                    &mut node.children,
+                    selected_paths,
+                    deselected_paths,
+                );
             }
         }
     }
@@ -760,7 +764,7 @@ fn test_menu_set_archive_path_cancelled() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    logic.test_app_session_data_mut().current_profile_name = Some("Test".to_string());
+    logic.test_app_session_data_mut().profile_name = Some("Test".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from(".");
 
     logic.test_set_pending_action(PendingAction::SettingArchivePath);
@@ -920,10 +924,10 @@ fn test_menu_action_generate_archive_triggers_logic() {
     let archive_path = PathBuf::from("/test/archive.txt");
     let root_folder = PathBuf::from("/test/root");
 
-    logic.test_app_session_data_mut().current_profile_name = Some(profile_name.to_string());
+    logic.test_app_session_data_mut().profile_name = Some(profile_name.to_string());
     logic.test_app_session_data_mut().root_path_for_scan = root_folder.clone();
-    logic.test_app_session_data_mut().current_archive_path = Some(archive_path.clone());
-    logic.test_app_session_data_mut().file_nodes_cache = vec![FileNode::new(
+    logic.test_app_session_data_mut().archive_path = Some(archive_path.clone());
+    logic.test_app_session_data_mut().file_system_snapshot_nodes = vec![FileNode::new(
         root_folder.join("file.txt"),
         "file.txt".into(),
         false,
@@ -1008,10 +1012,9 @@ fn test_menu_action_generate_archive_no_archive_path_shows_error() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    logic.test_app_session_data_mut().current_profile_name =
-        Some("NoArchivePathProfile".to_string());
+    logic.test_app_session_data_mut().profile_name = Some("NoArchivePathProfile".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from("/test/root");
-    logic.test_app_session_data_mut().current_archive_path = None;
+    logic.test_app_session_data_mut().archive_path = None;
 
     // Act
     logic.handle_event(AppEvent::MenuActionClicked {
@@ -1045,11 +1048,10 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
-    logic.test_app_session_data_mut().current_profile_name = Some("TestProfile".to_string());
+    logic.test_app_session_data_mut().profile_name = Some("TestProfile".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from("/root");
     // Set an archive path for the check_archive_status call to be meaningful
-    logic.test_app_session_data_mut().current_archive_path =
-        Some(PathBuf::from("/root/archive.txt"));
+    logic.test_app_session_data_mut().archive_path = Some(PathBuf::from("/root/archive.txt"));
 
     // Case 1: ArchiveStatus is an error
     let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));

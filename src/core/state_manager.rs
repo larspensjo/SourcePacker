@@ -21,9 +21,8 @@ pub trait StateManagerOperations: Send + Sync {
      * Sets `FileState::Selected` for paths in `selected_paths`,
      * `FileState::Deselected` for paths in `deselected_paths`,
      * and `FileState::New` for others. Modifies the `tree` in place.
-     * TODO: Should be renamed, as it is no longer a Profile that is used.
      */
-    fn apply_profile_to_tree(
+    fn apply_selection_states_to_nodes(
         &self,
         tree: &mut Vec<FileNode>,
         selected_paths: &HashSet<PathBuf>,
@@ -62,7 +61,7 @@ impl Default for CoreStateManager {
 }
 
 impl StateManagerOperations for CoreStateManager {
-    fn apply_profile_to_tree(
+    fn apply_selection_states_to_nodes(
         &self,
         tree: &mut Vec<FileNode>,
         selected_paths: &HashSet<PathBuf>,
@@ -78,7 +77,11 @@ impl StateManagerOperations for CoreStateManager {
             }
 
             if node.is_dir && !node.children.is_empty() {
-                self.apply_profile_to_tree(&mut node.children, selected_paths, deselected_paths);
+                self.apply_selection_states_to_nodes(
+                    &mut node.children,
+                    selected_paths,
+                    deselected_paths,
+                );
             }
         }
     }
@@ -177,7 +180,7 @@ mod tests {
         deselected_paths.insert(PathBuf::from("/root/dir1/file2.txt"));
 
         // Act
-        manager.apply_profile_to_tree(&mut tree, &selected_paths, &deselected_paths);
+        manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
         assert_eq!(tree[0].state, FileState::Selected); // file1.txt
@@ -200,7 +203,7 @@ mod tests {
         let deselected_paths = HashSet::new();
 
         // Act
-        manager.apply_profile_to_tree(&mut tree, &selected_paths, &deselected_paths);
+        manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
         assert_eq!(tree[0].state, FileState::New); // Should revert to New as it's not in selected_paths

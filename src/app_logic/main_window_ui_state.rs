@@ -7,8 +7,8 @@
  * dialog flows or pending UI actions.
  */
 use crate::app_logic::ui_constants;
-use crate::core::AppSessionData; // Import AppSessionData so it's in scope
 use crate::core::ArchiveStatus; // For current_archive_status_for_ui
+use crate::core::ProfileRuntimeData; // Import AppSessionData so it's in scope
 use crate::platform_layer::{MessageSeverity, PlatformCommand, TreeItemId, WindowId};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -66,7 +66,7 @@ impl MainWindowUiState {
      * Composes the main window title string based on the current application session data.
      * Includes the application name, current profile name (if any), and archive path status.
      */
-    pub fn compose_window_title(app_session_data: &AppSessionData) -> String {
+    pub fn compose_window_title(app_session_data: &ProfileRuntimeData) -> String {
         let mut title = "SourcePacker".to_string();
         if let Some(profile_name) = app_session_data.get_current_profile_name() {
             title = format!("{} - [{}]", title, profile_name);
@@ -95,7 +95,7 @@ impl MainWindowUiState {
      */
     pub fn build_initial_profile_display_commands(
         &self,
-        app_session_data: &AppSessionData, // Needs to read from AppSessionData
+        app_session_data: &ProfileRuntimeData, // Needs to read from AppSessionData
         initial_status_message: String,
         scan_was_successful: bool,
     ) -> Vec<PlatformCommand> {
@@ -182,7 +182,7 @@ impl MainWindowUiState {
 
         // 5. Save Button State (This button ID might be from an older design phase)
         // The Step 5.F plan does not remove this button, so the command is retained.
-        let save_button_enabled = app_session_data.current_archive_path.is_some();
+        let save_button_enabled = app_session_data.archive_path.is_some();
         commands.push(PlatformCommand::SetControlEnabled {
             window_id,
             control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
@@ -226,11 +226,11 @@ mod tests {
         crate::initialize_logging();
         let window_id = WindowId(1);
         let mut ui_state = MainWindowUiState::new(window_id);
-        let mut app_session_data = AppSessionData {
-            current_profile_name: Some("TestProfile".to_string()),
+        let mut app_session_data = ProfileRuntimeData {
+            profile_name: Some("TestProfile".to_string()),
             root_path_for_scan: PathBuf::from("/root"),
-            current_archive_path: Some(PathBuf::from("/root/archive.txt")),
-            file_nodes_cache: vec![],
+            archive_path: Some(PathBuf::from("/root/archive.txt")),
+            file_system_snapshot_nodes: vec![],
             cached_current_token_count: 123,
             cached_file_token_details: HashMap::new(), // Initialize new field
         };

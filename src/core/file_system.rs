@@ -80,6 +80,7 @@ pub trait FileSystemScannerOperations: Send + Sync {
  * The core implementation of `FileSystemScannerOperations`.
  * This struct handles the actual file system traversal and `FileNode` tree construction
  * using the `ignore` crate, which respects `.gitignore` and other ignore files.
+ * TODO: We should move the root path to this structure.
  */
 pub struct CoreFileSystemScanner {}
 
