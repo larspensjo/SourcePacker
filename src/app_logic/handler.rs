@@ -271,7 +271,7 @@ impl MyAppLogic {
 
         let main_window_id = ui_state_mut.window_id;
 
-        if self.app_session_data.current_profile_name.is_none() {
+        if self.app_session_data.get_current_profile_name().is_none() {
             ui_state_mut.current_archive_status_for_ui = None;
             app_info!(self, "No profile loaded");
 
@@ -291,11 +291,8 @@ impl MyAppLogic {
             &self.app_session_data.file_nodes_cache,
         );
         log::debug!(
-            "AppLogic: Checked archive status for profile '{}', archive path '{:?}', status: {:?}",
-            self.app_session_data
-                .current_profile_name
-                .as_deref()
-                .unwrap_or("N/A"),
+            "AppLogic: Checked archive status for profile '{:?}', archive path '{:?}', status: {:?}",
+            self.app_session_data.get_current_profile_name(),
             self.app_session_data.current_archive_path.as_deref(),
             status
         );
@@ -564,7 +561,7 @@ impl MyAppLogic {
         }
         log::debug!("'Generate Archive' (via menu or old button) triggered.");
 
-        if self.app_session_data.current_profile_name.is_none() {
+        if self.app_session_data.get_current_profile_name().is_none() {
             app_error!(self, "No profile loaded. Cannot save archive.");
             return;
         }
@@ -760,7 +757,7 @@ impl MyAppLogic {
                 };
 
                 log::debug!("Archive path selected: {:?}", path);
-                if self.app_session_data.current_profile_name.is_none() {
+                if self.app_session_data.get_current_profile_name().is_none() {
                     app_error!(self, "No profile active to set archive path for.");
                     return;
                 }
@@ -768,7 +765,10 @@ impl MyAppLogic {
                 self.app_session_data.current_archive_path = Some(path.clone());
 
                 let profile_to_save = self.app_session_data.create_profile_from_session_state(
-                    self.app_session_data.current_profile_name.clone().unwrap(),
+                    self.app_session_data
+                        .get_current_profile_name()
+                        .unwrap()
+                        .to_string(),
                     &*self.token_counter_manager,
                 );
 
@@ -1444,7 +1444,7 @@ impl MyAppLogic {
         };
 
         log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
-        if self.app_session_data.current_profile_name.is_none() {
+        if self.app_session_data.get_current_profile_name().is_none() {
             app_warn!(self, "Cannot set archive path: No profile is active.");
             return;
         }

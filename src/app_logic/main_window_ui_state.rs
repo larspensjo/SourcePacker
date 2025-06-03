@@ -68,7 +68,7 @@ impl MainWindowUiState {
      */
     pub fn compose_window_title(app_session_data: &AppSessionData) -> String {
         let mut title = "SourcePacker".to_string();
-        if let Some(profile_name) = &app_session_data.current_profile_name {
+        if let Some(profile_name) = app_session_data.get_current_profile_name() {
             title = format!("{} - [{}]", title, profile_name);
             if let Some(archive_path) = &app_session_data.current_archive_path {
                 title = format!("{} - [{}]", title, archive_path.display());
@@ -132,7 +132,7 @@ impl MainWindowUiState {
         // Relies on self.current_archive_status_for_ui being up-to-date.
         // MyAppLogic should call its update_current_archive_status (which updates this field)
         // before calling this command builder.
-        if app_session_data.current_profile_name.is_some() {
+        if app_session_data.get_current_profile_name().is_some() {
             if let Some(status) = &self.current_archive_status_for_ui {
                 // Use plain string for dedicated label, MyAppLogic uses Debug for general error.
                 let plain_status_string =

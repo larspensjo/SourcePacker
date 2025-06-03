@@ -127,6 +127,10 @@ impl AppSessionData {
         }
     }
 
+    pub fn get_current_profile_name(&self) -> Option<&str> {
+        self.current_profile_name.as_deref()
+    }
+
     /*
      * Recursively populates the `file_details_map` with checksums and token counts
      * for files that are marked as `Selected` in the `nodes` tree.
