@@ -70,7 +70,7 @@ impl MainWindowUiState {
         let mut title = "SourcePacker".to_string();
         if let Some(profile_name) = app_session_data.get_current_profile_name() {
             title = format!("{} - [{}]", title, profile_name);
-            if let Some(archive_path) = &app_session_data.current_archive_path {
+            if let Some(archive_path) = app_session_data.get_current_archive_path() {
                 title = format!("{} - [{}]", title, archive_path.display());
             } else {
                 title = format!("{} - [No Archive Set]", title);

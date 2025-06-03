@@ -982,7 +982,7 @@ fn test_menu_action_generate_archive_no_profile_shows_error() {
     let (mut logic, _, _, _, _, _, _) = setup_logic_with_mocks();
     let main_window_id = WindowId(1);
     logic.test_set_main_window_id_and_init_ui_state(main_window_id);
-    logic.test_app_session_data_mut().current_profile_name = None;
+    logic.test_app_session_data_mut().clear();
 
     // Act
     logic.handle_event(AppEvent::MenuActionClicked {
@@ -1109,8 +1109,7 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
     );
 
     // Case 3: No profile loaded
-    logic.test_app_session_data_mut().current_profile_name = None;
-    logic.test_app_session_data_mut().current_archive_path = None; // Also clear archive path
+    logic.test_app_session_data_mut().clear();
     let no_profile_msg_archive_label = "Archive: No profile loaded";
     let no_profile_msg_general = "No profile loaded";
 

@@ -686,11 +686,7 @@ impl MyAppLogic {
                     profile_file_path,
                     e
                 );
-                self.app_session_data.current_profile_name = None;
-                self.app_session_data.current_archive_path = None;
-                self.app_session_data.cached_file_token_details.clear();
-                self.app_session_data.file_nodes_cache.clear();
-                self.app_session_data.cached_current_token_count = 0;
+                self.app_session_data.clear();
 
                 if let Some(ui_state_mut) = self.ui_state.as_mut() {
                     ui_state_mut.current_archive_status_for_ui = None;

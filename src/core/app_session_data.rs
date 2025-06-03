@@ -59,6 +59,24 @@ impl AppSessionData {
         }
     }
 
+    pub fn get_current_profile_name(&self) -> Option<&str> {
+        self.current_profile_name.as_deref()
+    }
+
+    pub fn get_current_archive_path(&self) -> Option<&PathBuf> {
+        self.current_archive_path.as_ref()
+    }
+
+    pub fn clear(&mut self) {
+        log::debug!("Clearing AppSessionData state.");
+        self.current_profile_name = None;
+        self.current_archive_path = None;
+        self.file_nodes_cache.clear();
+        self.root_path_for_scan = PathBuf::from("."); // Reset to default current directory
+        self.cached_current_token_count = 0;
+        self.cached_file_token_details.clear();
+    }
+
     // This helper remains static for now.
     // TODO: Shouldn't be made public, we should export a method on AppSessionData instead.
     pub(crate) fn gather_selected_deselected_paths_recursive(
@@ -125,10 +143,6 @@ impl AppSessionData {
             archive_path: self.current_archive_path.clone(),
             file_details: file_details_for_save, // Use the freshly populated details for saving
         }
-    }
-
-    pub fn get_current_profile_name(&self) -> Option<&str> {
-        self.current_profile_name.as_deref()
     }
 
     /*
