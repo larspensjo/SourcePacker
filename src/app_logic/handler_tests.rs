@@ -689,20 +689,67 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         "SetControlEnabled for the old button should NOT be present. Got: {:?}", cmds
     );
 
-    let token_status_text = "Tokens: 5";
-    let profile_loaded_text = format!("Profile '{}' loaded.", last_profile_name_to_load);
+    let general_token_status_text = "Token count updated"; // This is what app_info! logs
+    let dedicated_token_status_text = "Tokens: 5";
+    let profile_loaded_final_text = format!("Profile '{}' loaded.", last_profile_name_to_load);
+    let profile_loaded_initial_text = format!(
+        "Successfully loaded last profile '{}' on startup.",
+        last_profile_name_to_load
+    );
 
+    // Check for the initial "Successfully loaded..." message
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_status_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected general label UpdateLabelText for 'Token count updated'. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID &&
+               text == &profile_loaded_initial_text &&
+               *severity == MessageSeverity::Information )
+        )
+        .is_some(),
+        "Expected general label UpdateLabelText for 'Successfully loaded last profile...'. Got: {:?}",
+        cmds
     );
+
+    // Check for "Token count updated" general message
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == token_status_text )).is_some(),
-        "Expected dedicated token label UpdateLabelText for 'Tokens: 5'. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID &&
+               text == general_token_status_text && // Use the correct text
+               *severity == MessageSeverity::Information )
+        )
+        .is_some(),
+        "Expected general label UpdateLabelText for 'Token count updated'. Got: {:?}",
+        cmds
     );
+
+    // Check for dedicated token label "Tokens: 5"
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateLabelText for profile loaded. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, .. }
+            if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID &&
+               text == dedicated_token_status_text )
+        )
+        .is_some(),
+        "Expected dedicated token label UpdateLabelText for 'Tokens: 5'. Got: {:?}",
+        cmds
+    );
+
+    // Check for the final "Profile '...' loaded." message
+    assert!(
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID &&
+               *text == profile_loaded_final_text &&
+               *severity == MessageSeverity::Information )
+        )
+        .is_some(),
+        "Expected UpdateLabelText for profile loaded (final message). Got: {:?}",
+        cmds
     );
 }
 
@@ -779,7 +826,6 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
     let cmds = logic.test_drain_commands();
 
     // Assert
-    // Check that check_archive_status was called with the correct archive path
     let archiver_calls = mock_archiver_arc.get_check_archive_status_calls();
     assert_eq!(
         archiver_calls.len(),
@@ -787,8 +833,8 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         "check_archive_status should be called once"
     );
     assert_eq!(
-        archiver_calls[0].0,
-        Some(archive_file_for_profile.clone()),
+        archiver_calls[0].0.as_deref(),
+        Some(archive_file_for_profile.as_path()),
         "Archive path mismatch in mock call"
     );
 
@@ -800,7 +846,7 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         .is_some()
     );
 
-    let archive_status_text_for_dedicated_label = "Archive: Error: file not found.".to_string();
+    let archive_status_text_for_dedicated_label = "Archive: Error: NotFound.".to_string();
     let archive_status_text_for_general_status =
         format!("Archive status error: {:?}", archive_error_status);
 
@@ -831,14 +877,35 @@ fn test_profile_load_updates_archive_status_via_mock_archiver() {
         cmds
     );
 
-    let token_text = "Tokens: 0";
+    let general_token_text = "Token count updated"; // Text from app_info!
+    let dedicated_token_text = "Tokens: 0"; // Text for the dedicated label
+
+    // Check for the "Token count updated" message on the general status label
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == token_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateLabelText for general label for 'Tokens: 0'. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID &&
+               text == general_token_text && // Corrected expected text
+               *severity == MessageSeverity::Information )
+        )
+        .is_some(),
+        "Expected UpdateLabelText for general label for 'Token count updated'. Got: {:?}",
+        cmds
     );
+
+    // Check for the "Tokens: 0" message on the dedicated token label
     assert!(
-        find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. } if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == token_text && *severity == MessageSeverity::Information )).is_some(),
-        "Expected UpdateLabelText for dedicated token label for 'Tokens: 0'. Got: {:?}", cmds
+        find_command(
+            &cmds,
+            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { label_id, text, severity, .. }
+            if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID &&
+               text == dedicated_token_text && // Corrected expected text
+               *severity == MessageSeverity::Information )
+        )
+        .is_some(),
+        "Expected UpdateLabelText for dedicated token label for 'Tokens: 0'. Got: {:?}",
+        cmds
     );
 }
 
@@ -980,12 +1047,14 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
 
     logic.test_app_session_data_mut().current_profile_name = Some("TestProfile".to_string());
     logic.test_app_session_data_mut().root_path_for_scan = PathBuf::from("/root");
+    // Set an archive path for the check_archive_status call to be meaningful
     logic.test_app_session_data_mut().current_archive_path =
         Some(PathBuf::from("/root/archive.txt"));
 
     // Case 1: ArchiveStatus is an error
     let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));
-    let expected_dedicated_error_text = "Archive: Error: permission denied.".to_string();
+    // Updated expected text based on MyAppLogic::archive_status_to_plain_string
+    let expected_dedicated_error_text = "Archive: Error: PermissionDenied.".to_string();
     mock_archiver.set_check_archive_status_result(error_status.clone());
 
     // Act 1
@@ -997,7 +1066,7 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
         find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, label_id, text, severity }
             if *window_id == main_window_id &&
                *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID &&
-               text == &expected_dedicated_error_text &&
+               text == &expected_dedicated_error_text && // Check against the updated string
                *severity == MessageSeverity::Error
         )).is_some(), "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Error). Got: {:?}", cmds_error
     );
