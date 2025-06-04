@@ -9,7 +9,7 @@ mod ui_description_layer;
 use app_logic::handler::MyAppLogic;
 use core::{
     CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
-    CoreStateManager, CoreTikTokenCounter,
+    CoreStateManager, CoreTikTokenCounter, ProfileRuntimeData, ProfileRuntimeDataOperations,
 };
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
 use std::sync::{Arc, Mutex};
@@ -23,15 +23,16 @@ use time::macros::format_description;
  * This is the main entry point for the SourcePacker application.
  * It orchestrates the initialization of all major components:
  *  1. Logging facilities.
- *  2. Core services (config, profiles, file scanning, archiving, state management).
+ *  2. Core services (config, profiles, file scanning, archiving, state management, session data).
  *  3. The platform layer interface (`PlatformInterface`).
- *  4. The application logic layer (`MyAppLogic`).
+ *  4. The application logic layer (`MyAppLogic`), now receiving session data via a trait object.
  *  5. The UI description layer (used to generate initial UI commands).
  *
  * The sequence of operations is:
  *  - Initialize logging.
  *  - Create the `PlatformInterface`.
- *  - Instantiate `MyAppLogic` with its core dependencies.
+ *  - Instantiate core services, including `ProfileRuntimeData` wrapped in an Arc<Mutex>.
+ *  - Instantiate `MyAppLogic` with its core dependencies, including the session data operations trait.
  *  - Request the platform layer to create the main application window.
  *  - Obtain UI structure commands from the `ui_description_layer`.
  *  - Execute these structural commands via the `PlatformInterface`.
@@ -54,6 +55,7 @@ fn main() -> PlatformResult<()> {
     };
     log::debug!("Initialize Core Services and Application Logic.");
 
+    // Instantiate core services
     let core_config_manager = Arc::new(CoreConfigManagerForConfig::new());
     let core_profile_manager = Arc::new(CoreProfileManager::new());
     let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new());
@@ -61,7 +63,14 @@ fn main() -> PlatformResult<()> {
     let core_token_counter = Arc::new(CoreTikTokenCounter::new());
     let core_state_manager = Arc::new(CoreStateManager::new());
 
-    let mut my_app_logic = MyAppLogic::new(
+    // Instantiate ProfileRuntimeData and wrap it for dependency injection
+    let app_session_data = ProfileRuntimeData::new();
+    let app_session_data_ops: Arc<Mutex<dyn ProfileRuntimeDataOperations>> =
+        Arc::new(Mutex::new(app_session_data));
+
+    // Instantiate MyAppLogic with the ProfileRuntimeDataOperations trait object
+    let my_app_logic = MyAppLogic::new(
+        app_session_data_ops, // Pass the Arc<Mutex<dyn Trait>>
         core_config_manager,
         core_profile_manager,
         core_file_system_scanner,
@@ -171,18 +180,14 @@ pub fn initialize_logging() {
             .set_location_level(LevelFilter::Trace)
             .build();
 
-        // TermLogger is good for console output
-        // Use `CombinedLogger` if you still want some tests to log to a file OR if you want multiple terminal loggers
-        // For simple stdout, TermLogger is often enough.
         if simplelog::TermLogger::init(
-            simplelog::LevelFilter::Trace, // Or a higher level like Info if Debug is too noisy
+            simplelog::LevelFilter::Trace,
             config,
-            simplelog::TerminalMode::Mixed, // Or ::Stdout
+            simplelog::TerminalMode::Mixed,
             simplelog::ColorChoice::Auto,
         )
         .is_err()
         {
-            // Fallback if TermLogger fails (e.g., no terminal)
             let _ = simplelog::SimpleLogger::init(
                 simplelog::LevelFilter::Warn,
                 simplelog::Config::default(),

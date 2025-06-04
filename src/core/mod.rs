@@ -2,10 +2,9 @@
  * This module consolidates the core, platform-agnostic logic of the application.
  * It re-exports key data structures and core functionalities (including abstractions
  * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
- * `ArchiverOperations`, and `StateManagerOperations`) for file system operations,
- * profile management, configuration, archiving, and state management. It also
- * includes utilities for token estimation and the newly added `AppSessionData`
- * for managing session state.
+ * `ArchiverOperations`, `StateManagerOperations`, and the new `ProfileRuntimeDataOperations`)
+ * for file system operations, profile management, configuration, archiving, state management,
+ * and session data handling. It also includes utilities for token estimation.
  */
 pub mod app_session_data;
 pub mod archiver;
@@ -42,4 +41,5 @@ pub use tokenizer_utils::{
     CoreTikTokenCounter, SimpleWhitespaceTokenCounter, TokenCounterOperations,
 };
 
-pub use app_session_data::ProfileRuntimeData;
+// Re-export AppSessionData (now ProfileRuntimeData) related items
+pub use app_session_data::{ProfileRuntimeData, ProfileRuntimeDataOperations};

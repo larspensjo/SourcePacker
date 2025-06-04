@@ -26,7 +26,7 @@ impl Default for FileState {
  * It's not directly serialized into profiles; instead, profiles store sets of selected/deselected paths.
  * This approach makes profiles more resilient to file system changes and simplifies serialization.
  */
-#[derive(Debug, Clone)] // Not serializing FileNode directly; Profile stores paths.
+#[derive(Debug, Clone, PartialEq)] // Not serializing FileNode directly; Profile stores paths.
 pub struct FileNode {
     pub path: PathBuf,
     pub name: String,

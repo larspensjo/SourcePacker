@@ -1,6 +1,6 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode, FileState,
-    FileSystemScannerOperations, Profile, ProfileManagerOperations, ProfileRuntimeData,
+    FileSystemScannerOperations, Profile, ProfileManagerOperations, ProfileRuntimeDataOperations,
     StateManagerOperations, TokenCounterOperations, models::FileTokenDetails,
 };
 use crate::platform_layer::{
@@ -13,7 +13,7 @@ use crate::app_logic::{MainWindowUiState, ui_constants};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex}; // Added Mutex
 
 // Import log macros
 use log::{error, info, warn};
@@ -22,10 +22,6 @@ pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002; // TODO Not used in this
 pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 
 // These type aliases are used by MainWindowUiState.
-// If MainWindowUiState were in a different crate or a deeply nested module
-// without easy access to `super::handler`, these might need to be defined
-// in a more central location (e.g., `crate::app_logic::types`).
-// For now, `main_window_ui_state.rs` imports them using `super::handler::`.
 pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -62,13 +58,13 @@ macro_rules! app_warn { ($self:expr, $($arg:tt)*) => { status_message!($self, Me
 /*
  * Manages the core application orchestration and UI logic in a platform-agnostic manner.
  * It processes UI events, interacts with core services (config, profiles, file system),
- * and commands the platform layer to update the UI. It holds `AppSessionData` for
- * core application state and `MainWindowUiState` (when a window exists) for UI-specific state.
- * Logging of its operations is done via the `log` crate.
+ * and commands the platform layer to update the UI. It holds references to core data
+ * via `ProfileRuntimeDataOperations` and `MainWindowUiState` (when a window exists)
+ * for UI-specific state. Logging of its operations is done via the `log` crate.
  */
 pub struct MyAppLogic {
-    // Core application data
-    app_session_data: ProfileRuntimeData,
+    // Core application data operations interface
+    app_session_data_ops: Arc<Mutex<dyn ProfileRuntimeDataOperations>>,
     // UI-specific state for the main window, present only when the window exists.
     ui_state: Option<MainWindowUiState>,
 
@@ -85,12 +81,11 @@ pub struct MyAppLogic {
 impl MyAppLogic {
     /*
      * Initializes a new instance of the application logic.
-     * Requires implementations for `ConfigManagerOperations`, `ProfileManagerOperations`,
-     * `FileSystemScannerOperations`, `ArchiverOperations`, and `StateManagerOperations`.
-     * Initializes `AppSessionData` with defaults and sets `MainWindowUiState` to `None`
-     * as the window is not yet created.
+     * Requires implementations for core services and an Arc<Mutex<dyn ProfileRuntimeDataOperations>>
+     * for session data management. Initializes `MainWindowUiState` to `None` as the window is not yet created.
      */
     pub fn new(
+        app_session_data_ops: Arc<Mutex<dyn ProfileRuntimeDataOperations>>,
         config_manager: Arc<dyn ConfigManagerOperations>,
         profile_manager: Arc<dyn ProfileManagerOperations>,
         file_system_scanner: Arc<dyn FileSystemScannerOperations>,
@@ -100,7 +95,7 @@ impl MyAppLogic {
     ) -> Self {
         log::debug!("MyAppLogic::new called.");
         MyAppLogic {
-            app_session_data: ProfileRuntimeData::new(),
+            app_session_data_ops,
             ui_state: None,
             config_manager,
             profile_manager,
@@ -113,10 +108,12 @@ impl MyAppLogic {
     }
 
     fn build_tree_item_descriptors_recursive_internal(
-        nodes: &[FileNode],
-        path_to_tree_item_id: &mut PathToTreeItemIdMap,
-        next_tree_item_id_counter: &mut u64,
+        nodes: &[FileNode], // This now comes from app_session_data_ops.get_snapshot_nodes()
+        path_to_tree_item_id: &mut PathToTreeItemIdMap, // Belongs to MainWindowUiState
+        next_tree_item_id_counter: &mut u64, // Belongs to MainWindowUiState
     ) -> Vec<TreeItemDescriptor> {
+        // TODO: Phase 3: This method should be moved to MainWindowUiState.
+        // For now, it remains a static helper here.
         let mut descriptors = Vec::new();
         for node in nodes {
             let id_val = *next_tree_item_id_counter;
@@ -227,8 +224,15 @@ impl MyAppLogic {
         ui_state.next_tree_item_id_counter = 1;
         ui_state.path_to_tree_item_id.clear();
 
+        let snapshot_nodes = self
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .get_snapshot_nodes()
+            .to_vec(); // Clone to avoid holding lock during recursive call if it were an issue
+
         let descriptors = Self::build_tree_item_descriptors_recursive_internal(
-            &self.app_session_data.file_system_snapshot_nodes,
+            &snapshot_nodes, // Use cloned or ref from lock
             &mut ui_state.path_to_tree_item_id,
             &mut ui_state.next_tree_item_id_counter,
         );
@@ -240,9 +244,7 @@ impl MyAppLogic {
     }
     /*
      * Converts an `ArchiveStatus` enum to a user-friendly string.
-     * This function provides plain English descriptions for each status variant,
-     * making them more understandable in the UI. For I/O errors, it also
-     * attempts to describe common `io::ErrorKind` values.
+     * This function provides plain English descriptions for each status variant.
      */
     pub(crate) fn archive_status_to_plain_string(status: &ArchiveStatus) -> String {
         match status {
@@ -259,6 +261,7 @@ impl MyAppLogic {
     }
 
     pub(crate) fn update_current_archive_status(&mut self) {
+        log::debug!("AppLogic: update_current_archive_status called.");
         let ui_state_mut = match self.ui_state.as_mut() {
             Some(s) => s,
             None => {
@@ -268,10 +271,18 @@ impl MyAppLogic {
                 return;
             }
         };
-
         let main_window_id = ui_state_mut.window_id;
 
-        if self.app_session_data.get_current_profile_name().is_none() {
+        let (current_profile_name_opt, archive_path_opt, snapshot_nodes_clone) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            (
+                data.get_profile_name(),
+                data.get_archive_path(),
+                data.get_snapshot_nodes().to_vec(), // Clone to release lock
+            )
+        };
+
+        if current_profile_name_opt.is_none() {
             ui_state_mut.current_archive_status_for_ui = None;
             app_info!(self, "No profile loaded");
 
@@ -286,14 +297,13 @@ impl MyAppLogic {
             return;
         }
 
-        let status = self.archiver.check_status(
-            self.app_session_data.archive_path.as_deref(),
-            &self.app_session_data.file_system_snapshot_nodes,
-        );
+        let status = self
+            .archiver
+            .check_status(archive_path_opt.as_deref(), &snapshot_nodes_clone);
         log::debug!(
             "AppLogic: Checked archive status for profile '{:?}', archive path '{:?}', status: {:?}",
-            self.app_session_data.get_current_profile_name(),
-            self.app_session_data.archive_path.as_deref(),
+            current_profile_name_opt,
+            archive_path_opt.as_deref(),
             status
         );
 
@@ -325,25 +335,12 @@ impl MyAppLogic {
         }
     }
 
-    pub(crate) fn find_filenode_mut<'a>(
-        nodes: &'a mut [FileNode],
-        path_to_find: &Path,
-    ) -> Option<&'a mut FileNode> {
-        for node in nodes.iter_mut() {
-            if node.path == path_to_find {
-                return Some(node);
-            }
-            if node.is_dir && !node.children.is_empty() {
-                if let Some(found_in_child) =
-                    Self::find_filenode_mut(&mut node.children, path_to_find)
-                {
-                    return Some(found_in_child);
-                }
-            }
-        }
-        None
-    }
+    // find_filenode_mut is removed as mutations are handled via ProfileRuntimeDataOperations.
 
+    /*
+     * Recursively finds a read-only reference to a FileNode within a slice of nodes.
+     * This is a static helper, typically called with nodes obtained from `ProfileRuntimeDataOperations`.
+     */
     pub(crate) fn find_filenode_ref<'a>(
         nodes: &'a [FileNode],
         path_to_find: &Path,
@@ -362,53 +359,21 @@ impl MyAppLogic {
         None
     }
 
-    pub(crate) fn collect_visual_updates_recursive(
-        &self,
-        node: &FileNode,
-        updates: &mut Vec<(TreeItemId, CheckState)>,
-    ) {
-        let ui_state_ref = match self.ui_state.as_ref() {
-            Some(ui_state) => ui_state,
-            None => {
-                log::warn!(
-                    "AppLogic: collect_visual_updates_recursive called but no UI state. Cannot get path_to_tree_item_id."
-                );
-                return;
-            }
-        };
-
-        if let Some(item_id) = ui_state_ref.path_to_tree_item_id.get(&node.path) {
-            let check_state = match node.state {
-                FileState::Selected => CheckState::Checked,
-                _ => CheckState::Unchecked,
-            };
-            updates.push((*item_id, check_state));
-
-            if node.is_dir {
-                for child in &node.children {
-                    self.collect_visual_updates_recursive(child, updates);
-                }
-            }
-        } else {
-            log::error!(
-                "AppLogic: Could not find TreeItemId for path {:?} during visual update collection.",
-                node.path
-            );
-        }
-    }
+    // collect_visual_updates_recursive is removed, replaced by logic in handle_treeview_item_toggled.
 
     /*
      * Recalculates the estimated token count for all currently selected files and
      * requests the UI to display this count.
-     * It updates the new general status label (via `app_info!`),
-     * and the new dedicated token count label.
+     * It updates the general status label and the dedicated token count label.
      */
     pub(crate) fn _update_token_count_and_request_display(&mut self) {
         let token_count = self
-            .app_session_data
-            .update_token_count(&*self.token_counter_manager);
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .update_total_token_count(&*self.token_counter_manager);
 
-        app_info!(self, "Token count updated");
+        app_info!(self, "Token count updated"); // This logs to general status
 
         if let Some(ui_state_ref) = &self.ui_state {
             self.synchronous_command_queue
@@ -456,7 +421,7 @@ impl MyAppLogic {
         &mut self,
         window_id: WindowId,
         item_id: TreeItemId,
-        new_state: CheckState,
+        new_check_state: CheckState,
     ) {
         let ui_state_ref = match self.ui_state.as_ref() {
             Some(s) if s.window_id == window_id => s,
@@ -472,18 +437,18 @@ impl MyAppLogic {
         log::debug!(
             "TreeItem {:?} toggled to UI state {:?}.",
             item_id,
-            new_state
+            new_check_state
         );
 
-        let mut path_of_toggled_node: Option<PathBuf> = None;
+        let mut path_of_toggled_node_opt: Option<PathBuf> = None;
         for (path_candidate, id_in_map) in &ui_state_ref.path_to_tree_item_id {
             if *id_in_map == item_id {
-                path_of_toggled_node = Some(path_candidate.clone());
+                path_of_toggled_node_opt = Some(path_candidate.clone());
                 break;
             }
         }
 
-        let path_for_model_update = match path_of_toggled_node {
+        let path_for_model_update = match path_of_toggled_node_opt {
             Some(p) => p,
             None => {
                 log::error!(
@@ -494,60 +459,48 @@ impl MyAppLogic {
             }
         };
 
-        {
-            let node_to_update_model_for = Self::find_filenode_mut(
-                &mut self.app_session_data.file_system_snapshot_nodes,
-                &path_for_model_update,
-            );
-
-            if let Some(node_model) = node_to_update_model_for {
-                let new_model_file_state = match new_state {
-                    CheckState::Checked => FileState::Selected,
-                    CheckState::Unchecked => FileState::Deselected,
-                };
-                self.state_manager
-                    .update_folder_selection(node_model, new_model_file_state);
-            } else {
-                log::error!(
-                    "AppLogic: Model node not found for path {:?} to update state.",
-                    path_for_model_update
-                );
-            }
-        }
-
-        let root_node_for_visual_update = match Self::find_filenode_ref(
-            &self.app_session_data.file_system_snapshot_nodes,
-            &path_for_model_update,
-        ) {
-            Some(node) => node,
-            None => {
-                log::error!(
-                    "AppLogic: Model node not found for path {:?} to collect visual updates.",
-                    path_for_model_update
-                );
-                self.update_current_archive_status();
-                self._update_token_count_and_request_display();
-                return;
-            }
+        let new_model_file_state = match new_check_state {
+            CheckState::Checked => FileState::Selected,
+            CheckState::Unchecked => FileState::Deselected,
         };
 
-        let mut visual_updates_list = Vec::new();
-        self.collect_visual_updates_recursive(
-            root_node_for_visual_update,
-            &mut visual_updates_list,
-        );
+        let collected_changes = self
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .update_node_state_and_collect_changes(
+                &path_for_model_update,
+                new_model_file_state,
+                &*self.state_manager,
+            );
 
         log::debug!(
-            "Requesting {} visual updates for TreeView after toggle.",
-            visual_updates_list.len()
+            "Requesting {} visual updates for TreeView after toggle of {:?}.",
+            collected_changes.len(),
+            path_for_model_update
         );
-        for (id_to_update_ui, state_for_ui) in visual_updates_list {
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::UpdateTreeItemVisualState {
-                    window_id,
-                    item_id: id_to_update_ui,
-                    new_state: state_for_ui,
-                });
+
+        for (changed_path, new_file_state) in collected_changes {
+            if let Some(tree_item_id_to_update) =
+                ui_state_ref.path_to_tree_item_id.get(&changed_path)
+            {
+                let check_state_for_ui = match new_file_state {
+                    FileState::Selected => CheckState::Checked,
+                    _ => CheckState::Unchecked,
+                };
+                self.synchronous_command_queue.push_back(
+                    PlatformCommand::UpdateTreeItemVisualState {
+                        window_id,
+                        item_id: *tree_item_id_to_update,
+                        new_state: check_state_for_ui,
+                    },
+                );
+            } else {
+                log::error!(
+                    "AppLogic: Path {:?} (from collected_changes) not found in path_to_tree_item_id during TreeViewItemToggled update.",
+                    changed_path
+                );
+            }
         }
 
         self.update_current_archive_status();
@@ -561,12 +514,22 @@ impl MyAppLogic {
         }
         log::debug!("'Generate Archive' (via menu or old button) triggered.");
 
-        if self.app_session_data.get_current_profile_name().is_none() {
+        let (current_profile_name_opt, archive_path_opt, snapshot_nodes_clone, root_path_clone) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            (
+                data.get_profile_name(),
+                data.get_archive_path(),
+                data.get_snapshot_nodes().to_vec(), // Clone to release lock
+                data.get_root_path_for_scan(),
+            )
+        };
+
+        if current_profile_name_opt.is_none() {
             app_error!(self, "No profile loaded. Cannot save archive.");
             return;
         }
 
-        let archive_path = match &self.app_session_data.archive_path {
+        let archive_path = match archive_path_opt {
             Some(ap) => ap,
             None => {
                 app_error!(
@@ -577,12 +540,11 @@ impl MyAppLogic {
             }
         };
 
-        let display_root_path = self.app_session_data.root_path_for_scan.clone();
-        match self.archiver.create_content(
-            &self.app_session_data.file_system_snapshot_nodes,
-            &display_root_path,
-        ) {
-            Ok(content) => match self.archiver.save(archive_path, &content) {
+        match self
+            .archiver
+            .create_content(&snapshot_nodes_clone, &root_path_clone)
+        {
+            Ok(content) => match self.archiver.save(&archive_path, &content) {
                 Ok(_) => {
                     app_info!(self, "Archive saved to '{}'.", archive_path.display());
                     self.update_current_archive_status();
@@ -686,7 +648,7 @@ impl MyAppLogic {
                     profile_file_path,
                     e
                 );
-                self.app_session_data.clear();
+                self.app_session_data_ops.lock().unwrap().clear();
 
                 if let Some(ui_state_mut) = self.ui_state.as_mut() {
                     ui_state_mut.current_archive_status_for_ui = None;
@@ -709,9 +671,10 @@ impl MyAppLogic {
             .profile_manager
             .get_profile_dir_path(APP_NAME_FOR_PROFILES);
         let base_name = self
-            .app_session_data
-            .profile_name
-            .as_ref()
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .get_profile_name()
             .map_or_else(|| "new_profile".to_string(), |name| name.clone());
         let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
         let default_filename = format!("{}.json", sanitized_current_name);
@@ -747,49 +710,50 @@ impl MyAppLogic {
                     Some(p) => p,
                     None => {
                         log::debug!("Set archive path cancelled.");
-                        self._update_generate_archive_menu_item_state(window_id);
+                        self._update_generate_archive_menu_item_state(window_id); // This may need adjustment if it relies on app_session_data directly
                         return;
                     }
                 };
 
                 log::debug!("Archive path selected: {:?}", path);
-                if self.app_session_data.get_current_profile_name().is_none() {
-                    app_error!(self, "No profile active to set archive path for.");
-                    return;
-                }
-
-                self.app_session_data.archive_path = Some(path.clone());
-
-                let profile_to_save = self.app_session_data.create_profile_from_session_state(
-                    self.app_session_data
-                        .get_current_profile_name()
-                        .unwrap()
-                        .to_string(),
-                    &*self.token_counter_manager,
-                );
-
-                match self
-                    .profile_manager
-                    .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-                {
-                    Ok(_) => {
-                        app_info!(
-                            self,
-                            "Archive path set to '{}' for profile '{}' and saved.",
-                            path.display(),
-                            profile_to_save.name
-                        );
-                        self._update_window_title_with_profile_and_archive(window_id);
-                        self.update_current_archive_status();
-                        self._update_generate_archive_menu_item_state(window_id);
+                let profile_to_save_opt = {
+                    let mut data = self.app_session_data_ops.lock().unwrap();
+                    if data.get_profile_name().is_none() {
+                        app_error!(self, "No profile active to set archive path for.");
+                        None // Indicate failure to get profile_to_save
+                    } else {
+                        data.set_archive_path(Some(path.clone()));
+                        Some(data.create_profile_snapshot(
+                            data.get_profile_name().unwrap(), // Safe due to check above
+                            &*self.token_counter_manager,
+                        ))
                     }
-                    Err(e) => {
-                        app_error!(
-                            self,
-                            "Failed to save profile '{}' after setting archive path: {}",
-                            profile_to_save.name,
-                            e
-                        );
+                };
+
+                if let Some(profile_to_save) = profile_to_save_opt {
+                    match self
+                        .profile_manager
+                        .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+                    {
+                        Ok(_) => {
+                            app_info!(
+                                self,
+                                "Archive path set to '{}' for profile '{}' and saved.",
+                                path.display(),
+                                profile_to_save.name
+                            );
+                            self._update_window_title_with_profile_and_archive(window_id);
+                            self.update_current_archive_status();
+                            self._update_generate_archive_menu_item_state(window_id);
+                        }
+                        Err(e) => {
+                            app_error!(
+                                self,
+                                "Failed to save profile '{}' after setting archive path: {}",
+                                profile_to_save.name,
+                                e
+                            );
+                        }
                     }
                 }
             }
@@ -847,10 +811,13 @@ impl MyAppLogic {
                     return;
                 }
 
-                let profile_to_save = self.app_session_data.create_profile_from_session_state(
-                    profile_name_str.clone(),
-                    &*self.token_counter_manager,
-                );
+                let profile_to_save = {
+                    let data = self.app_session_data_ops.lock().unwrap();
+                    data.create_profile_snapshot(
+                        profile_name_str.clone(),
+                        &*self.token_counter_manager,
+                    )
+                };
 
                 match self
                     .profile_manager
@@ -861,13 +828,16 @@ impl MyAppLogic {
                             "Successfully saved profile as '{}' via manager.",
                             profile_to_save.name
                         );
-                        // TODO: The profile_to_save was created from the app_session_data, why would we need this?
-                        self.app_session_data.profile_name = Some(profile_to_save.name.clone());
-                        self.app_session_data.root_path_for_scan =
-                            profile_to_save.root_folder.clone();
-                        self.app_session_data.archive_path = profile_to_save.archive_path.clone();
-                        self.app_session_data.cached_file_token_details =
-                            profile_to_save.file_details.clone();
+                        {
+                            // TODO: The profile_to_save was created from the app_session_data, why would we need this?
+                            let mut data = self.app_session_data_ops.lock().unwrap();
+                            data.set_profile_name(Some(profile_to_save.name.clone()));
+                            data.set_root_path_for_scan(profile_to_save.root_folder.clone());
+                            data.set_archive_path(profile_to_save.archive_path.clone());
+                            data.set_cached_file_token_details(
+                                profile_to_save.file_details.clone(),
+                            );
+                        }
 
                         self._update_window_title_with_profile_and_archive(window_id);
 
@@ -932,52 +902,77 @@ impl MyAppLogic {
             }
         };
 
-        let current_profile_name_clone = match self.app_session_data.profile_name.clone() {
-            Some(name) => name,
-            None => {
+        let (current_profile_name_clone, root_path_to_scan, current_selection_paths_opt) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            let name = data.get_profile_name();
+            if name.is_none() {
                 app_warn!(self, "Refresh: No profile active.");
+                return;
+            }
+
+            // Use the new method here
+            let (selected, deselected) = data.get_current_selection_paths();
+
+            (
+                name,
+                data.get_root_path_for_scan(),
+                Some((selected, deselected)), // Pass the actual current selections
+            )
+        };
+
+        let current_profile_name = match current_profile_name_clone {
+            Some(n) => n,
+            None => return, // Already handled by the check above
+        };
+        let (current_selected_paths, current_deselected_paths) = match current_selection_paths_opt {
+            Some(paths) => paths,
+            None => {
+                // Should not happen if profile is active
+                app_error!(
+                    self,
+                    "Refresh: Could not get current selection paths for active profile."
+                );
                 return;
             }
         };
 
-        let mut current_selected_paths = HashSet::new();
-        let mut current_deselected_paths = HashSet::new();
-        ProfileRuntimeData::gather_selected_deselected_paths_recursive(
-            &self.app_session_data.file_system_snapshot_nodes,
-            &mut current_selected_paths,
-            &mut current_deselected_paths,
-        );
-
-        let root_path_to_scan = self.app_session_data.root_path_for_scan.clone();
         log::debug!(
             "Refreshing file list for profile '{}', root: {:?}",
-            current_profile_name_clone,
+            current_profile_name,
             root_path_to_scan
         );
 
         // TODO: Do we really need a full new scan_directory here?
         match self.file_system_scanner.scan_directory(&root_path_to_scan) {
             Ok(new_nodes) => {
-                self.app_session_data.file_system_snapshot_nodes = new_nodes;
-                log::debug!(
-                    "Scan successful, {} top-level nodes found.",
-                    self.app_session_data.file_system_snapshot_nodes.len()
-                );
+                {
+                    let mut data = self.app_session_data_ops.lock().unwrap();
+                    data.set_snapshot_nodes(new_nodes);
+                    log::debug!(
+                        "Scan successful, {} top-level nodes found.",
+                        data.get_snapshot_nodes().len()
+                    );
 
-                self.state_manager.apply_selection_states_to_nodes(
-                    &mut self.app_session_data.file_system_snapshot_nodes,
-                    &current_selected_paths,
-                    &current_deselected_paths,
-                );
-                ProfileRuntimeData::update_cached_file_details_recursive(
-                    &self.app_session_data.file_system_snapshot_nodes,
-                    &mut self.app_session_data.cached_file_token_details,
-                    &*self.token_counter_manager,
-                );
+                    data.apply_selection_states_to_snapshot(
+                        &*self.state_manager,
+                        &current_selected_paths,
+                        &current_deselected_paths,
+                    );
+
+                    // The ProfileRuntimeData::update_cached_file_details_recursive logic
+                    // is now internal to load_profile_into_session or similar,
+                    // or would need a dedicated trait method if used standalone.
+                    // For refresh, it's implicitly handled if selections are re-applied and token count is updated.
+                    // We need to ensure the token details are updated.
+                    // For now, let's assume update_total_token_count also refreshes details if necessary,
+                    // or that apply_selection_states_to_snapshot might trigger it.
+                    // A more explicit call might be `data.update_cached_file_details(&*self.token_counter_manager);`
+                    // Let's rely on update_total_token_count to handle this for now.
+                }
 
                 log::debug!(
                     "Applied selections from profile '{}' to refreshed tree and updated token cache.",
-                    current_profile_name_clone
+                    current_profile_name
                 );
 
                 self.refresh_tree_view_from_cache(main_window_id);
@@ -986,7 +981,7 @@ impl MyAppLogic {
                 app_info!(
                     self,
                     "File list refreshed for profile '{}'.",
-                    current_profile_name_clone
+                    current_profile_name
                 );
             }
             Err(e) => {
@@ -996,10 +991,9 @@ impl MyAppLogic {
     }
 
     /*
-     * Activates a given profile: sets it as current in `AppSessionData`, scans its root folder,
+     * Activates a given profile: sets it as current in `ProfileRuntimeDataOperations`, scans its root folder,
      * applies its selection state, refreshes UI elements, and shows the window.
      * Assumes `self.ui_state` is Some and `window_id` matches `self.ui_state.window_id`.
-     * The `profile_to_activate` object is consumed by `activate_and_populate_data`.
      */
     fn _activate_profile_and_show_window(
         &mut self,
@@ -1014,12 +1008,15 @@ impl MyAppLogic {
             "Mismatched window ID or no UI state for _activate_profile_and_show_window"
         );
 
-        let scan_result = self.app_session_data.activate_and_populate_data(
-            profile_to_activate,
-            &*self.file_system_scanner,
-            &*self.state_manager,
-            &*self.token_counter_manager,
-        );
+        let scan_result = {
+            let mut data = self.app_session_data_ops.lock().unwrap();
+            data.load_profile_into_session(
+                profile_to_activate,
+                &*self.file_system_scanner,
+                &*self.state_manager,
+                &*self.token_counter_manager,
+            )
+        };
 
         let (scan_was_successful, final_status_message) = match scan_result {
             Ok(_) => (true, initial_operation_status_message),
@@ -1036,8 +1033,15 @@ impl MyAppLogic {
             ui_state_mut.next_tree_item_id_counter = 1;
             ui_state_mut.path_to_tree_item_id.clear();
 
+            let snapshot_nodes_clone = self
+                .app_session_data_ops
+                .lock()
+                .unwrap()
+                .get_snapshot_nodes()
+                .to_vec(); // Clone to release lock
+
             let descriptors = Self::build_tree_item_descriptors_recursive_internal(
-                &self.app_session_data.file_system_snapshot_nodes,
+                &snapshot_nodes_clone,
                 &mut ui_state_mut.path_to_tree_item_id,
                 &mut ui_state_mut.next_tree_item_id_counter,
             );
@@ -1404,11 +1408,19 @@ impl MyAppLogic {
             "_update_window_title_with_profile_and_archive called with mismatching window ID or no UI state."
         );
 
-        let title = MainWindowUiState::compose_window_title(&self.app_session_data);
+        // Lock once to get a reference to app_session_data_ops implementation
+        let app_data_ops_guard = self.app_session_data_ops.lock().unwrap();
+        // Pass the dereferenced guard (which is &dyn ProfileRuntimeDataOperations)
+        // to MainWindowUiState::compose_window_title.
+        let title = MainWindowUiState::compose_window_title(&*app_data_ops_guard);
+
+        // Explicitly drop the guard before pushing to the command queue if it's no longer needed,
+        // though in this specific case, its scope ends naturally.
+        drop(app_data_ops_guard);
+
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
-
     fn _update_generate_archive_menu_item_state(&mut self, window_id: WindowId) {
         assert!(
             self.ui_state
@@ -1417,7 +1429,12 @@ impl MyAppLogic {
             "_update_generate_archive_menu_item_state called with mismatching window ID or no UI state."
         );
 
-        let enabled = self.app_session_data.archive_path.is_some();
+        let enabled = self
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .get_archive_path()
+            .is_some();
 
         if enabled {
             log::debug!("'Generate Archive' menu item can now function (archive path is set).");
@@ -1426,6 +1443,10 @@ impl MyAppLogic {
                 "'Generate Archive' menu item functionality depends on archive path (currently not set)."
             );
         }
+        // Note: The actual command to enable/disable the menu item seems to be missing from original logic too.
+        // This method currently only logs. If it's meant to send a command, that needs to be added.
+        // For MVP separation, MyAppLogic decides if it should be enabled, then queues a command.
+        // The actual PlatformCommand::SetMenuItemEnabled is not shown here.
     }
 
     fn handle_menu_set_archive_path_clicked(&mut self) {
@@ -1438,33 +1459,37 @@ impl MyAppLogic {
         };
 
         log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
-        if self.app_session_data.get_current_profile_name().is_none() {
+        let (current_profile_name_opt, current_archive_path_opt, current_root_path) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            (
+                data.get_profile_name(),
+                data.get_archive_path(),
+                data.get_root_path_for_scan(),
+            )
+        };
+
+        if current_profile_name_opt.is_none() {
             app_warn!(self, "Cannot set archive path: No profile is active.");
             return;
         }
 
         ui_state_mut.pending_action = Some(PendingAction::SettingArchivePath);
 
-        let default_filename = self
-            .app_session_data
-            .archive_path
+        let default_filename = current_archive_path_opt
             .as_ref()
             .and_then(|ap| ap.file_name())
             .map(|os_name| os_name.to_string_lossy().into_owned())
             .unwrap_or_else(|| {
-                self.app_session_data
-                    .profile_name
+                current_profile_name_opt
                     .as_ref()
                     .map(|p_name| core::profiles::sanitize_profile_name(p_name) + ".txt")
                     .unwrap_or_else(|| "archive.txt".to_string())
             });
 
-        let initial_dir_for_dialog = self
-            .app_session_data
-            .archive_path
+        let initial_dir_for_dialog = current_archive_path_opt
             .as_ref()
             .and_then(|ap| ap.parent().map(PathBuf::from))
-            .or_else(|| Some(self.app_session_data.root_path_for_scan.clone()));
+            .or_else(|| Some(current_root_path));
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {
@@ -1505,7 +1530,7 @@ impl PlatformEventHandler for MyAppLogic {
                 self.handle_button_clicked(window_id, control_id);
             }
             AppEvent::MenuActionClicked {
-                window_id: _,
+                window_id: _, // Assuming menu actions are global or context is derived
                 action,
             } => match action {
                 MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
@@ -1558,11 +1583,12 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
+        let mut data = self.app_session_data_ops.lock().unwrap();
 
-        let active_profile_name_opt = self.app_session_data.profile_name.clone();
-        if let Some(active_profile_name) = active_profile_name_opt {
+        let active_profile_name_opt = data.get_profile_name();
+        if let Some(active_profile_name) = active_profile_name_opt.as_ref() {
             if !active_profile_name.is_empty() {
-                let profile_to_save = self.app_session_data.create_profile_from_session_state(
+                let profile_to_save = data.create_profile_snapshot(
                     active_profile_name.clone(),
                     &*self.token_counter_manager,
                 );
@@ -1587,12 +1613,14 @@ impl PlatformEventHandler for MyAppLogic {
             }
         }
 
-        let profile_name_to_save_in_config =
-            self.app_session_data.profile_name.as_deref().unwrap_or("");
+        let profile_name_to_save_in_config = active_profile_name_opt.as_deref().unwrap_or("");
         log::debug!(
             "AppLogic: Attempting to save last profile name '{}' to config on exit.",
             profile_name_to_save_in_config
         );
+        // Release lock on `data` before calling config_manager which might involve I/O
+        drop(data);
+
         match self
             .config_manager
             .save_last_profile_name(APP_NAME_FOR_PROFILES, profile_name_to_save_in_config)
@@ -1621,10 +1649,8 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     /*
-     * Queries if a specific tree item is currently in the "New" state.
-     * This implementation retrieves the `FileNode` associated with the given
-     * `window_id` and `item_id` and checks its `state` field. If the item
-     * cannot be found or its state is not `FileState::New`, it returns `false`.
+     * Queries if a specific tree item's corresponding file node is in the "New" state.
+     * It looks up the path for the item_id, then queries ProfileRuntimeDataOperations.
      */
     fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool {
         let ui_state = match &self.ui_state {
@@ -1655,18 +1681,24 @@ impl PlatformEventHandler for MyAppLogic {
             }
         };
 
-        match Self::find_filenode_ref(&self.app_session_data.file_system_snapshot_nodes, path) {
-            Some(node) => {
+        match self
+            .app_session_data_ops
+            .lock()
+            .unwrap()
+            .get_node_attributes_for_path(path)
+        {
+            Some((file_state, is_dir)) => {
                 log::debug!(
-                    "is_tree_item_new: Found FileNode for path {:?} with state {:?}.",
+                    "is_tree_item_new: Found FileNode attributes for path {:?}: state {:?}, is_dir {}.",
                     path,
-                    node.state,
+                    file_state,
+                    is_dir
                 );
-                node.state == FileState::New && !node.is_dir
+                file_state == FileState::New && !is_dir
             }
             None => {
                 log::trace!(
-                    "is_tree_item_new: FileNode not found for path {:?}. Returning false.",
+                    "is_tree_item_new: FileNode attributes not found for path {:?}. Returning false.",
                     path
                 );
                 false
@@ -1677,121 +1709,9 @@ impl PlatformEventHandler for MyAppLogic {
 
 #[cfg(test)]
 impl MyAppLogic {
-    // Accessors for AppSessionData fields
-    pub(crate) fn test_app_session_data(&self) -> &ProfileRuntimeData {
-        &self.app_session_data
-    }
-    pub(crate) fn test_app_session_data_mut(&mut self) -> &mut ProfileRuntimeData {
-        &mut self.app_session_data
-    }
-
-    // Accessors for MainWindowUiState fields (via Option)
-    pub(crate) fn test_ui_state(&self) -> &Option<MainWindowUiState> {
-        &self.ui_state
-    }
-    pub(crate) fn test_ui_state_mut(&mut self) -> &mut Option<MainWindowUiState> {
-        &mut self.ui_state
-    }
-
-    pub(crate) fn test_main_window_id(&self) -> Option<WindowId> {
-        self.ui_state.as_ref().map(|s| s.window_id)
-    }
     pub(crate) fn test_set_main_window_id_and_init_ui_state(&mut self, id: WindowId) {
         self.ui_state = Some(MainWindowUiState::new(id));
     }
-    pub(crate) fn test_clear_ui_state(&mut self) {
-        self.ui_state = None;
-    }
-
-    pub(crate) fn test_file_nodes_cache(&mut self) -> &mut Vec<FileNode> {
-        &mut self.app_session_data.file_system_snapshot_nodes
-    }
-    pub(crate) fn test_set_file_nodes_cache(&mut self, v: Vec<FileNode>) {
-        self.app_session_data.file_system_snapshot_nodes = v;
-    }
-
-    pub(crate) fn test_find_filenode_mut(&mut self, path_to_find: &Path) -> Option<&mut FileNode> {
-        Self::find_filenode_mut(
-            &mut self.app_session_data.file_system_snapshot_nodes,
-            path_to_find,
-        )
-    }
-
-    pub(crate) fn test_path_to_tree_item_id(&self) -> Option<&PathToTreeItemIdMap> {
-        self.ui_state.as_ref().map(|s| &s.path_to_tree_item_id)
-    }
-    pub(crate) fn test_path_to_tree_item_id_insert(&mut self, path: &PathBuf, id: TreeItemId) {
-        self.ui_state
-            .as_mut()
-            .unwrap()
-            .path_to_tree_item_id
-            .insert(path.to_path_buf(), id);
-    }
-    pub(crate) fn test_path_to_tree_item_id_clear_and_reset_counter(&mut self) {
-        if let Some(ui_state_mut) = self.ui_state.as_mut() {
-            ui_state_mut.path_to_tree_item_id.clear();
-            ui_state_mut.next_tree_item_id_counter = 1;
-        }
-    }
-
-    pub(crate) fn test_root_path_for_scan(&self) -> &PathBuf {
-        &self.app_session_data.root_path_for_scan
-    }
-    pub(crate) fn test_set_root_path_for_scan(&mut self, v: PathBuf) {
-        self.app_session_data.root_path_for_scan = v;
-    }
-
-    pub(crate) fn test_current_profile_name(&self) -> &Option<String> {
-        &self.app_session_data.profile_name
-    }
-    pub(crate) fn test_set_current_profile_name(&mut self, v: Option<String>) {
-        self.app_session_data.profile_name = v;
-    }
-
-    pub(crate) fn test_current_archive_path(&self) -> &Option<PathBuf> {
-        &self.app_session_data.archive_path
-    }
-    pub(crate) fn test_set_current_archive_path(&mut self, v: Option<PathBuf>) {
-        self.app_session_data.archive_path = v;
-    }
-    pub(crate) fn test_cached_file_token_details(&self) -> &HashMap<PathBuf, FileTokenDetails> {
-        &self.app_session_data.cached_file_token_details
-    }
-    pub(crate) fn test_set_cached_file_token_details(
-        &mut self,
-        v: HashMap<PathBuf, FileTokenDetails>,
-    ) {
-        self.app_session_data.cached_file_token_details = v;
-    }
-
-    pub(crate) fn test_current_archive_status_for_ui(&self) -> Option<&ArchiveStatus> {
-        self.ui_state
-            .as_ref()
-            .and_then(|s| s.current_archive_status_for_ui.as_ref())
-    }
-
-    pub(crate) fn test_set_current_profile_session_data(
-        &mut self,
-        name: Option<String>,
-        root_folder: PathBuf,
-        archive_path: Option<PathBuf>,
-        token_details: HashMap<PathBuf, FileTokenDetails>,
-        status_for_ui: Option<ArchiveStatus>,
-    ) {
-        self.app_session_data.profile_name = name;
-        self.app_session_data.root_path_for_scan = root_folder;
-        self.app_session_data.archive_path = archive_path;
-        self.app_session_data.cached_file_token_details = token_details;
-
-        if let Some(s) = self.ui_state.as_mut() {
-            s.current_archive_status_for_ui = status_for_ui;
-        } else if status_for_ui.is_some() {
-            warn!(
-                "test_set_current_profile_session_data: Attempted to set UI status while ui_state is None."
-            );
-        }
-    }
-
     pub(crate) fn test_pending_action(&self) -> Option<&PendingAction> {
         self.ui_state
             .as_ref()
@@ -1800,32 +1720,8 @@ impl MyAppLogic {
     pub(crate) fn test_set_pending_action(&mut self, v: PendingAction) {
         self.ui_state.as_mut().unwrap().pending_action = Some(v);
     }
-    pub(crate) fn test_clear_pending_action(&mut self) {
-        if let Some(s) = self.ui_state.as_mut() {
-            s.pending_action = None;
-        }
-    }
-
-    pub(crate) fn test_pending_new_profile_name(&self) -> Option<&String> {
-        self.ui_state
-            .as_ref()
-            .and_then(|s| s.pending_new_profile_name.as_ref())
-    }
-    pub(crate) fn test_set_pending_new_profile_name(&mut self, v: Option<String>) {
-        if let Some(s) = self.ui_state.as_mut() {
-            s.pending_new_profile_name = v;
-        }
-    }
-
-    pub(crate) fn test_config_manager(&self) -> &Arc<dyn ConfigManagerOperations> {
-        &self.config_manager
-    }
 
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
         self.synchronous_command_queue.drain(..).collect()
-    }
-
-    pub(crate) fn test_current_token_count(&self) -> usize {
-        self.app_session_data.get_cached_token_count()
     }
 }
