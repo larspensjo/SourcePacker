@@ -6,8 +6,8 @@
  * this session data, facilitating dependency injection and testing.
  */
 use crate::core::{
-    FileNode, FileState, FileSystemScannerOperations, Profile, StateManagerOperations,
-    TokenCounterOperations, models::FileTokenDetails,
+    FileNode, FileState, FileSystemScannerOperations, Profile, NodeStateApplicatorOperations,
+    TokenCounterOperations, file_node::FileTokenDetails,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -40,7 +40,7 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
     fn set_snapshot_nodes(&mut self, nodes: Vec<FileNode>);
     fn apply_selection_states_to_snapshot(
         &mut self,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
         selected_paths: &HashSet<PathBuf>,
         deselected_paths: &HashSet<PathBuf>,
     );
@@ -49,7 +49,7 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
         &mut self,
         path: &Path,
         new_state: FileState,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
     ) -> Vec<(PathBuf, FileState)>;
 
     // Token related data
@@ -68,7 +68,7 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
         &mut self,
         loaded_profile: Profile,
         file_system_scanner: &dyn FileSystemScannerOperations,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
         token_counter: &dyn TokenCounterOperations,
     ) -> Result<(), String>; // String is error message
     fn get_current_selection_paths(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>);
@@ -369,7 +369,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 
     fn apply_selection_states_to_snapshot(
         &mut self,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
         selected_paths: &HashSet<PathBuf>,
         deselected_paths: &HashSet<PathBuf>,
     ) {
@@ -389,7 +389,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         &mut self,
         path: &Path,
         new_state: FileState,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
     ) -> Vec<(PathBuf, FileState)> {
         let mut collected_changes = Vec::new();
         if let Some(node_to_update) =
@@ -619,7 +619,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         &mut self,
         loaded_profile: Profile,
         file_system_scanner: &dyn FileSystemScannerOperations,
-        state_manager: &dyn StateManagerOperations,
+        state_manager: &dyn NodeStateApplicatorOperations,
         token_counter: &dyn TokenCounterOperations,
     ) -> Result<(), String> {
         log::debug!(
@@ -684,7 +684,7 @@ mod tests {
     use crate::core::checksum_utils;
     use crate::core::{
         FileNode, FileState, FileSystemError, FileSystemScannerOperations, Profile,
-        StateManagerOperations, TokenCounterOperations,
+        NodeStateApplicatorOperations, TokenCounterOperations,
     };
     use std::collections::{HashMap, HashSet};
     use std::fs::{self, File};
@@ -779,7 +779,7 @@ mod tests {
         }
     }
 
-    impl StateManagerOperations for MockStateManager {
+    impl NodeStateApplicatorOperations for MockStateManager {
         fn apply_selection_states_to_nodes(
             &self,
             tree: &mut Vec<FileNode>,

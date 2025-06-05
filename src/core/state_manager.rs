@@ -1,4 +1,4 @@
-use super::models::{FileNode, FileState, Profile};
+use super::file_node::{FileNode, FileState, Profile};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
  * and how folder selection changes propagate to children. This facilitates
  * testability by allowing mock implementations.
  */
-pub trait StateManagerOperations: Send + Sync {
+pub trait NodeStateApplicatorOperations: Send + Sync {
     /*
      * Applies the selection states from a `Profile`'s path sets to a tree of `FileNode`s.
      * Sets `FileState::Selected` for paths in `selected_paths`,
@@ -42,25 +42,25 @@ pub trait StateManagerOperations: Send + Sync {
  * This struct provides the concrete logic for applying profile states and
  * updating folder selections within a `FileNode` tree.
  */
-pub struct CoreStateManager {}
+pub struct NodeStateApplicator {}
 
-impl CoreStateManager {
+impl NodeStateApplicator {
     /*
      * Creates a new instance of `CoreStateManager`.
      * This constructor doesn't require any parameters.
      */
     pub fn new() -> Self {
-        CoreStateManager {}
+        NodeStateApplicator {}
     }
 }
 
-impl Default for CoreStateManager {
+impl Default for NodeStateApplicator {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl StateManagerOperations for CoreStateManager {
+impl NodeStateApplicatorOperations for NodeStateApplicator {
     fn apply_selection_states_to_nodes(
         &self,
         tree: &mut Vec<FileNode>,
@@ -100,7 +100,7 @@ impl StateManagerOperations for CoreStateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::models::{FileNode, FileState, Profile}; // Ensure full path if needed
+    use crate::core::file_node::{FileNode, FileState, Profile}; // Ensure full path if needed
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -161,16 +161,16 @@ mod tests {
     // Test helper for StateManagerOperations using CoreStateManager
     fn test_with_state_manager<F, R>(test_fn: F) -> R
     where
-        F: FnOnce(&dyn StateManagerOperations) -> R,
+        F: FnOnce(&dyn NodeStateApplicatorOperations) -> R,
     {
-        let manager = CoreStateManager::new();
+        let manager = NodeStateApplicator::new();
         test_fn(&manager)
     }
 
     #[test]
     fn test_core_state_manager_apply_profile_select_deselect() {
         // Arrange
-        let manager = CoreStateManager::new();
+        let manager = NodeStateApplicator::new();
         let mut tree = create_test_tree();
         let mut selected_paths = HashSet::new();
         let mut deselected_paths = HashSet::new();
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn test_core_state_manager_apply_profile_reverts_to_new() {
         // Arrange
-        let manager = CoreStateManager::new();
+        let manager = NodeStateApplicator::new();
         let mut tree = create_test_tree();
         tree[0].state = FileState::Selected; // Pre-set state
 

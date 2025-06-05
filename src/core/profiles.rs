@@ -1,4 +1,4 @@
-use super::models::Profile;
+use super::file_node::Profile;
 use directories::ProjectDirs;
 use serde_json;
 use std::fs::{self, File};

@@ -1,4 +1,4 @@
-use super::models::FileNode;
+use super::file_node::FileNode;
 use crate::core::checksum_utils;
 use ignore::WalkBuilder;
 use std::collections::HashMap;

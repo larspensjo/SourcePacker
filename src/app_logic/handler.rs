@@ -1,7 +1,7 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode, FileState,
-    FileSystemScannerOperations, Profile, ProfileManagerOperations, ProfileRuntimeDataOperations,
-    StateManagerOperations, TokenCounterOperations, models::FileTokenDetails,
+    FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
+    ProfileRuntimeDataOperations, TokenCounterOperations, file_node::FileTokenDetails,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -74,7 +74,7 @@ pub struct MyAppLogic {
     file_system_scanner: Arc<dyn FileSystemScannerOperations>,
     archiver: Arc<dyn ArchiverOperations>,
     token_counter_manager: Arc<dyn TokenCounterOperations>,
-    state_manager: Arc<dyn StateManagerOperations>,
+    state_manager: Arc<dyn NodeStateApplicatorOperations>,
     synchronous_command_queue: VecDeque<PlatformCommand>,
 }
 
@@ -91,7 +91,7 @@ impl MyAppLogic {
         file_system_scanner: Arc<dyn FileSystemScannerOperations>,
         archiver: Arc<dyn ArchiverOperations>,
         token_counter: Arc<dyn TokenCounterOperations>,
-        state_manager: Arc<dyn StateManagerOperations>,
+        state_manager: Arc<dyn NodeStateApplicatorOperations>,
     ) -> Self {
         log::debug!("MyAppLogic::new called.");
         MyAppLogic {

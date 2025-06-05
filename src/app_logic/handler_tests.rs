@@ -4,9 +4,9 @@ use crate::app_logic::ui_constants;
 
 use crate::core::{
     ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode, FileState,
-    FileSystemError, FileSystemScannerOperations, Profile, ProfileError, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, StateManagerOperations, TokenCounterOperations,
-    models::FileTokenDetails,
+    FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
+    ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, TokenCounterOperations,
+    file_node::FileTokenDetails,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
@@ -202,7 +202,7 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     }
     fn apply_selection_states_to_snapshot(
         &mut self,
-        _state_manager: &dyn StateManagerOperations,
+        _state_manager: &dyn NodeStateApplicatorOperations,
         selected_paths: &HashSet<PathBuf>,
         deselected_paths: &HashSet<PathBuf>,
     ) {
@@ -219,7 +219,7 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
         &mut self,
         path: &Path,
         new_state: FileState,
-        _state_manager: &dyn StateManagerOperations,
+        _state_manager: &dyn NodeStateApplicatorOperations,
     ) -> Vec<(PathBuf, FileState)> {
         self._update_node_state_and_collect_changes_log
             .push((path.to_path_buf(), new_state));
@@ -270,7 +270,7 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
         &mut self,
         loaded_profile: Profile,
         _file_system_scanner: &dyn FileSystemScannerOperations,
-        _state_manager: &dyn StateManagerOperations,
+        _state_manager: &dyn NodeStateApplicatorOperations,
         _token_counter: &dyn TokenCounterOperations,
     ) -> Result<(), String> {
         self._load_profile_into_session_log
@@ -643,7 +643,7 @@ impl MockStateManager {
         self.update_folder_selection_calls.lock().unwrap().clone()
     }
 }
-impl StateManagerOperations for MockStateManager {
+impl NodeStateApplicatorOperations for MockStateManager {
     fn apply_selection_states_to_nodes(
         &self,
         tree: &mut Vec<FileNode>,
@@ -741,7 +741,7 @@ fn setup_logic_with_mocks() -> (
         Arc::clone(&mock_file_system_scanner_arc) as Arc<dyn FileSystemScannerOperations>,
         Arc::clone(&mock_archiver_arc) as Arc<dyn ArchiverOperations>,
         Arc::clone(&mock_token_counter_arc) as Arc<dyn TokenCounterOperations>,
-        Arc::clone(&mock_state_manager_arc) as Arc<dyn StateManagerOperations>,
+        Arc::clone(&mock_state_manager_arc) as Arc<dyn NodeStateApplicatorOperations>,
     );
     (
         logic,

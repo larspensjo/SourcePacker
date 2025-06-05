@@ -179,8 +179,8 @@ mod tests {
     use crate::app_logic::ui_constants;
     use crate::core::{
         ArchiveStatus, FileNode, FileState, FileSystemScannerOperations, Profile,
-        ProfileRuntimeDataOperations, StateManagerOperations, TokenCounterOperations,
-        models::FileTokenDetails,
+        ProfileRuntimeDataOperations, NodeStateApplicatorOperations, TokenCounterOperations,
+        file_node::FileTokenDetails,
     };
     use crate::platform_layer::WindowId;
     use std::collections::{HashMap, HashSet};
@@ -233,7 +233,7 @@ mod tests {
         }
         fn apply_selection_states_to_snapshot(
             &mut self,
-            _state_manager: &dyn StateManagerOperations,
+            _state_manager: &dyn NodeStateApplicatorOperations,
             _selected_paths: &HashSet<PathBuf>,
             _deselected_paths: &HashSet<PathBuf>,
         ) {
@@ -246,7 +246,7 @@ mod tests {
             &mut self,
             _path: &Path,
             _new_state: FileState,
-            _state_manager: &dyn StateManagerOperations,
+            _state_manager: &dyn NodeStateApplicatorOperations,
         ) -> Vec<(PathBuf, FileState)> {
             unimplemented!()
         }
@@ -272,7 +272,7 @@ mod tests {
             &mut self,
             _loaded_profile: Profile,
             _file_system_scanner: &dyn FileSystemScannerOperations,
-            _state_manager: &dyn StateManagerOperations,
+            _state_manager: &dyn NodeStateApplicatorOperations,
             _token_counter: &dyn TokenCounterOperations,
         ) -> Result<(), String> {
             unimplemented!()

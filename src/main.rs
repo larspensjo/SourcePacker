@@ -9,7 +9,7 @@ mod ui_description_layer;
 use app_logic::handler::MyAppLogic;
 use core::{
     CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
-    CoreStateManager, CoreTikTokenCounter, ProfileRuntimeData, ProfileRuntimeDataOperations,
+    CoreTikTokenCounter, NodeStateApplicator, ProfileRuntimeData, ProfileRuntimeDataOperations,
 };
 use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
 use std::sync::{Arc, Mutex};
@@ -61,7 +61,7 @@ fn main() -> PlatformResult<()> {
     let core_file_system_scanner = Arc::new(CoreFileSystemScanner::new());
     let core_archiver = Arc::new(CoreArchiver::new());
     let core_token_counter = Arc::new(CoreTikTokenCounter::new());
-    let core_state_manager = Arc::new(CoreStateManager::new());
+    let core_state_manager = Arc::new(NodeStateApplicator::new());
 
     // Instantiate ProfileRuntimeData and wrap it for dependency injection
     let app_session_data = ProfileRuntimeData::new();

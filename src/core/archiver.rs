@@ -1,4 +1,4 @@
-use super::models::{ArchiveStatus, FileNode, FileState, Profile};
+use super::file_node::{ArchiveStatus, FileNode, FileState, Profile};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -251,7 +251,7 @@ impl ArchiverOperations for CoreArchiver {
 #[cfg(test)]
 mod archiver_tests {
     use super::*;
-    use crate::core::models::{FileNode, FileState, Profile};
+    use crate::core::file_node::{FileNode, FileState, Profile};
     use std::fs::File;
     use std::io::Write;
     use std::path::{Path, PathBuf};
