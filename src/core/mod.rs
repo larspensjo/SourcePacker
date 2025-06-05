@@ -4,20 +4,21 @@
  * like `FileSystemScannerOperations`, `ProfileManagerOperations`, `ConfigManagerOperations`,
  * `ArchiverOperations`, `StateManagerOperations`, and the new `ProfileRuntimeDataOperations`)
  * for file system operations, profile management, configuration, archiving, state management,
- * and session data handling. It also includes utilities for token estimation.
+ * and session data handling. It also includes utilities for token estimation and path utilities.
  */
 pub mod archiver;
 pub mod checksum_utils;
 pub mod config;
 pub mod file_node;
 pub mod file_system;
+pub mod node_state_applicator;
+pub mod path_utils;
 pub mod profile_runtime_data;
 pub mod profiles;
-pub mod node_state_applicator;
 pub mod tokenizer_utils;
 
 // Re-export key structures and enums
-pub use file_node::{ArchiveStatus, FileNode, SelectionState, Profile};
+pub use file_node::{ArchiveStatus, FileNode, Profile, SelectionState};
 
 // Re-export file system related items
 pub use file_system::{CoreFileSystemScanner, FileSystemError, FileSystemScannerOperations};
