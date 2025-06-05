@@ -13,11 +13,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
 
 ### P2.11.3: Code Health & Refactoring (Medium Priority)
-*   **Consolidate Directory Path Logic:**
-    *   **Problem:** `CoreConfigManager::_get_app_config_dir` and `CoreProfileManager::_get_profile_storage_dir` have similar path derivation.
-    *   **Action:** Review. Consider a shared private helper for the base application-specific local config directory.
-    *   **Rationale:** Minor code deduplication.
-    *   **Status:** Potential minor improvement. A shared helper could be introduced.
 *   **Ergonomic Access to `Win32ApiInternalState.active_windows`:**
     *   **Problem:** Direct locking of `active_windows` can be verbose.
     *   **Action:** Evaluate creating specialized helper methods on `Win32ApiInternalState` for common `active_windows` access patterns. For example:
