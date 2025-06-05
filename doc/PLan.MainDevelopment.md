@@ -8,10 +8,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 (Earlier steps already completed)
 
-## P2.10: AppEvent.Execute Refactoring Discussion
-*   Maybe the MyAppLogic::handle_event should call event.Execute(&mut commands, &self)? That would take away almost all code from handle_event.
-    *   **Note:** This is an interesting idea for further refactoring *after* the M/V/P separation. The M/V/P changes might make the `handle_event` in `MyAppLogic` simpler by delegating more to `AppSessionData` and `MainWindowUiState` first.
-
 ## P2.11: General Cleanup and Refinements
 
 This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
