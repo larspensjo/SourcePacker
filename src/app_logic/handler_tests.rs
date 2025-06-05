@@ -240,7 +240,10 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
             .fetch_add(1, Ordering::Relaxed);
         self.cached_total_token_count
     }
-    fn update_total_token_count(&mut self, _token_counter: &dyn TokenCounterOperations) -> usize {
+    fn update_total_token_count_for_selected_files(
+        &mut self,
+        _token_counter: &dyn TokenCounterOperations,
+    ) -> usize {
         self._update_total_token_count_calls += 1;
         self.cached_total_token_count
     }
@@ -253,16 +256,15 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
         self.cached_total_token_count = 0;
         self.cached_file_token_details.clear();
     }
-    fn create_profile_snapshot(
-        &self, // Assuming trait method remains &self
-        new_profile_name: String,
-        _token_counter: &dyn TokenCounterOperations,
-    ) -> Profile {
+    fn create_profile_snapshot(&self) -> Profile {
         self.create_profile_snapshot_calls
             .fetch_add(1, Ordering::Relaxed);
         // To log the name, create_profile_snapshot_calls would need to be Mutex<Vec<String>>
         // or this method would need to be &mut self.
-        Profile::new(new_profile_name, self.root_path_for_scan.clone())
+        Profile::new(
+            self.profile_name.clone().unwrap_or_else(String::new),
+            self.root_path_for_scan.clone(),
+        )
     }
     fn load_profile_into_session(
         &mut self,

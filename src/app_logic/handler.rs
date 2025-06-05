@@ -371,7 +371,7 @@ impl MyAppLogic {
             .app_session_data_ops
             .lock()
             .unwrap()
-            .update_total_token_count(&*self.token_counter_manager);
+            .update_total_token_count_for_selected_files(&*self.token_counter_manager);
 
         app_info!(self, "Token count updated"); // This logs to general status
 
@@ -717,16 +717,13 @@ impl MyAppLogic {
 
                 log::debug!("Archive path selected: {:?}", path);
                 let profile_to_save_opt = {
-                    let mut data = self.app_session_data_ops.lock().unwrap();
-                    if data.get_profile_name().is_none() {
+                    let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
+                    if profile_runtime_data.get_profile_name().is_none() {
                         app_error!(self, "No profile active to set archive path for.");
                         None // Indicate failure to get profile_to_save
                     } else {
-                        data.set_archive_path(Some(path.clone()));
-                        Some(data.create_profile_snapshot(
-                            data.get_profile_name().unwrap(), // Safe due to check above
-                            &*self.token_counter_manager,
-                        ))
+                        profile_runtime_data.set_archive_path(Some(path.clone()));
+                        Some(profile_runtime_data.create_profile_snapshot())
                     }
                 };
 
@@ -811,13 +808,13 @@ impl MyAppLogic {
                     return;
                 }
 
-                let profile_to_save = {
+                let mut profile_to_save = {
                     let data = self.app_session_data_ops.lock().unwrap();
-                    data.create_profile_snapshot(
-                        profile_name_str.clone(),
-                        &*self.token_counter_manager,
-                    )
+                    data.create_profile_snapshot()
                 };
+
+                // Override the name.
+                profile_to_save.name = profile_name_str;
 
                 match self
                     .profile_manager
@@ -1588,10 +1585,7 @@ impl PlatformEventHandler for MyAppLogic {
         let active_profile_name_opt = data.get_profile_name();
         if let Some(active_profile_name) = active_profile_name_opt.as_ref() {
             if !active_profile_name.is_empty() {
-                let profile_to_save = data.create_profile_snapshot(
-                    active_profile_name.clone(),
-                    &*self.token_counter_manager,
-                );
+                let profile_to_save = data.create_profile_snapshot();
                 log::debug!(
                     "AppLogic: Attempting to save content of active profile '{}' on exit.",
                     active_profile_name

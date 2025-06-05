@@ -56,15 +56,14 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails>;
     fn set_cached_file_token_details(&mut self, details: HashMap<PathBuf, FileTokenDetails>);
     fn get_cached_total_token_count(&self) -> usize;
-    fn update_total_token_count(&mut self, token_counter: &dyn TokenCounterOperations) -> usize;
+    fn update_total_token_count_for_selected_files(
+        &mut self,
+        token_counter: &dyn TokenCounterOperations,
+    ) -> usize;
 
     // General session management
     fn clear(&mut self);
-    fn create_profile_snapshot(
-        &self,
-        new_profile_name: String,
-        token_counter: &dyn TokenCounterOperations,
-    ) -> Profile;
+    fn create_profile_snapshot(&self) -> Profile;
     fn load_profile_into_session(
         &mut self,
         loaded_profile: Profile,
@@ -106,6 +105,49 @@ impl ProfileRuntimeData {
             cached_token_count: 0,
             cached_file_token_details: HashMap::new(),
         }
+    }
+
+    /*
+     * Try the cache first. If not found or stale, read the file, count tokens, and update the cache.
+     * Asserts that node.checksum is Some, as this function is only valid in that context.
+     * Returns None if the file cannot be read.
+     */
+    fn get_token_count_with_cache(
+        token_counter_service: &dyn TokenCounterOperations,
+        node: &FileNode,
+        cache: &mut HashMap<PathBuf, FileTokenDetails>,
+    ) -> Option<usize> {
+        // PRECONDITION: The node MUST have a checksum to use this function.
+        // The checksum is essential for cache validity and identifying the file's state.
+        let node_checksum = node.checksum.as_ref()
+            .expect("get_token_count_with_cache called on a FileNode without a checksum. Contract violation.");
+
+        if let Some(details) = cache.get(&node.path) {
+            if *node_checksum == details.checksum {
+                return Some(details.token_count);
+            }
+        }
+
+        let content = match fs::read_to_string(&node.path) {
+            Ok(c) => c,
+            Err(_e) => {
+                // Remove any stale checksum from the cache
+                cache.remove(&node.path);
+                return None;
+            }
+        };
+
+        let tokens_in_file = token_counter_service.count_tokens(&content);
+
+        cache.insert(
+            node.path.clone(),
+            FileTokenDetails {
+                checksum: node_checksum.clone(),
+                token_count: tokens_in_file,
+            },
+        );
+
+        Some(tokens_in_file)
     }
 
     // Helper: Recursively finds a reference to a FileNode within a slice of nodes.
@@ -170,56 +212,6 @@ impl ProfileRuntimeData {
                     selected,
                     deselected,
                 );
-            }
-        }
-    }
-
-    // Helper: Populates file details map for saving, based on selected files.
-    fn populate_file_details_recursive_for_save_internal(
-        nodes: &[FileNode],
-        file_details_map: &mut HashMap<PathBuf, FileTokenDetails>,
-        token_counter: &dyn TokenCounterOperations,
-    ) {
-        for node in nodes {
-            if node.is_dir {
-                Self::populate_file_details_recursive_for_save_internal(
-                    &node.children,
-                    file_details_map,
-                    token_counter,
-                );
-            } else if node.state == FileState::Selected {
-                if let Some(checksum_val) = &node.checksum {
-                    match fs::read_to_string(&node.path) {
-                        Ok(content) => {
-                            let token_count = token_counter.count_tokens(&content);
-                            file_details_map.insert(
-                                node.path.clone(),
-                                FileTokenDetails {
-                                    checksum: checksum_val.clone(),
-                                    token_count,
-                                },
-                            );
-                            log::trace!(
-                                "ProfileRuntimeData (populate_file_details_for_save): Cached token count {} for selected file {:?} with checksum {}",
-                                token_count,
-                                node.path,
-                                checksum_val
-                            );
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "ProfileRuntimeData (populate_file_details_for_save): Failed to read file {:?} for token caching during profile save: {}",
-                                node.path,
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    log::warn!(
-                        "ProfileRuntimeData (populate_file_details_for_save): Selected file {:?} has no checksum; cannot cache token count for profile save.",
-                        node.path
-                    );
-                }
             }
         }
     }
@@ -428,125 +420,80 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
     }
 
     /*
-     * Recalculates the estimated token count for all currently selected files
-     * using `self.cached_file_token_details`. The result is stored internally and returned.
+     * Use `get_token_count` for each selected file, which handles cache lookups,
+     * file reads on miss/stale, and cache updates. The result is stored internally and returned.
      */
-    fn update_total_token_count(&mut self, token_counter: &dyn TokenCounterOperations) -> usize {
-        log::debug!(
-            "Updating token count using session's cached_file_token_details for selected files."
-        );
+    fn update_total_token_count_for_selected_files(
+        &mut self,
+        token_counter: &dyn TokenCounterOperations,
+    ) -> usize {
+        log::debug!("ProfileRuntimeData: Starting update_total_token_count_for_selected_files.");
+
         let mut total_tokens: usize = 0;
-        let mut files_processed_from_cache: usize = 0;
-        let mut files_processed_fallback: usize = 0;
-        let mut files_failed_fallback: usize = 0;
+        let mut files_considered_for_total: usize = 0;
+        let mut files_failed_to_get_count: usize = 0;
 
-        // Helper function to recursively traverse the file node tree
-        fn count_tokens_recursive_cached_inner(
-            nodes: &[FileNode],
-            cached_details_map: &HashMap<PathBuf, FileTokenDetails>,
+        // Recursive helper function.
+        fn sum_tokens_recursive(
+            nodes_to_scan: &[FileNode],
+            token_counter_service: &dyn TokenCounterOperations,
+            cache: &mut HashMap<PathBuf, FileTokenDetails>,
             current_total_tokens: &mut usize,
-            processed_cache: &mut usize,
-            processed_fallback: &mut usize,
-            failed_fallback: &mut usize,
-            token_counter_ref: &dyn TokenCounterOperations,
+            processed_count: &mut usize,
+            failed_count: &mut usize,
         ) {
-            for node in nodes {
-                if !node.is_dir && node.state == FileState::Selected {
-                    let mut token_value_for_file: Option<usize> = None;
-
-                    if let Some(details) = cached_details_map.get(&node.path) {
-                        if let Some(node_checksum) = node.checksum.as_ref() {
-                            if *node_checksum == details.checksum {
-                                // Cache hit and checksum match
-                                token_value_for_file = Some(details.token_count);
-                                *processed_cache += 1;
-                                log::trace!(
-                                    "TokenCount (Cache HIT): File {:?} - {} tokens (checksum {}).",
-                                    node.path,
-                                    details.token_count,
-                                    details.checksum
-                                );
-                            } else {
-                                // Checksum mismatch
-                                log::debug!(
-                                    "TokenCount (Cache STALE): File {:?} checksum mismatch (disk: {}, cache: {}). Using fallback.",
-                                    node.path,
-                                    node_checksum,
-                                    details.checksum
-                                );
-                            }
+            for node in nodes_to_scan {
+                if node.is_dir {
+                    sum_tokens_recursive(
+                        &node.children,
+                        token_counter_service,
+                        cache,
+                        current_total_tokens,
+                        processed_count,
+                        failed_count,
+                    );
+                } else if node.state == FileState::Selected {
+                    *processed_count += 1;
+                    if node.checksum.is_some() {
+                        if let Some(count) = ProfileRuntimeData::get_token_count_with_cache(
+                            token_counter_service,
+                            node,
+                            cache,
+                        ) {
+                            *current_total_tokens += count;
                         } else {
-                            // FileNode has no checksum (e.g., scan error for this file)
-                            log::debug!(
-                                "TokenCount (Cache UNAVAILABLE): File {:?} has no disk checksum. Using fallback.",
+                            *failed_count += 1;
+                            log::warn!(
+                                "ProfileRuntimeData (sum_tokens_recursive): Failed to get token count for selected file {:?}",
                                 node.path
                             );
                         }
                     } else {
-                        // File not in cache
-                        log::debug!(
-                            "TokenCount (Cache MISS): File {:?} not found in token cache. Using fallback.",
+                        *failed_count += 1;
+                        log::error!(
+                            "ProfileRuntimeData (sum_tokens_recursive): Selected file {:?} has no checksum. Cannot count tokens.",
                             node.path
                         );
                     }
-
-                    if token_value_for_file.is_none() {
-                        // Fallback: read file and count tokens
-                        *processed_fallback += 1;
-                        log::debug!(
-                            "TokenCount (FALLBACK): Processing file {:?} for token counting directly.",
-                            node.path
-                        );
-                        match fs::read_to_string(&node.path) {
-                            Ok(content) => {
-                                let tokens_in_file = token_counter_ref.count_tokens(&content);
-                                token_value_for_file = Some(tokens_in_file);
-                            }
-                            Err(e) => {
-                                *failed_fallback += 1;
-                                log::error!(
-                                    "TokenCount (FALLBACK FAIL): Failed to read file {:?} for token counting: {}",
-                                    node.path,
-                                    e
-                                );
-                                // token_value_for_file remains None, contributing 0
-                            }
-                        }
-                    }
-                    *current_total_tokens += token_value_for_file.unwrap_or(0);
-                } // end if selected file
-
-                if node.is_dir {
-                    count_tokens_recursive_cached_inner(
-                        &node.children,
-                        cached_details_map,
-                        current_total_tokens,
-                        processed_cache,
-                        processed_fallback,
-                        failed_fallback,
-                        token_counter_ref,
-                    );
                 }
             }
         }
 
-        count_tokens_recursive_cached_inner(
+        sum_tokens_recursive(
             &self.file_system_snapshot_nodes,
-            &self.cached_file_token_details,
-            &mut total_tokens,
-            &mut files_processed_from_cache,
-            &mut files_processed_fallback,
-            &mut files_failed_fallback,
             token_counter,
+            &mut self.cached_file_token_details, // Pass mutable cache
+            &mut total_tokens,
+            &mut files_considered_for_total,
+            &mut files_failed_to_get_count,
         );
 
         self.cached_token_count = total_tokens;
         log::debug!(
-            "Token count updated: {}. Cache hits: {}, Fallbacks: {} ({} failed).",
+            "ProfileRuntimeData: update_total_token_count_for_selected_files complete. Total: {}. Files processed for sum: {} ({} failed to get count).",
             self.cached_token_count,
-            files_processed_from_cache,
-            files_processed_fallback,
-            files_failed_fallback
+            files_considered_for_total,
+            files_failed_to_get_count
         );
         self.cached_token_count
     }
@@ -564,36 +511,100 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
     /*
      * Creates a `Profile` instance (a snapshot) from the current session state.
      * This is used when saving the current working state as a named profile.
-     * TODO: Shouldn't call populate_file_details_recursive_for_save_internal?
+     * It iterates through selected files in the current snapshot and uses
+     * `self.cached_file_token_details` to populate the profile's `file_details`.
+     * The `_token_counter` argument is not used if relying solely on the cache.
      */
-    fn create_profile_snapshot(
-        &self,
-        new_profile_name: String,
-        token_counter: &dyn TokenCounterOperations,
-    ) -> Profile {
-        let mut selected_paths = HashSet::new();
-        let mut deselected_paths = HashSet::new();
-        let mut file_details_for_save = HashMap::new();
-
-        Self::gather_selected_deselected_paths_recursive_internal(
-            &self.file_system_snapshot_nodes,
-            &mut selected_paths,
-            &mut deselected_paths,
+    fn create_profile_snapshot(&self) -> Profile {
+        log::debug!(
+            "ProfileRuntimeData: Creating profile snapshot '{:?}' using cached details for selected files.",
+            self.profile_name
         );
+        let mut selected_paths_for_profile = HashSet::new();
+        let mut deselected_paths_for_profile = HashSet::new();
+        let mut file_details_for_save = HashMap::new(); // This will be populated
 
-        Self::populate_file_details_recursive_for_save_internal(
+        // Recursive helper to gather selection states and populate file_details_for_save
+        // from self.cached_file_token_details for selected files.
+        fn gather_states_and_cached_details_recursive(
+            nodes: &[FileNode],
+            cached_details: &HashMap<PathBuf, FileTokenDetails>, // Read-only access to the main cache
+            selected_paths_out: &mut HashSet<PathBuf>,
+            deselected_paths_out: &mut HashSet<PathBuf>,
+            file_details_out: &mut HashMap<PathBuf, FileTokenDetails>, // Populate this
+        ) {
+            for node in nodes {
+                if node.is_dir {
+                    // If the directory itself is marked selected/deselected, record its path.
+                    // Children's states will be handled individually.
+                    match node.state {
+                        FileState::Selected => {
+                            selected_paths_out.insert(node.path.clone());
+                        }
+                        FileState::Deselected => {
+                            deselected_paths_out.insert(node.path.clone());
+                        }
+                        FileState::New => {}
+                    }
+                    if !node.children.is_empty() {
+                        gather_states_and_cached_details_recursive(
+                            &node.children,
+                            cached_details,
+                            selected_paths_out,
+                            deselected_paths_out,
+                            file_details_out,
+                        );
+                    }
+                } else {
+                    // It's a file
+                    match node.state {
+                        FileState::Selected => {
+                            selected_paths_out.insert(node.path.clone());
+                            // Only add details for selected files to file_details_out
+                            if let Some(detail) = cached_details.get(&node.path) {
+                                // We trust the cache. The checksum in `detail` is what we save.
+                                // `node.checksum` is the latest from disk, but we're saving the cached state.
+                                file_details_out.insert(node.path.clone(), detail.clone());
+                                log::trace!(
+                                    "Snapshot: Using cached detail for selected file {:?}: (cs: {}, count: {})",
+                                    node.path,
+                                    detail.checksum,
+                                    detail.token_count
+                                );
+                            } else {
+                                // If a selected file isn't in the cache, its details won't be saved.
+                                // This implies it might have been recently selected and not yet processed by
+                                // update_total_token_count, or get_token_count_with_cache failed for it.
+                                log::warn!(
+                                    "Snapshot: Selected file {:?} not found in cache. Its details will not be saved in profile.",
+                                    node.path
+                                );
+                            }
+                        }
+                        FileState::Deselected => {
+                            deselected_paths_out.insert(node.path.clone());
+                        }
+                        FileState::New => {}
+                    }
+                }
+            }
+        }
+
+        gather_states_and_cached_details_recursive(
             &self.file_system_snapshot_nodes,
+            &self.cached_file_token_details, // Provide read-only access to the current cache
+            &mut selected_paths_for_profile,
+            &mut deselected_paths_for_profile,
             &mut file_details_for_save,
-            token_counter,
         );
 
         Profile {
-            name: new_profile_name,
+            name: self.profile_name.clone().unwrap_or_else(String::new),
             root_folder: self.root_path_for_scan.clone(),
-            selected_paths,
-            deselected_paths,
+            selected_paths: selected_paths_for_profile,
+            deselected_paths: deselected_paths_for_profile,
             archive_path: self.archive_path.clone(),
-            file_details: file_details_for_save,
+            file_details: file_details_for_save, // Use the selectively populated map
         }
     }
 
@@ -639,13 +650,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     self.profile_name
                 );
 
-                Self::update_cached_file_details_recursive_internal(
-                    &self.file_system_snapshot_nodes,
-                    &mut self.cached_file_token_details,
-                    token_counter,
-                );
-
-                self.update_total_token_count(token_counter);
+                self.update_total_token_count_for_selected_files(token_counter);
                 Ok(())
             }
             Err(e) => {
@@ -676,6 +681,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::checksum_utils;
     use crate::core::{
         FileNode, FileState, FileSystemError, FileSystemScannerOperations, Profile,
         StateManagerOperations, TokenCounterOperations,
@@ -940,11 +946,10 @@ mod tests {
         specific_token_counter.set_count_for_content(&file1_content_as_read, 10);
 
         // Act
-        let new_profile =
-            session_data.create_profile_snapshot("NewProfile".to_string(), &specific_token_counter);
+        let mut new_profile = session_data.create_profile_snapshot();
+        new_profile.name = "NewProfile".to_string();
 
         // Assert
-        assert_eq!(new_profile.name, "NewProfile");
         assert_eq!(new_profile.root_folder, temp_dir.path().join("new_root"));
         assert!(new_profile.selected_paths.contains(&file1_path));
         assert!(!new_profile.selected_paths.contains(&file2_path));
@@ -1021,7 +1026,7 @@ mod tests {
         let mock_token_counter = MockTokenCounter::new(0); // Default, should not be used
 
         // Act
-        let count = session_data.update_total_token_count(&mock_token_counter);
+        let count = session_data.update_total_token_count_for_selected_files(&mock_token_counter);
 
         // Assert
         assert_eq!(count, 30, "Expected 10 (f1) + 20 (f2) from cache");
@@ -1219,5 +1224,133 @@ mod tests {
         )
         .unwrap();
         assert_eq!(file1_node.state, FileState::New); // Should be unchanged
+    }
+
+    #[test]
+    fn test_update_total_token_count_cache_miss_or_stale_updates_cache_and_total() {
+        // Arrange
+        crate::initialize_logging();
+        let temp_dir = tempdir().unwrap();
+        let content_v1 = "version one content"; // 10 tokens (mocked)
+        let content_v2 = "version two new content"; // 20 tokens (mocked)
+
+        let (file_path, _g1) = create_temp_file_with_content(&temp_dir, "f_cache_test", content_v2);
+        let checksum_v2 = checksum_utils::calculate_sha256_checksum(&file_path).unwrap();
+
+        let mut mock_token_counter = MockTokenCounter::new(0);
+        mock_token_counter.set_count_for_content(&format!("{}\n", content_v1), 10); // For stale case
+        mock_token_counter.set_count_for_content(&format!("{}\n", content_v2), 20); // For miss/stale update
+
+        // Case 1: Cache Miss
+        let mut session_data_miss = ProfileRuntimeData {
+            profile_name: Some("TestProfileMiss".to_string()),
+            root_path_for_scan: temp_dir.path().to_path_buf(),
+            archive_path: None,
+            cached_file_token_details: HashMap::new(), // Empty cache -> miss
+            file_system_snapshot_nodes: vec![FileNode {
+                path: file_path.clone(),
+                name: "f_cache_test.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+                checksum: Some(checksum_v2.clone()), // Current checksum on disk
+            }],
+            cached_token_count: 0,
+        };
+        mock_token_counter.clear_call_log();
+
+        // Act (Cache Miss)
+        let total_miss =
+            session_data_miss.update_total_token_count_for_selected_files(&mock_token_counter);
+
+        // Assert (Cache Miss)
+        assert_eq!(
+            total_miss, 20,
+            "Total count should be 20 for v2 content after miss"
+        );
+        assert_eq!(session_data_miss.cached_token_count, 20);
+        assert_eq!(
+            mock_token_counter.get_call_log().len(),
+            1,
+            "Token counter should be called once on cache miss"
+        );
+        assert!(
+            mock_token_counter.get_call_log()[0].contains(content_v2),
+            "Token counter should have processed v2 content"
+        );
+        let details_after_miss = session_data_miss.get_cached_file_token_details();
+        assert!(
+            details_after_miss.contains_key(&file_path),
+            "Cache should now contain the file after miss"
+        );
+        let entry_miss = details_after_miss.get(&file_path).unwrap();
+        assert_eq!(
+            entry_miss.checksum, checksum_v2,
+            "Cache checksum should be v2 after miss"
+        );
+        assert_eq!(
+            entry_miss.token_count, 20,
+            "Cache token count should be 20 after miss"
+        );
+
+        // Case 2: Stale Checksum
+        let mut initial_stale_cache = HashMap::new();
+        initial_stale_cache.insert(
+            file_path.clone(),
+            FileTokenDetails {
+                checksum: "checksum_v1_stale".to_string(), // Stale checksum
+                token_count: 10,                           // Old token count for v1
+            },
+        );
+        let mut session_data_stale = ProfileRuntimeData {
+            profile_name: Some("TestProfileStale".to_string()),
+            root_path_for_scan: temp_dir.path().to_path_buf(),
+            archive_path: None,
+            cached_file_token_details: initial_stale_cache, // Cache has stale entry
+            file_system_snapshot_nodes: vec![FileNode {
+                path: file_path.clone(),
+                name: "f_cache_test.txt".into(),
+                is_dir: false,
+                state: FileState::Selected,
+                children: Vec::new(),
+                checksum: Some(checksum_v2.clone()), // Current checksum on disk is v2
+            }],
+            cached_token_count: 0,
+        };
+        mock_token_counter.clear_call_log();
+
+        // Act (Stale Checksum)
+        let total_stale =
+            session_data_stale.update_total_token_count_for_selected_files(&mock_token_counter);
+
+        // Assert (Stale Checksum)
+        assert_eq!(
+            total_stale, 20,
+            "Total count should be 20 for v2 content after stale"
+        );
+        assert_eq!(session_data_stale.cached_token_count, 20);
+        assert_eq!(
+            mock_token_counter.get_call_log().len(),
+            1,
+            "Token counter should be called once on stale checksum"
+        );
+        assert!(
+            mock_token_counter.get_call_log()[0].contains(content_v2),
+            "Token counter should have processed v2 content on stale"
+        );
+        let details_after_stale = session_data_stale.get_cached_file_token_details();
+        assert!(
+            details_after_stale.contains_key(&file_path),
+            "Cache should still contain the file after stale update"
+        );
+        let entry_stale = details_after_stale.get(&file_path).unwrap();
+        assert_eq!(
+            entry_stale.checksum, checksum_v2,
+            "Cache checksum should be updated to v2 after stale"
+        );
+        assert_eq!(
+            entry_stale.token_count, 20,
+            "Cache token count should be updated to 20 after stale"
+        );
     }
 }

@@ -256,7 +256,7 @@ mod tests {
         fn set_cached_file_token_details(&mut self, _details: HashMap<PathBuf, FileTokenDetails>) {
             unimplemented!()
         }
-        fn update_total_token_count(
+        fn update_total_token_count_for_selected_files(
             &mut self,
             _token_counter: &dyn TokenCounterOperations,
         ) -> usize {
@@ -265,11 +265,7 @@ mod tests {
         fn clear(&mut self) {
             unimplemented!()
         }
-        fn create_profile_snapshot(
-            &self,
-            _new_profile_name: String,
-            _token_counter: &dyn TokenCounterOperations,
-        ) -> Profile {
+        fn create_profile_snapshot(&self) -> Profile {
             unimplemented!()
         }
         fn load_profile_into_session(
