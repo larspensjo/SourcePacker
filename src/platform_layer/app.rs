@@ -11,12 +11,18 @@ use super::{types::MenuItemConfig, window_common};
 use windows::{
     Win32::{
         Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, RECT, TRUE, WPARAM},
+        Graphics::Gdi::{
+            BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, HDC, HGDIOBJ,
+            InvalidateRect, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+        },
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
-        UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
+        UI::Controls::{
+            ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, TVM_GETITEMRECT,
+        },
         UI::WindowsAndMessaging::*,
     },
-    core::{HSTRING, PCWSTR},
+    core::{BOOL, HSTRING, PCWSTR},
 };
 
 use std::collections::HashMap;
@@ -148,6 +154,138 @@ impl Win32ApiInternalState {
                 "Platform: Quit intent signaled. WM_QUIT will be posted when the last window closes."
             );
         }
+    }
+
+    /*
+     * Executes the `RedrawTreeItem` command, triggering an immediate repaint
+     * for a specific item in a TreeView. This is vital for updating custom-drawn
+     * elements, like the "New" item indicator, promptly after its underlying
+     * data state changes. The method translates the logical `item_id` to its
+     * native TreeView and item handles.
+     *
+     * Using these native handles, it retrieves the item's bounding rectangle via
+     * the `TVM_GETITEMRECT` message. A successful retrieval leads to invalidating
+     * just that specific rectangle with `InvalidateRect`. This action signals
+     * the OS to redraw the area, initiating the `NM_CUSTOMDRAW` sequence for the
+     * item and allowing its visual state to be updated. If getting the specific
+     * rectangle fails, the entire TreeView is invalidated as a fallback.
+     */
+    fn _execute_redraw_tree_item(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        item_id: TreeItemId,
+    ) -> PlatformResult<()> {
+        log::debug!(
+            "Win32ApiInternalState: _execute_redraw_tree_item for WinID {:?}, ItemID {:?}",
+            window_id,
+            item_id
+        );
+
+        let windows_guard = self.active_windows.read().map_err(|e| {
+            log::error!(
+                "Failed to acquire read lock on windows map for RedrawTreeItem: {:?}",
+                e
+            );
+            PlatformError::OperationFailed(
+                "Failed to lock active_windows map for RedrawTreeItem".into(),
+            )
+        })?;
+
+        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+            log::warn!("WindowId {:?} not found for RedrawTreeItem.", window_id);
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for RedrawTreeItem",
+                window_id
+            ))
+        })?;
+
+        let hwnd_treeview = window_data
+            .get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
+            .ok_or_else(|| {
+                log::warn!(
+                    "TreeView control not found for WinID {:?} during RedrawTreeItem.",
+                    window_id
+                );
+                PlatformError::InvalidHandle(format!(
+                    "TreeView control not found for WinID {:?} during RedrawTreeItem.",
+                    window_id
+                ))
+            })?;
+
+        if hwnd_treeview.is_invalid() {
+            log::warn!(
+                "TreeView HWND is invalid for WinID {:?} during RedrawTreeItem.",
+                window_id
+            );
+            return Err(PlatformError::InvalidHandle(format!(
+                "TreeView HWND is invalid for WinID {:?} during RedrawTreeItem.",
+                window_id
+            )));
+        }
+
+        let tv_state = window_data.treeview_state.as_ref().ok_or_else(|| {
+            log::warn!(
+                "TreeView state not found for WinID {:?} during RedrawTreeItem.",
+                window_id
+            );
+            PlatformError::OperationFailed(format!(
+                "TreeView state not found for WinID {:?} during RedrawTreeItem.",
+                window_id
+            ))
+        })?;
+
+        let htreeitem = tv_state.item_id_to_htreeitem.get(&item_id).ok_or_else(|| {
+            log::warn!(
+                "HTREEITEM not found for ItemID {:?} during RedrawTreeItem. Cannot invalidate.",
+                item_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "HTREEITEM not found for ItemID {:?} during RedrawTreeItem.",
+                item_id
+            ))
+        })?;
+
+        let mut item_rect = RECT::default();
+
+        // For TVM_GETITEMRECT, the HTREEITEM of the target item is passed by
+        // setting it as the value of the `left` field of the RECT structure
+        // pointed to by lParam. This is true whether wParam (fTextOnly) is
+        // TRUE (for text-only part) or FALSE (for the entire item line).
+        // We use wParam=0 (FALSE) to get the full line for invalidation.
+        item_rect.left = htreeitem.0 as i32; // Set the HTREEITEM into the RECT.left
+
+        let get_rect_success = unsafe {
+            SendMessageW(
+                hwnd_treeview,
+                TVM_GETITEMRECT,
+                Some(WPARAM(0)), // FALSE (0) for entire item line, not just text.
+                Some(LPARAM(&mut item_rect as *mut _ as isize)),
+            )
+        };
+
+        if get_rect_success.0 != 0 {
+            // Non-zero means success, item_rect is now populated
+            unsafe {
+                InvalidateRect(Some(hwnd_treeview), Some(&item_rect), true);
+            }
+            log::debug!(
+                "Invalidated rect {:?} for item ID {:?} (HTREEITEM {:?})",
+                item_rect,
+                item_id,
+                htreeitem
+            );
+        } else {
+            log::warn!(
+                "TVM_GETITEMRECT failed for item ID {:?} (HTREEITEM {:?}) during RedrawTreeItem. Invalidating whole control. Error: {:?}",
+                item_id,
+                htreeitem,
+                unsafe { GetLastError() }
+            );
+            unsafe {
+                InvalidateRect(Some(hwnd_treeview), None, true);
+            }
+        }
+        Ok(())
     }
 
     /*
@@ -295,7 +433,7 @@ impl Win32ApiInternalState {
                 self, window_id, label_id, text, severity,
             ),
             PlatformCommand::RedrawTreeItem { window_id, item_id } => {
-                todo!("RedrawTreeItem command not yet implemented")
+                self._execute_redraw_tree_item(window_id, item_id) // Call the new method
             }
         }
     }

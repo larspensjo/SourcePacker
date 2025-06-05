@@ -31,7 +31,7 @@ pub(crate) const ID_TREEVIEW_CTRL: i32 = 1001;
 
 #[derive(Debug)]
 pub(crate) struct TreeViewInternalState {
-    item_id_to_htreeitem: HashMap<TreeItemId, HTREEITEM>,
+    pub(crate) item_id_to_htreeitem: HashMap<TreeItemId, HTREEITEM>,
     pub(crate) htreeitem_to_item_id: HashMap<isize, TreeItemId>,
 }
 

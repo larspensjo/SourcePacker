@@ -460,6 +460,22 @@ impl MyAppLogic {
             }
         };
 
+        // Get the original state of the node before updating it.
+        let original_node_state_was_new = {
+            let app_data_guard = self.app_session_data_ops.lock().unwrap();
+            if let Some((original_state, _is_dir)) =
+                app_data_guard.get_node_attributes_for_path(&path_for_model_update)
+            {
+                original_state == SelectionState::New
+            } else {
+                log::warn!(
+                    "AppLogic: Could not get original node attributes for path {:?} to check if it was New.",
+                    path_for_model_update
+                );
+                false // Assume not new if we can't find it, to avoid unnecessary redraws
+            }
+        };
+
         let new_model_file_state = match new_check_state {
             CheckState::Checked => SelectionState::Selected,
             CheckState::Unchecked => SelectionState::Deselected,
@@ -487,7 +503,7 @@ impl MyAppLogic {
             {
                 let check_state_for_ui = match new_file_state {
                     SelectionState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked,
+                    _ => CheckState::Unchecked, // This includes Deselected and New (though New shouldn't be set here by update_folder_selection)
                 };
                 self.synchronous_command_queue.push_back(
                     PlatformCommand::UpdateTreeItemVisualState {
@@ -502,6 +518,22 @@ impl MyAppLogic {
                     changed_path
                 );
             }
+        }
+
+        // If the item's state *was* New and just changed (to Selected/Deselected),
+        // queue a command to redraw it so the custom "New" indicator disappears.
+        if original_node_state_was_new {
+            // The new_model_file_state will be Selected or Deselected, so it's implicitly not New anymore.
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::RedrawTreeItem {
+                    window_id, // The window_id from the event
+                    item_id,   // The item_id from the event (of the primary item toggled)
+                });
+            log::debug!(
+                "AppLogic: Item {:?} (path {:?}) was New and changed state. Queueing RedrawTreeItem.",
+                item_id,
+                path_for_model_update
+            );
         }
 
         self.update_current_archive_status();
