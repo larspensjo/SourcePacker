@@ -83,6 +83,20 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   Clearly display archive status (e.g., "Archive: Up-to-date"). Color-coding or icons. `[UiNotificationOutdatedArchiveV1]`
 *   **Usability:** Ensure status bar updates are immediate and clear.
 
+**## P3.2: Correct TreeView "New" Item Indicator Drawing**
+*   **Problem:** The custom drawing logic for indicating "New" files in the TreeView (blue circle) experiences issues:
+    *   `TVM_GETITEMRECT` frequently "fails" (returns 0) but `GetLastError()` also returns 0, particularly for items not currently visible or when parents are collapsed. This leads to error logs and the indicator not being drawn.
+    *   When `TVM_GETITEMRECT` "succeeds" for some items, it returns a very narrow rectangle, causing the indicator to be drawn incorrectly (e.g., over the item's icon/checkbox area instead of next to the text).
+*   **Action:**
+    1.  **Handle `TVM_GETITEMRECT` Return:** Modify `handle_nm_customdraw_treeview` in `platform_layer/window_common.rs` to treat a 0 return from `SendMessageW` with `TVM_GETITEMRECT` as a failure. Log this appropriately (e.g., DEBUG if expected for non-visible items) and skip drawing the indicator for that item in that pass.
+    2.  **Investigate Rectangle & Positioning:**
+        *   Thoroughly investigate why `TVM_GETITEMRECT` (with `wParam = FALSE`) sometimes returns a narrow rectangle. This might involve checking the item's state, visibility, and if its parent is expanded.
+        *   Adjust the drawing coordinates for the indicator circle to be correctly positioned relative to the item's text. This might involve using `TVM_GETITEMRECT` with `wParam = TRUE` (for text-only rectangle) and calculating an offset, or deriving a suitable offset from the full item rectangle if it can be reliably obtained.
+        *   Ensure the indicator is drawn only when the item is actually visible on screen and its state is "New".
+*   **Rationale:** Fixes visual glitches with the "New" item indicator, improves UI accuracy by correctly highlighting new files, and removes misleading error messages from the logs. This is crucial for the `[UiTreeViewVisualFileStatusV1]` feature.
+*   **Priority:** High
+*   **Tag:** `[BugFixTreeViewCustomDrawV1]`
+
 ## P3.3: File Content Viewer
 *   Add a read-only text control. `[UiContentViewerPanelReadOnlyV1]`
 *   Load selected file's content into the viewer.
