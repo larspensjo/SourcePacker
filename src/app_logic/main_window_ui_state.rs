@@ -178,7 +178,7 @@ mod tests {
     use super::*;
     use crate::app_logic::ui_constants;
     use crate::core::{
-        ArchiveStatus, FileNode, FileState, FileSystemScannerOperations, Profile,
+        ArchiveStatus, FileNode, SelectionState, FileSystemScannerOperations, Profile,
         ProfileRuntimeDataOperations, NodeStateApplicatorOperations, TokenCounterOperations,
         file_node::FileTokenDetails,
     };
@@ -239,15 +239,15 @@ mod tests {
         ) {
             unimplemented!()
         }
-        fn get_node_attributes_for_path(&self, _path: &Path) -> Option<(FileState, bool)> {
+        fn get_node_attributes_for_path(&self, _path: &Path) -> Option<(SelectionState, bool)> {
             unimplemented!()
         }
         fn update_node_state_and_collect_changes(
             &mut self,
             _path: &Path,
-            _new_state: FileState,
+            _new_state: SelectionState,
             _state_manager: &dyn NodeStateApplicatorOperations,
-        ) -> Vec<(PathBuf, FileState)> {
+        ) -> Vec<(PathBuf, SelectionState)> {
             unimplemented!()
         }
         fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {

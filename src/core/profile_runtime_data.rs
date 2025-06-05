@@ -6,7 +6,7 @@
  * this session data, facilitating dependency injection and testing.
  */
 use crate::core::{
-    FileNode, FileState, FileSystemScannerOperations, Profile, NodeStateApplicatorOperations,
+    FileNode, SelectionState, FileSystemScannerOperations, Profile, NodeStateApplicatorOperations,
     TokenCounterOperations, file_node::FileTokenDetails,
 };
 use std::{
@@ -44,13 +44,13 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
         selected_paths: &HashSet<PathBuf>,
         deselected_paths: &HashSet<PathBuf>,
     );
-    fn get_node_attributes_for_path(&self, path: &Path) -> Option<(FileState, bool)>; // (state, is_dir)
+    fn get_node_attributes_for_path(&self, path: &Path) -> Option<(SelectionState, bool)>; // (state, is_dir)
     fn update_node_state_and_collect_changes(
         &mut self,
         path: &Path,
-        new_state: FileState,
+        new_state: SelectionState,
         state_manager: &dyn NodeStateApplicatorOperations,
-    ) -> Vec<(PathBuf, FileState)>;
+    ) -> Vec<(PathBuf, SelectionState)>;
 
     // Token related data
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails>;
@@ -198,13 +198,13 @@ impl ProfileRuntimeData {
     ) {
         for node in nodes {
             match node.state {
-                FileState::Selected => {
+                SelectionState::Selected => {
                     selected.insert(node.path.clone());
                 }
-                FileState::Deselected => {
+                SelectionState::Deselected => {
                     deselected.insert(node.path.clone());
                 }
-                FileState::New => {}
+                SelectionState::New => {}
             }
             if node.is_dir && !node.children.is_empty() {
                 Self::gather_selected_deselected_paths_recursive_internal(
@@ -234,7 +234,7 @@ impl ProfileRuntimeData {
                 let file_path = &node.path;
                 let current_disk_checksum_opt = node.checksum.as_ref();
 
-                if node.state == FileState::Selected {
+                if node.state == SelectionState::Selected {
                     if let Some(disk_cs) = current_disk_checksum_opt {
                         let needs_recalculation = match cached_details_mut.get(file_path) {
                             Some(cached_entry) => {
@@ -320,7 +320,7 @@ impl ProfileRuntimeData {
     }
 
     // Helper: Collects (PathBuf, FileState) for a node and its children.
-    fn collect_node_states_recursive(node: &FileNode, updates: &mut Vec<(PathBuf, FileState)>) {
+    fn collect_node_states_recursive(node: &FileNode, updates: &mut Vec<(PathBuf, SelectionState)>) {
         updates.push((node.path.clone(), node.state));
         if node.is_dir {
             for child in &node.children {
@@ -380,7 +380,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         );
     }
 
-    fn get_node_attributes_for_path(&self, path: &Path) -> Option<(FileState, bool)> {
+    fn get_node_attributes_for_path(&self, path: &Path) -> Option<(SelectionState, bool)> {
         Self::find_node_recursive_ref(&self.file_system_snapshot_nodes, path)
             .map(|node| (node.state, node.is_dir))
     }
@@ -388,9 +388,9 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
     fn update_node_state_and_collect_changes(
         &mut self,
         path: &Path,
-        new_state: FileState,
+        new_state: SelectionState,
         state_manager: &dyn NodeStateApplicatorOperations,
-    ) -> Vec<(PathBuf, FileState)> {
+    ) -> Vec<(PathBuf, SelectionState)> {
         let mut collected_changes = Vec::new();
         if let Some(node_to_update) =
             Self::find_node_recursive_mut(&mut self.file_system_snapshot_nodes, path)
@@ -452,7 +452,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                         processed_count,
                         failed_count,
                     );
-                } else if node.state == FileState::Selected {
+                } else if node.state == SelectionState::Selected {
                     *processed_count += 1;
                     if node.checksum.is_some() {
                         if let Some(count) = ProfileRuntimeData::get_token_count_with_cache(
@@ -538,13 +538,13 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     // If the directory itself is marked selected/deselected, record its path.
                     // Children's states will be handled individually.
                     match node.state {
-                        FileState::Selected => {
+                        SelectionState::Selected => {
                             selected_paths_out.insert(node.path.clone());
                         }
-                        FileState::Deselected => {
+                        SelectionState::Deselected => {
                             deselected_paths_out.insert(node.path.clone());
                         }
-                        FileState::New => {}
+                        SelectionState::New => {}
                     }
                     if !node.children.is_empty() {
                         gather_states_and_cached_details_recursive(
@@ -558,7 +558,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                 } else {
                     // It's a file
                     match node.state {
-                        FileState::Selected => {
+                        SelectionState::Selected => {
                             selected_paths_out.insert(node.path.clone());
                             // Only add details for selected files to file_details_out
                             if let Some(detail) = cached_details.get(&node.path) {
@@ -581,10 +581,10 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                                 );
                             }
                         }
-                        FileState::Deselected => {
+                        SelectionState::Deselected => {
                             deselected_paths_out.insert(node.path.clone());
                         }
-                        FileState::New => {}
+                        SelectionState::New => {}
                     }
                 }
             }
@@ -683,7 +683,7 @@ mod tests {
     use super::*;
     use crate::core::checksum_utils;
     use crate::core::{
-        FileNode, FileState, FileSystemError, FileSystemScannerOperations, Profile,
+        FileNode, SelectionState, FileSystemError, FileSystemScannerOperations, Profile,
         NodeStateApplicatorOperations, TokenCounterOperations,
     };
     use std::collections::{HashMap, HashSet};
@@ -758,7 +758,7 @@ mod tests {
     struct MockStateManager {
         apply_profile_to_tree_calls:
             Mutex<Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)>>,
-        update_folder_selection_calls: Mutex<Vec<(PathBuf, FileState)>>,
+        update_folder_selection_calls: Mutex<Vec<(PathBuf, SelectionState)>>,
     }
 
     impl MockStateManager {
@@ -774,7 +774,7 @@ mod tests {
         ) -> Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)> {
             self.apply_profile_to_tree_calls.lock().unwrap().clone()
         }
-        fn get_update_folder_selection_calls(&self) -> Vec<(PathBuf, FileState)> {
+        fn get_update_folder_selection_calls(&self) -> Vec<(PathBuf, SelectionState)> {
             self.update_folder_selection_calls.lock().unwrap().clone()
         }
     }
@@ -794,11 +794,11 @@ mod tests {
             // Simulate actual behavior for test consistency
             for node in tree.iter_mut() {
                 if selected_paths.contains(&node.path) {
-                    node.state = FileState::Selected;
+                    node.state = SelectionState::Selected;
                 } else if deselected_paths.contains(&node.path) {
-                    node.state = FileState::Deselected;
+                    node.state = SelectionState::Deselected;
                 } else {
-                    node.state = FileState::New;
+                    node.state = SelectionState::New;
                 }
                 if node.is_dir && !node.children.is_empty() {
                     self.apply_selection_states_to_nodes(
@@ -809,7 +809,7 @@ mod tests {
                 }
             }
         }
-        fn update_folder_selection(&self, node: &mut FileNode, new_state: FileState) {
+        fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState) {
             self.update_folder_selection_calls
                 .lock()
                 .unwrap()
@@ -925,7 +925,7 @@ mod tests {
                     path: file1_path.clone(),
                     name: "file1.txt".into(),
                     is_dir: false,
-                    state: FileState::Selected,
+                    state: SelectionState::Selected,
                     children: Vec::new(),
                     checksum: Some("cs1".to_string()),
                 },
@@ -933,7 +933,7 @@ mod tests {
                     path: file2_path.clone(),
                     name: "file2.txt".into(),
                     is_dir: false,
-                    state: FileState::Deselected,
+                    state: SelectionState::Deselected,
                     children: Vec::new(),
                     checksum: Some("cs2".to_string()),
                 },
@@ -1008,7 +1008,7 @@ mod tests {
                     path: file1_path.clone(),
                     name: "f1.txt".into(),
                     is_dir: false,
-                    state: FileState::Selected,
+                    state: SelectionState::Selected,
                     children: Vec::new(),
                     checksum: Some(cs1.clone()),
                 },
@@ -1016,7 +1016,7 @@ mod tests {
                     path: file2_path.clone(),
                     name: "f2.txt".into(),
                     is_dir: false,
-                    state: FileState::Selected,
+                    state: SelectionState::Selected,
                     children: Vec::new(),
                     checksum: Some(cs2.clone()),
                 },
@@ -1093,7 +1093,7 @@ mod tests {
                 path: file1_path.clone(),
                 name: "f1.txt".into(),
                 is_dir: false,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: Vec::new(),
                 checksum: Some(file1_checksum_disk.clone()),
             },
@@ -1101,7 +1101,7 @@ mod tests {
                 path: file2_path.clone(),
                 name: "f2.txt".into(),
                 is_dir: false,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: Vec::new(),
                 checksum: Some(file2_checksum_disk.clone()),
             },
@@ -1153,7 +1153,7 @@ mod tests {
                 path: file1_path.clone(),
                 name: "file1.txt".into(),
                 is_dir: false,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: vec![],
                 checksum: None,
             },
@@ -1161,12 +1161,12 @@ mod tests {
                 path: dir1_path.clone(),
                 name: "dir1".into(),
                 is_dir: true,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: vec![FileNode {
                     path: file2_path.clone(),
                     name: "file2.txt".into(),
                     is_dir: false,
-                    state: FileState::New,
+                    state: SelectionState::New,
                     children: vec![],
                     checksum: None,
                 }],
@@ -1177,7 +1177,7 @@ mod tests {
         // Act: Select dir1 and its children
         let changes = session_data.update_node_state_and_collect_changes(
             &dir1_path,
-            FileState::Selected,
+            SelectionState::Selected,
             &mock_state_manager,
         );
 
@@ -1192,18 +1192,18 @@ mod tests {
         assert!(
             sm_calls
                 .iter()
-                .any(|(p, s)| p == &dir1_path && *s == FileState::Selected)
+                .any(|(p, s)| p == &dir1_path && *s == SelectionState::Selected)
         );
         assert!(
             sm_calls
                 .iter()
-                .any(|(p, s)| p == &file2_path && *s == FileState::Selected)
+                .any(|(p, s)| p == &file2_path && *s == SelectionState::Selected)
         );
 
         // Check collected changes
         assert_eq!(changes.len(), 2, "Expected 2 changes collected");
-        assert!(changes.contains(&(dir1_path.clone(), FileState::Selected)));
-        assert!(changes.contains(&(file2_path.clone(), FileState::Selected)));
+        assert!(changes.contains(&(dir1_path.clone(), SelectionState::Selected)));
+        assert!(changes.contains(&(file2_path.clone(), SelectionState::Selected)));
 
         // Verify internal state of ProfileRuntimeData reflects the change
         let dir1_node = ProfileRuntimeData::find_node_recursive_ref(
@@ -1211,19 +1211,19 @@ mod tests {
             &dir1_path,
         )
         .unwrap();
-        assert_eq!(dir1_node.state, FileState::Selected);
+        assert_eq!(dir1_node.state, SelectionState::Selected);
         let file2_node = ProfileRuntimeData::find_node_recursive_ref(
             &session_data.file_system_snapshot_nodes,
             &file2_path,
         )
         .unwrap();
-        assert_eq!(file2_node.state, FileState::Selected);
+        assert_eq!(file2_node.state, SelectionState::Selected);
         let file1_node = ProfileRuntimeData::find_node_recursive_ref(
             &session_data.file_system_snapshot_nodes,
             &file1_path,
         )
         .unwrap();
-        assert_eq!(file1_node.state, FileState::New); // Should be unchanged
+        assert_eq!(file1_node.state, SelectionState::New); // Should be unchanged
     }
 
     #[test]
@@ -1251,7 +1251,7 @@ mod tests {
                 path: file_path.clone(),
                 name: "f_cache_test.txt".into(),
                 is_dir: false,
-                state: FileState::Selected,
+                state: SelectionState::Selected,
                 children: Vec::new(),
                 checksum: Some(checksum_v2.clone()), // Current checksum on disk
             }],
@@ -1311,7 +1311,7 @@ mod tests {
                 path: file_path.clone(),
                 name: "f_cache_test.txt".into(),
                 is_dir: false,
-                state: FileState::Selected,
+                state: SelectionState::Selected,
                 children: Vec::new(),
                 checksum: Some(checksum_v2.clone()), // Current checksum on disk is v2
             }],

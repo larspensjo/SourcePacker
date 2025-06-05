@@ -1,7 +1,8 @@
 use crate::core::{
-    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode, FileState,
+    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode,
     FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, TokenCounterOperations, file_node::FileTokenDetails,
+    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
+    file_node::FileTokenDetails,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -127,7 +128,7 @@ impl MyAppLogic {
                 text: node.name.clone(),
                 is_folder: node.is_dir,
                 state: match node.state {
-                    FileState::Selected => CheckState::Checked,
+                    SelectionState::Selected => CheckState::Checked,
                     _ => CheckState::Unchecked,
                 },
                 children: Self::build_tree_item_descriptors_recursive_internal(
@@ -460,8 +461,8 @@ impl MyAppLogic {
         };
 
         let new_model_file_state = match new_check_state {
-            CheckState::Checked => FileState::Selected,
-            CheckState::Unchecked => FileState::Deselected,
+            CheckState::Checked => SelectionState::Selected,
+            CheckState::Unchecked => SelectionState::Deselected,
         };
 
         let collected_changes = self
@@ -485,7 +486,7 @@ impl MyAppLogic {
                 ui_state_ref.path_to_tree_item_id.get(&changed_path)
             {
                 let check_state_for_ui = match new_file_state {
-                    FileState::Selected => CheckState::Checked,
+                    SelectionState::Selected => CheckState::Checked,
                     _ => CheckState::Unchecked,
                 };
                 self.synchronous_command_queue.push_back(
@@ -1688,7 +1689,7 @@ impl PlatformEventHandler for MyAppLogic {
                     file_state,
                     is_dir
                 );
-                file_state == FileState::New && !is_dir
+                file_state == SelectionState::New && !is_dir
             }
             None => {
                 log::trace!(

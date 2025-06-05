@@ -3,10 +3,10 @@ use super::handler::*;
 use crate::app_logic::ui_constants;
 
 use crate::core::{
-    ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode, FileState,
+    ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
     FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
-    ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, TokenCounterOperations,
-    file_node::FileTokenDetails,
+    ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
+    TokenCounterOperations, file_node::FileTokenDetails,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
@@ -58,15 +58,15 @@ struct MockProfileRuntimeData {
     _set_snapshot_nodes_log: Vec<Vec<FileNode>>,
     _clear_snapshot_nodes_calls: usize,
     _apply_selection_states_to_snapshot_log: Vec<(HashSet<PathBuf>, HashSet<PathBuf>)>,
-    _update_node_state_and_collect_changes_log: Vec<(PathBuf, FileState)>,
+    _update_node_state_and_collect_changes_log: Vec<(PathBuf, SelectionState)>,
     _set_cached_file_token_details_log: Vec<HashMap<PathBuf, FileTokenDetails>>,
     _update_total_token_count_calls: usize,
     _clear_calls: usize,
     _load_profile_into_session_log: Vec<Profile>,
 
     // Mock results
-    get_node_attributes_for_path_result: Option<(FileState, bool)>,
-    update_node_state_and_collect_changes_result: Vec<(PathBuf, FileState)>,
+    get_node_attributes_for_path_result: Option<(SelectionState, bool)>,
+    update_node_state_and_collect_changes_result: Vec<(PathBuf, SelectionState)>,
     load_profile_into_session_result: Result<(), String>,
 }
 
@@ -135,13 +135,13 @@ impl MockProfileRuntimeData {
         self.cached_file_token_details = details;
     }
     #[allow(dead_code)]
-    fn set_get_node_attributes_for_path_result(&mut self, result: Option<(FileState, bool)>) {
+    fn set_get_node_attributes_for_path_result(&mut self, result: Option<(SelectionState, bool)>) {
         self.get_node_attributes_for_path_result = result;
     }
     #[allow(dead_code)]
     fn set_update_node_state_and_collect_changes_result(
         &mut self,
-        result: Vec<(PathBuf, FileState)>,
+        result: Vec<(PathBuf, SelectionState)>,
     ) {
         self.update_node_state_and_collect_changes_result = result;
     }
@@ -209,7 +209,7 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
         self._apply_selection_states_to_snapshot_log
             .push((selected_paths.clone(), deselected_paths.clone()));
     }
-    fn get_node_attributes_for_path(&self, path_to_find: &Path) -> Option<(FileState, bool)> {
+    fn get_node_attributes_for_path(&self, path_to_find: &Path) -> Option<(SelectionState, bool)> {
         // For a more functional mock, one might search self.snapshot_nodes here.
         // For now, returning a pre-set result is simpler for targeted tests.
         // self.get_node_attributes_for_path_calls.fetch_add(1, Ordering::Relaxed); // If tracking this call
@@ -218,9 +218,9 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     fn update_node_state_and_collect_changes(
         &mut self,
         path: &Path,
-        new_state: FileState,
+        new_state: SelectionState,
         _state_manager: &dyn NodeStateApplicatorOperations,
-    ) -> Vec<(PathBuf, FileState)> {
+    ) -> Vec<(PathBuf, SelectionState)> {
         self._update_node_state_and_collect_changes_log
             .push((path.to_path_buf(), new_state));
         self.update_node_state_and_collect_changes_result.clone()
@@ -623,7 +623,7 @@ impl ArchiverOperations for MockArchiver {
 
 struct MockStateManager {
     apply_profile_to_tree_calls: Mutex<Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)>>,
-    update_folder_selection_calls: Mutex<Vec<(FileNode, FileState)>>,
+    update_folder_selection_calls: Mutex<Vec<(FileNode, SelectionState)>>,
 }
 impl MockStateManager {
     fn new() -> Self {
@@ -639,7 +639,7 @@ impl MockStateManager {
         self.apply_profile_to_tree_calls.lock().unwrap().clone()
     }
     #[allow(dead_code)]
-    fn get_update_folder_selection_calls(&self) -> Vec<(FileNode, FileState)> {
+    fn get_update_folder_selection_calls(&self) -> Vec<(FileNode, SelectionState)> {
         self.update_folder_selection_calls.lock().unwrap().clone()
     }
 }
@@ -657,11 +657,11 @@ impl NodeStateApplicatorOperations for MockStateManager {
         ));
         for node in tree.iter_mut() {
             if selected_paths.contains(&node.path) {
-                node.state = FileState::Selected;
+                node.state = SelectionState::Selected;
             } else if deselected_paths.contains(&node.path) {
-                node.state = FileState::Deselected;
+                node.state = SelectionState::Deselected;
             } else {
-                node.state = FileState::New;
+                node.state = SelectionState::New;
             }
             if node.is_dir && !node.children.is_empty() {
                 self.apply_selection_states_to_nodes(
@@ -672,7 +672,7 @@ impl NodeStateApplicatorOperations for MockStateManager {
             }
         }
     }
-    fn update_folder_selection(&self, node: &mut FileNode, new_state: FileState) {
+    fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState) {
         self.update_folder_selection_calls
             .lock()
             .unwrap()
@@ -818,7 +818,7 @@ fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
         path: mock_file_path.clone(),
         name: "mock_startup_file.txt".into(),
         is_dir: false,
-        state: FileState::New,
+        state: SelectionState::New,
         children: vec![],
         checksum: Some("checksum_for_startup_file".to_string()),
     }];

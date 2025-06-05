@@ -13,11 +13,11 @@ pub mod file_node;
 pub mod file_system;
 pub mod profile_runtime_data;
 pub mod profiles;
-pub mod state_manager;
+pub mod node_state_applicator;
 pub mod tokenizer_utils;
 
 // Re-export key structures and enums
-pub use file_node::{ArchiveStatus, FileNode, FileState, Profile};
+pub use file_node::{ArchiveStatus, FileNode, SelectionState, Profile};
 
 // Re-export file system related items
 pub use file_system::{CoreFileSystemScanner, FileSystemError, FileSystemScannerOperations};
@@ -35,7 +35,7 @@ pub use config::{
     ConfigError, ConfigManagerOperations, CoreConfigManager as CoreConfigManagerForConfig,
 };
 
-pub use state_manager::{NodeStateApplicator, NodeStateApplicatorOperations};
+pub use node_state_applicator::{NodeStateApplicator, NodeStateApplicatorOperations};
 
 pub use tokenizer_utils::{
     CoreTikTokenCounter, SimpleWhitespaceTokenCounter, TokenCounterOperations,

@@ -9,15 +9,15 @@ use std::path::PathBuf;
  * (though current Profile doesn't serialize it directly). Default is added for convenience.
  */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FileState {
+pub enum SelectionState {
     Selected,
     Deselected,
     New,
 }
 
-impl Default for FileState {
+impl Default for SelectionState {
     fn default() -> Self {
-        FileState::New
+        SelectionState::New
     }
 }
 
@@ -31,7 +31,7 @@ pub struct FileNode {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
-    pub state: FileState,
+    pub state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
     pub checksum: Option<String>,
 }
@@ -47,7 +47,7 @@ impl FileNode {
             path,
             name,
             is_dir,
-            state: FileState::default(), // Initial state is Unknown
+            state: SelectionState::default(), // Initial state is Unknown
             children: Vec::new(),
             checksum: None,
         }
@@ -121,7 +121,7 @@ pub enum ArchiveStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileNode, FileState, FileTokenDetails, Profile};
+    use super::{FileNode, SelectionState, FileTokenDetails, Profile};
     use std::io;
     use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
 
@@ -132,7 +132,7 @@ mod tests {
         assert_eq!(n.path, p);
         assert_eq!(n.name, "foo");
         assert_eq!(n.is_dir, false);
-        assert_eq!(n.state, FileState::New);
+        assert_eq!(n.state, SelectionState::New);
         assert!(n.children.is_empty());
         assert!(n.checksum.is_none());
     }

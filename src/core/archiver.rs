@@ -1,4 +1,4 @@
-use super::file_node::{ArchiveStatus, FileNode, FileState, Profile};
+use super::file_node::{ArchiveStatus, FileNode, SelectionState, Profile};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -102,7 +102,7 @@ impl ArchiverOperations for CoreArchiver {
                 for child in node.children.iter().rev() {
                     buffer.push(child);
                 }
-            } else if node.state == FileState::Selected {
+            } else if node.state == SelectionState::Selected {
                 let display_path = node
                     .path
                     .strip_prefix(root_path_for_display)
@@ -184,7 +184,7 @@ impl ArchiverOperations for CoreArchiver {
                         current_newest,
                         has_any_selected,
                     )?;
-                } else if node.state == FileState::Selected {
+                } else if node.state == SelectionState::Selected {
                     *has_any_selected = true;
                     let file_ts = archiver.get_file_timestamp(&node.path)?;
                     if let Some(newest) = current_newest {
@@ -251,7 +251,7 @@ impl ArchiverOperations for CoreArchiver {
 #[cfg(test)]
 mod archiver_tests {
     use super::*;
-    use crate::core::file_node::{FileNode, FileState, Profile};
+    use crate::core::file_node::{FileNode, SelectionState, Profile};
     use std::fs::File;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -264,7 +264,7 @@ mod archiver_tests {
         base_path: &Path,
         name: &str,
         is_dir: bool,
-        state: FileState,
+        state: SelectionState,
         children: Vec<FileNode>,
     ) -> FileNode {
         FileNode {
@@ -311,21 +311,21 @@ mod archiver_tests {
             File::create(&file3_path)?.sync_all()?;
 
             let nodes = vec![
-                new_test_file_node(base_path, "file1.txt", false, FileState::Selected, vec![]),
+                new_test_file_node(base_path, "file1.txt", false, SelectionState::Selected, vec![]),
                 new_test_file_node(
                     base_path,
                     "subdir",
                     true,
-                    FileState::New,
+                    SelectionState::New,
                     vec![new_test_file_node(
                         &subdir_path,
                         "file2.rs",
                         false,
-                        FileState::Selected,
+                        SelectionState::Selected,
                         vec![],
                     )],
                 ),
-                new_test_file_node(base_path, "file3.md", false, FileState::Deselected, vec![]),
+                new_test_file_node(base_path, "file3.md", false, SelectionState::Deselected, vec![]),
             ];
 
             // Act
@@ -424,14 +424,14 @@ mod archiver_tests {
                     dir.path(),
                     "src_file1.txt",
                     false,
-                    FileState::Selected,
+                    SelectionState::Selected,
                     vec![],
                 ),
                 new_test_file_node(
                     dir.path(),
                     "src_file2.txt",
                     false,
-                    FileState::Selected,
+                    SelectionState::Selected,
                     vec![],
                 ),
             ];
@@ -489,10 +489,10 @@ mod archiver_tests {
                     dir.path(),
                     "file1.txt",
                     false,
-                    FileState::Deselected,
+                    SelectionState::Deselected,
                     vec![],
                 ),
-                new_test_file_node(dir.path(), "file2.txt", false, FileState::New, vec![]),
+                new_test_file_node(dir.path(), "file2.txt", false, SelectionState::New, vec![]),
             ];
 
             // Act
@@ -520,7 +520,7 @@ mod archiver_tests {
                 dir.path(),
                 "src_file.txt",
                 false,
-                FileState::Selected,
+                SelectionState::Selected,
                 vec![],
             )];
 
@@ -549,7 +549,7 @@ mod archiver_tests {
                 dir.path(),
                 "src_file.txt",
                 false,
-                FileState::Selected,
+                SelectionState::Selected,
                 vec![],
             )];
 
@@ -585,7 +585,7 @@ mod archiver_tests {
                 dir.path(),
                 "missing_src.txt",
                 false,
-                FileState::Selected,
+                SelectionState::Selected,
                 vec![],
             )];
 
@@ -608,8 +608,8 @@ mod archiver_tests {
             let dir = tempdir()?;
             let base_path = dir.path();
             let nodes = vec![
-                new_test_file_node(base_path, "file1.txt", false, FileState::Deselected, vec![]),
-                new_test_file_node(base_path, "file2.txt", false, FileState::New, vec![]),
+                new_test_file_node(base_path, "file1.txt", false, SelectionState::Deselected, vec![]),
+                new_test_file_node(base_path, "file2.txt", false, SelectionState::New, vec![]),
             ];
 
             // Act
@@ -632,7 +632,7 @@ mod archiver_tests {
                 base_path,
                 "non_existent_file.txt",
                 false,
-                FileState::Selected,
+                SelectionState::Selected,
                 vec![],
             )];
 
@@ -664,7 +664,7 @@ mod archiver_tests {
                 base_path,
                 "no_newline.txt",
                 false,
-                FileState::Selected,
+                SelectionState::Selected,
                 vec![],
             )];
 

@@ -1,4 +1,4 @@
-use super::file_node::{FileNode, FileState, Profile};
+use super::file_node::{FileNode, SelectionState, Profile};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -34,7 +34,7 @@ pub trait NodeStateApplicatorOperations: Send + Sync {
      * Sets the `new_state` on the provided `node` and all its descendant nodes.
      * Modifies the `node` and its children in place.
      */
-    fn update_folder_selection(&self, node: &mut FileNode, new_state: FileState);
+    fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState);
 }
 
 /*
@@ -69,11 +69,11 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
     ) {
         for node in tree.iter_mut() {
             if selected_paths.contains(&node.path) {
-                node.state = FileState::Selected;
+                node.state = SelectionState::Selected;
             } else if deselected_paths.contains(&node.path) {
-                node.state = FileState::Deselected;
+                node.state = SelectionState::Deselected;
             } else {
-                node.state = FileState::New;
+                node.state = SelectionState::New;
             }
 
             if node.is_dir && !node.children.is_empty() {
@@ -86,7 +86,7 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
         }
     }
 
-    fn update_folder_selection(&self, node: &mut FileNode, new_state: FileState) {
+    fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState) {
         // Logic moved from the old free function
         node.state = new_state;
         if node.is_dir {
@@ -100,7 +100,7 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::file_node::{FileNode, FileState, Profile}; // Ensure full path if needed
+    use crate::core::file_node::{FileNode, SelectionState, Profile}; // Ensure full path if needed
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -111,7 +111,7 @@ mod tests {
                 path: PathBuf::from("/root/file1.txt"),
                 name: "file1.txt".to_string(),
                 is_dir: false,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: vec![],
                 checksum: None,
             },
@@ -119,13 +119,13 @@ mod tests {
                 path: PathBuf::from("/root/dir1"),
                 name: "dir1".to_string(),
                 is_dir: true,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: vec![
                     FileNode {
                         path: PathBuf::from("/root/dir1/file2.txt"),
                         name: "file2.txt".to_string(),
                         is_dir: false,
-                        state: FileState::New,
+                        state: SelectionState::New,
                         children: vec![],
                         checksum: None,
                     },
@@ -133,12 +133,12 @@ mod tests {
                         path: PathBuf::from("/root/dir1/subdir"),
                         name: "subdir".to_string(),
                         is_dir: true,
-                        state: FileState::New,
+                        state: SelectionState::New,
                         children: vec![FileNode {
                             path: PathBuf::from("/root/dir1/subdir/file3.txt"),
                             name: "file3.txt".to_string(),
                             is_dir: false,
-                            state: FileState::New,
+                            state: SelectionState::New,
                             children: vec![],
                             checksum: None,
                         }],
@@ -151,7 +151,7 @@ mod tests {
                 path: PathBuf::from("/root/file4.ext"), // Different extension
                 name: "file4.ext".to_string(),
                 is_dir: false,
-                state: FileState::New,
+                state: SelectionState::New,
                 children: vec![],
                 checksum: None,
             },
@@ -183,12 +183,12 @@ mod tests {
         manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
-        assert_eq!(tree[0].state, FileState::Selected); // file1.txt
-        assert_eq!(tree[1].state, FileState::New); // dir1
-        assert_eq!(tree[1].children[0].state, FileState::Deselected); // dir1/file2.txt
-        assert_eq!(tree[1].children[1].state, FileState::New); // dir1/subdir
-        assert_eq!(tree[1].children[1].children[0].state, FileState::Selected); // dir1/subdir/file3.txt
-        assert_eq!(tree[2].state, FileState::New); // file4.ext
+        assert_eq!(tree[0].state, SelectionState::Selected); // file1.txt
+        assert_eq!(tree[1].state, SelectionState::New); // dir1
+        assert_eq!(tree[1].children[0].state, SelectionState::Deselected); // dir1/file2.txt
+        assert_eq!(tree[1].children[1].state, SelectionState::New); // dir1/subdir
+        assert_eq!(tree[1].children[1].children[0].state, SelectionState::Selected); // dir1/subdir/file3.txt
+        assert_eq!(tree[2].state, SelectionState::New); // file4.ext
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         // Arrange
         let manager = NodeStateApplicator::new();
         let mut tree = create_test_tree();
-        tree[0].state = FileState::Selected; // Pre-set state
+        tree[0].state = SelectionState::Selected; // Pre-set state
 
         let mut selected_paths = HashSet::new();
         selected_paths.insert(PathBuf::from("/root/dir1/file2.txt"));
@@ -206,8 +206,8 @@ mod tests {
         manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
-        assert_eq!(tree[0].state, FileState::New); // Should revert to New as it's not in selected_paths
-        assert_eq!(tree[1].children[0].state, FileState::Selected); // dir1/file2.txt should be selected
+        assert_eq!(tree[0].state, SelectionState::New); // Should revert to New as it's not in selected_paths
+        assert_eq!(tree[1].children[0].state, SelectionState::Selected); // dir1/file2.txt should be selected
     }
 
     #[test]
@@ -217,14 +217,14 @@ mod tests {
             let mut tree = create_test_tree();
 
             // Act
-            manager.update_folder_selection(&mut tree[1], FileState::Selected);
+            manager.update_folder_selection(&mut tree[1], SelectionState::Selected);
 
             // Assert
-            assert_eq!(tree[1].state, FileState::Selected);
-            assert_eq!(tree[1].children[0].state, FileState::Selected);
-            assert_eq!(tree[1].children[1].state, FileState::Selected);
-            assert_eq!(tree[1].children[1].children[0].state, FileState::Selected);
-            assert_eq!(tree[0].state, FileState::New); // Other nodes unaffected
+            assert_eq!(tree[1].state, SelectionState::Selected);
+            assert_eq!(tree[1].children[0].state, SelectionState::Selected);
+            assert_eq!(tree[1].children[1].state, SelectionState::Selected);
+            assert_eq!(tree[1].children[1].children[0].state, SelectionState::Selected);
+            assert_eq!(tree[0].state, SelectionState::New); // Other nodes unaffected
         });
     }
 
@@ -233,16 +233,16 @@ mod tests {
         test_with_state_manager(|manager| {
             // Arrange
             let mut tree = create_test_tree();
-            manager.update_folder_selection(&mut tree[1], FileState::Selected); // Pre-select
+            manager.update_folder_selection(&mut tree[1], SelectionState::Selected); // Pre-select
 
             // Act
-            manager.update_folder_selection(&mut tree[1], FileState::Deselected); // Then deselect
+            manager.update_folder_selection(&mut tree[1], SelectionState::Deselected); // Then deselect
 
             // Assert
-            assert_eq!(tree[1].state, FileState::Deselected);
-            assert_eq!(tree[1].children[0].state, FileState::Deselected);
-            assert_eq!(tree[1].children[1].state, FileState::Deselected);
-            assert_eq!(tree[1].children[1].children[0].state, FileState::Deselected);
+            assert_eq!(tree[1].state, SelectionState::Deselected);
+            assert_eq!(tree[1].children[0].state, SelectionState::Deselected);
+            assert_eq!(tree[1].children[1].state, SelectionState::Deselected);
+            assert_eq!(tree[1].children[1].children[0].state, SelectionState::Deselected);
         });
     }
 
@@ -253,12 +253,12 @@ mod tests {
             let mut tree = create_test_tree();
 
             // Act & Assert for Selected
-            manager.update_folder_selection(&mut tree[0], FileState::Selected);
-            assert_eq!(tree[0].state, FileState::Selected);
+            manager.update_folder_selection(&mut tree[0], SelectionState::Selected);
+            assert_eq!(tree[0].state, SelectionState::Selected);
 
             // Act & Assert for Deselected
-            manager.update_folder_selection(&mut tree[0], FileState::Deselected);
-            assert_eq!(tree[0].state, FileState::Deselected);
+            manager.update_folder_selection(&mut tree[0], SelectionState::Deselected);
+            assert_eq!(tree[0].state, SelectionState::Deselected);
 
             // Children should remain empty as it's a file node
             assert_eq!(tree[0].children.len(), 0);
