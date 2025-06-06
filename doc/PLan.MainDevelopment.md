@@ -12,25 +12,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
 
-### P2.11.3: Code Health & Refactoring (Medium Priority)
-*   **Ergonomic Access to `Win32ApiInternalState.active_windows`:**
-    *   **Problem:** Direct locking of `active_windows` can be verbose.
-    *   **Action:** Evaluate creating specialized helper methods on `Win32ApiInternalState` for common `active_windows` access patterns. For example:
-        ```rust
-        // In Win32ApiInternalState
-        pub(crate) fn with_window_data<F, R>(&self, window_id: WindowId, op: F) -> PlatformResult<R>
-        where
-            F: FnOnce(&window_common::NativeWindowData) -> R,
-        { /* ... */ }
-
-        pub(crate) fn with_window_data_mut<F, R>(&self, window_id: WindowId, op: F) -> PlatformResult<R>
-        where
-            F: FnOnce(&mut window_common::NativeWindowData) -> R,
-        { /* ... */ }
-        ```
-    *   **Rationale:** Can enhance code readability and reduce boilerplate.
-    *   **Status:** Potential improvement.
-
 ### P2.11.4: Testing Improvements (Medium Priority)
 *   **Integration Testing Considerations for `PlatformInterface::main_event_loop()`:**
     *   **Problem:** The main event loop is complex to unit test.
