@@ -61,7 +61,7 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   **Priority:** High
 *   **Tag:** `[BugFixTreeViewCustomDrawV1]`
 
-## P3.3: File Content Viewer
+## P3.3: File Content Viewer (preview)
 *   Add a read-only text control. `[UiContentViewerPanelReadOnlyV1]`
 *   Load selected file's content into the viewer.
 
@@ -76,6 +76,8 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   "Edit Profile": Allow changing name, root folder (triggers rescan), `archive_path`. `[UiMenuSetRootFolderV1]`
 *   "Duplicate Profile" dialog. `[ProfileOpDuplicateExistingV1]`
 *   "Delete Profile": Confirm, remove file. If active, trigger profile selection. `[ProfileOpDeleteExistingV1]`
+
+## P3.7: But to expand the whole tree
 
 # Phase 4: Advanced Features (Optional / Future)
 
