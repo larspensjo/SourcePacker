@@ -649,10 +649,9 @@ impl MyAppLogic {
     }
 
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
-        log::warn!(
-            "Button with control_id {} clicked on window {:?}, but no specific action is currently mapped to it.",
-            control_id,
-            window_id
+        unimplemented!(
+            "ButtonClicked handler not implemented for control_id: {}",
+            control_id
         );
     }
 
