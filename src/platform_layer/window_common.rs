@@ -379,40 +379,10 @@ impl Win32ApiInternalState {
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
             }
             WM_CTLCOLORSTATIC => {
-                // TODO: Move this to a separate function
-                let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
-                let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
+                lresult_override = self._handle_wm_ctlcolorstatic(window_id, wparam, lparam);
+            }
 
-                let mut handled = false;
-                if let Some(windows_map_guard) = self.active_windows.read().ok() {
-                    if let Some(window_data) = windows_map_guard.get(&window_id) {
-                        let control_id_of_static =
-                            unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
-                        if let Some(severity) =
-                            window_data.label_severities.get(&control_id_of_static)
-                        {
-                            unsafe {
-                                let color = match severity {
-                                    MessageSeverity::Error => COLORREF(0x000000FF),
-                                    MessageSeverity::Warning => COLORREF(0x0000A5FF),
-                                    _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
-                                };
-                                SetTextColor(hdc_static_ctrl, color);
-                                SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                                lresult_override =
-                                    Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
-                                handled = true;
-                            }
-                        }
-                    }
-                }
-                if !handled {
-                    return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
-                }
-            }
-            _ => {
-                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
-            }
+            _ => {}
         }
 
         if let Some(event) = event_to_send {
@@ -922,6 +892,47 @@ impl Win32ApiInternalState {
             rules,
             &window_data.controls,
         );
+    }
+
+    /*
+     * Handles the WM_CTLCOLORSTATIC message for a window.
+     * This is called when a static control (like a label) is about to be drawn.
+     * It sets the text color based on the severity stored in NativeWindowData.label_severities
+     * and makes the background transparent.
+     * Returns the LRESULT for the message, if it was handled.
+     */
+    fn _handle_wm_ctlcolorstatic(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        wparam: WPARAM, // HDC of the static control
+        lparam: LPARAM, // HWND of the static control
+    ) -> Option<LRESULT> {
+        let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
+        let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
+
+        if let Some(windows_map_guard) = self.active_windows.read().ok() {
+            if let Some(window_data) = windows_map_guard.get(&window_id) {
+                let control_id_of_static = unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
+                if let Some(severity) = window_data.label_severities.get(&control_id_of_static) {
+                    unsafe {
+                        let color = match severity {
+                            MessageSeverity::Error => COLORREF(0x000000FF), // Red
+                            MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish
+                            _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),   // Default text color
+                        };
+                        SetTextColor(hdc_static_ctrl, color);
+                        SetBkMode(hdc_static_ctrl, TRANSPARENT);
+                        // For STATIC controls, returning a brush for the background can be tricky
+                        // if you want true transparency matching the parent.
+                        // Often, GetStockObject(NULL_BRUSH) is used for transparency.
+                        // If the parent is a standard dialog/window, GetSysColorBrush(COLOR_WINDOW) is fine.
+                        // For this app, assuming default window background.
+                        return Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
+                    }
+                }
+            }
+        }
+        None // Not handled
     }
 
     /*
