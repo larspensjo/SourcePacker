@@ -14,7 +14,7 @@ use super::types::{
 };
 use super::window_common; // For window_common operations like set_window_title
 
-use crate::platform_layer::window_common::{BUTTON_AREA_HEIGHT, SS_LEFT, WC_BUTTON, WC_STATIC};
+use crate::platform_layer::window_common::{SS_LEFT, WC_BUTTON, WC_STATIC};
 use std::sync::Arc;
 use windows::{
     Win32::{
@@ -28,9 +28,9 @@ use windows::{
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING, PostQuitMessage,
-                SendMessageW, SetMenu, SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
-                WS_BORDER, WS_CHILD, WS_VISIBLE,
+                DestroyMenu, GetClientRect, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING,
+                PostQuitMessage, SendMessageW, SetMenu, SetWindowTextW, WINDOW_EX_STYLE,
+                WINDOW_STYLE, WM_SETFONT, WS_BORDER, WS_CHILD, WS_VISIBLE,
             },
         },
     },
@@ -61,18 +61,27 @@ pub(crate) fn execute_define_layout(
     })?;
 
     if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+        // Store the rules
         window_data.layout_rules = Some(rules);
         log::debug!(
             "CommandExecutor: Stored layout rules for WinID {:?}",
             window_id
         );
-        Ok(())
     } else {
-        Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for execute_define_layout",
+        return Err(PlatformError::InvalidHandle(format!(
+            "WindowId {:?} not found for execute_define_layout storage",
             window_id
-        )))
+        )));
     }
+    // Explicitly drop the write guard before calling trigger_layout_recalculation,
+    // as trigger_layout_recalculation will take its own read lock.
+    drop(windows_map_guard);
+
+    // Now trigger the layout recalculation.
+    // This will acquire its own read lock on active_windows.
+    internal_state.trigger_layout_recalculation(window_id);
+
+    Ok(())
 }
 
 /*

@@ -59,12 +59,12 @@ pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);
 
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
-pub const BUTTON_AREA_HEIGHT: i32 = 50;
-pub const STATUS_BAR_HEIGHT: i32 = 25;
-pub(crate) const BUTTON_X_PADDING: i32 = 10;
-const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // No longer used by new layout logic
-pub(crate) const BUTTON_WIDTH: i32 = 150;
-pub(crate) const BUTTON_HEIGHT: i32 = 30;
+// pub const BUTTON_AREA_HEIGHT: i32 = 50; // No longer used directly by generic layout
+pub const STATUS_BAR_HEIGHT: i32 = 25; // Still used by ui_description_layer for fixed_size
+// pub(crate) const BUTTON_X_PADDING: i32 = 10; // No longer used directly
+// const BUTTON_Y_PADDING_IN_AREA: i32 = 10; // No longer used by new layout logic
+// pub(crate) const BUTTON_WIDTH: i32 = 150; // No longer used directly
+// pub(crate) const BUTTON_HEIGHT: i32 = 30; // No longer used directly
 
 // A constant for an invalid HWND, useful for initializing or comparisons.
 pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
@@ -94,7 +94,7 @@ pub(crate) struct NativeWindowData {
     pub(crate) menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
     pub(crate) next_menu_item_id_counter: i32,
-    // ayout rules for controls within this window.
+    // Layout rules for controls within this window.
     pub(crate) layout_rules: Option<Vec<LayoutRule>>,
     /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
@@ -120,14 +120,6 @@ impl NativeWindowData {
         let id = self.next_menu_item_id_counter;
         self.next_menu_item_id_counter += 1;
         id
-    }
-
-    // Helper to check if rules for the main controls are present.
-    // Used by handle_wm_size to decide which layout logic path to take.
-    fn has_main_layout_rules(&self) -> bool {
-        self.layout_rules
-            .as_ref()
-            .map_or(false, |rules| !rules.is_empty())
     }
 }
 
@@ -605,16 +597,344 @@ impl Win32ApiInternalState {
     }
 
     /*
+     * Retrieves the HWND of the parent control for a given logical control ID.
+     * If parent_control_id is None, it returns the main window's HWND.
+     * Otherwise, it looks up the parent control's HWND from the NativeWindowData.controls map.
+     */
+    fn get_parent_hwnd(
+        window_data: &NativeWindowData,
+        parent_control_id: Option<i32>,
+    ) -> Option<HWND> {
+        match parent_control_id {
+            None => Some(window_data.hwnd), // Main window is the parent
+            Some(id) => window_data.get_control_hwnd(id),
+        }
+    }
+
+    /*
+     * Applies layout rules to child controls within a given parent rectangle.
+     * This function is called recursively to handle hierarchical layouts.
+     * It filters rules for direct children of the specified parent_id, sorts them,
+     * and positions them according to their DockStyle and other properties.
+     * For child controls that are themselves panels with layout rules, it recurses.
+     */
+    fn apply_layout_rules_for_children(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        parent_id_for_layout: Option<i32>, // Logical ID of the parent control, None for main window
+        parent_rect: RECT,                 // Client rectangle of the parent HWND
+        all_window_rules: &[LayoutRule],
+        all_controls_map: &HashMap<i32, HWND>,
+    ) {
+        log::trace!(
+            "Applying layout for parent_id {:?}, rect: {:?}",
+            parent_id_for_layout,
+            parent_rect
+        );
+
+        let mut child_rules: Vec<&LayoutRule> = all_window_rules
+            .iter()
+            .filter(|r| r.parent_control_id == parent_id_for_layout)
+            .collect();
+        child_rules.sort_by_key(|r| r.order);
+
+        let mut current_available_rect = parent_rect;
+        let mut fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
+        let mut proportional_fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
+
+        for rule in &child_rules {
+            let control_hwnd_opt = all_controls_map.get(&rule.control_id).copied();
+            if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
+                log::warn!(
+                    "Layout: HWND for control ID {} not found or invalid, skipping layout.",
+                    rule.control_id
+                );
+                continue;
+            }
+            let control_hwnd = control_hwnd_opt.unwrap();
+
+            match rule.dock_style {
+                DockStyle::Top | DockStyle::Bottom | DockStyle::Left | DockStyle::Right => {
+                    let mut item_rect = RECT {
+                        left: current_available_rect.left + rule.margin.3,
+                        top: current_available_rect.top + rule.margin.0,
+                        right: current_available_rect.right - rule.margin.1,
+                        bottom: current_available_rect.bottom - rule.margin.2,
+                    };
+
+                    let size = rule.fixed_size.unwrap_or(0);
+
+                    match rule.dock_style {
+                        DockStyle::Top => {
+                            item_rect.bottom = item_rect.top + size;
+                            current_available_rect.top = item_rect.bottom + rule.margin.2;
+                        }
+                        DockStyle::Bottom => {
+                            item_rect.top = item_rect.bottom - size;
+                            current_available_rect.bottom = item_rect.top - rule.margin.0;
+                        }
+                        DockStyle::Left => {
+                            item_rect.right = item_rect.left + size;
+                            current_available_rect.left = item_rect.right + rule.margin.1;
+                        }
+                        DockStyle::Right => {
+                            item_rect.left = item_rect.right - size;
+                            current_available_rect.right = item_rect.left - rule.margin.3;
+                        }
+                        _ => unreachable!(), // Already filtered
+                    }
+                    unsafe {
+                        MoveWindow(
+                            control_hwnd,
+                            item_rect.left,
+                            item_rect.top,
+                            (item_rect.right - item_rect.left).max(0),
+                            (item_rect.bottom - item_rect.top).max(0),
+                            true,
+                        );
+                    }
+                    // If this control is a panel, recursively layout its children
+                    if all_window_rules
+                        .iter()
+                        .any(|r| r.parent_control_id == Some(rule.control_id))
+                    {
+                        let panel_client_rect = RECT {
+                            left: 0,
+                            top: 0,
+                            right: (item_rect.right - item_rect.left).max(0),
+                            bottom: (item_rect.bottom - item_rect.top).max(0),
+                        };
+                        self.apply_layout_rules_for_children(
+                            window_id,
+                            Some(rule.control_id),
+                            panel_client_rect, // The new client rect for this panel
+                            all_window_rules,
+                            all_controls_map,
+                        );
+                    }
+                }
+                DockStyle::Fill => {
+                    fill_candidates.push((rule, control_hwnd));
+                }
+                DockStyle::ProportionalFill { .. } => {
+                    proportional_fill_candidates.push((rule, control_hwnd));
+                }
+                DockStyle::None => { /* No automated layout */ }
+            }
+        }
+
+        // Handle ProportionalFill candidates (assuming horizontal layout for now)
+        if !proportional_fill_candidates.is_empty() {
+            let total_width_for_proportional =
+                (current_available_rect.right - current_available_rect.left).max(0);
+            let total_height_for_proportional =
+                (current_available_rect.bottom - current_available_rect.top).max(0);
+
+            let total_weight: f32 = proportional_fill_candidates
+                .iter()
+                .map(|(rule, _)| {
+                    if let DockStyle::ProportionalFill { weight } = rule.dock_style {
+                        weight
+                    } else {
+                        0.0
+                    }
+                })
+                .sum();
+
+            if total_weight > 0.0 {
+                let mut current_x = current_available_rect.left;
+                for (rule, control_hwnd) in proportional_fill_candidates {
+                    if let DockStyle::ProportionalFill { weight } = rule.dock_style {
+                        let proportion = weight / total_weight;
+                        let item_width = (total_width_for_proportional as f32 * proportion) as i32;
+
+                        let final_x = current_x + rule.margin.3;
+                        let final_y = current_available_rect.top + rule.margin.0;
+                        let final_width = (item_width - rule.margin.3 - rule.margin.1).max(0);
+                        let final_height =
+                            (total_height_for_proportional - rule.margin.0 - rule.margin.2).max(0);
+
+                        unsafe {
+                            MoveWindow(
+                                control_hwnd,
+                                final_x,
+                                final_y,
+                                final_width,
+                                final_height,
+                                true,
+                            );
+                        }
+                        current_x += item_width;
+
+                        // If this proportional item is a panel, recursively layout its children
+                        if all_window_rules
+                            .iter()
+                            .any(|r| r.parent_control_id == Some(rule.control_id))
+                        {
+                            let panel_client_rect_prop = RECT {
+                                left: 0,
+                                top: 0,
+                                right: final_width,
+                                bottom: final_height,
+                            };
+                            self.apply_layout_rules_for_children(
+                                window_id,
+                                Some(rule.control_id),
+                                panel_client_rect_prop,
+                                all_window_rules,
+                                all_controls_map,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle Fill candidates (only one Fill per parent is typical)
+        if let Some((rule, control_hwnd)) = fill_candidates.first() {
+            if fill_candidates.len() > 1 {
+                log::warn!(
+                    "Layout: Multiple Fill controls for parent_id {:?}. Only the first one (ID {}) will be used.",
+                    parent_id_for_layout,
+                    rule.control_id
+                );
+            }
+            let fill_rect = RECT {
+                left: current_available_rect.left + rule.margin.3,
+                top: current_available_rect.top + rule.margin.0,
+                right: current_available_rect.right - rule.margin.1,
+                bottom: current_available_rect.bottom - rule.margin.2,
+            };
+            unsafe {
+                MoveWindow(
+                    *control_hwnd,
+                    fill_rect.left,
+                    fill_rect.top,
+                    (fill_rect.right - fill_rect.left).max(0),
+                    (fill_rect.bottom - fill_rect.top).max(0),
+                    true,
+                );
+            }
+            // If the Fill control is a panel, recursively layout its children
+            if all_window_rules
+                .iter()
+                .any(|r| r.parent_control_id == Some(rule.control_id))
+            {
+                let panel_client_rect_fill = RECT {
+                    left: 0,
+                    top: 0,
+                    right: (fill_rect.right - fill_rect.left).max(0),
+                    bottom: (fill_rect.bottom - fill_rect.top).max(0),
+                };
+                self.apply_layout_rules_for_children(
+                    window_id,
+                    Some(rule.control_id),
+                    panel_client_rect_fill, // The new client rect for this panel
+                    all_window_rules,
+                    all_controls_map,
+                );
+            }
+        }
+    }
+
+    /*
+     * Triggers a recalculation and application of layout rules for the specified window.
+     * This function retrieves the window's current client rectangle and its defined layout rules,
+     * then initiates the hierarchical layout process starting from the main window area.
+     * It's typically called after layout rules are defined or changed, or when an explicit
+     * re-layout is required.
+     */
+    pub(crate) fn trigger_layout_recalculation(self: &Arc<Self>, window_id: WindowId) {
+        log::debug!(
+            "Win32ApiInternalState: trigger_layout_recalculation called for WinID {:?}",
+            window_id
+        );
+
+        let active_windows_guard = match self.active_windows.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                log::error!(
+                    "Failed to get read lock on active_windows for trigger_layout_recalculation: {:?}",
+                    e
+                );
+                return;
+            }
+        };
+
+        let window_data = match active_windows_guard.get(&window_id) {
+            Some(data) => data,
+            None => {
+                log::warn!(
+                    "trigger_layout_recalculation: WindowData not found for WinID {:?}.",
+                    window_id
+                );
+                return;
+            }
+        };
+
+        if window_data.hwnd.is_invalid() {
+            log::warn!(
+                "trigger_layout_recalculation: HWND for WinID {:?} is invalid. Cannot layout.",
+                window_id
+            );
+            return;
+        }
+
+        let rules = match &window_data.layout_rules {
+            Some(rules) => rules,
+            None => {
+                log::debug!(
+                    "trigger_layout_recalculation: Layout rules are None for WinID {:?}. Cannot layout.",
+                    window_id
+                );
+                return;
+            }
+        };
+
+        if rules.is_empty() {
+            log::debug!(
+                "trigger_layout_recalculation: No layout rules to apply for WinID {:?}",
+                window_id
+            );
+            return;
+        }
+
+        let mut client_rect = RECT::default();
+        if unsafe { GetClientRect(window_data.hwnd, &mut client_rect) }.is_err() {
+            log::error!(
+                "trigger_layout_recalculation: GetClientRect failed for WinID {:?}. Error: {:?}",
+                window_id,
+                unsafe { GetLastError() }
+            );
+            return;
+        }
+
+        log::trace!(
+            "Win32ApiInternalState: Applying layout with client_rect: {:?}, for WinID {:?}",
+            client_rect,
+            window_id
+        );
+
+        self.apply_layout_rules_for_children(
+            window_id,
+            None,
+            client_rect,
+            rules,
+            &window_data.controls,
+        );
+    }
+
+    /*
      * Handles the WM_SIZE message for a window.
      * This is called when the window's size changes.
-     * If `layout_rules` are present in `NativeWindowData`
-     * it uses new logic to position these controls
-     * based on the rules. Otherwise, it falls back to the original hardcoded layout logic.
+     * It retrieves the layout rules and control HWNDs from NativeWindowData and
+     * initiates the hierarchical layout process by calling `apply_layout_rules_for_children`
+     * for the main window (parent_id_for_layout: None).
      * It generates an `AppEvent::WindowResized`.
      */
     fn handle_wm_size(
         self: &Arc<Self>,
-        _hwnd: HWND,
+        hwnd: HWND,
         _wparam: WPARAM,
         lparam: LPARAM,
         window_id: WindowId,
@@ -622,256 +942,54 @@ impl Win32ApiInternalState {
         let client_width = loword_from_lparam(lparam);
         let client_height = hiword_from_lparam(lparam);
 
+        log::debug!(
+            "Platform: WM_SIZE for WinID {:?}, HWND {:?}. Client: {}x{}",
+            window_id,
+            hwnd,
+            client_width,
+            client_height
+        );
+
         if let Some(windows_guard) = self.active_windows.read().ok() {
             if let Some(window_data) = windows_guard.get(&window_id) {
-                if window_data.has_main_layout_rules() {
-                    log::debug!(
-                        "Platform: WM_SIZE for WinID {:?} using rule-based layout. Client: {}x{}",
-                        window_id,
-                        client_width,
-                        client_height
-                    );
-                    let empty_vec = Vec::new();
-                    let layout_rules_ref = window_data.layout_rules.as_ref().unwrap_or(&empty_vec);
-                    let mut sorted_rules: Vec<&LayoutRule> = layout_rules_ref.iter().collect();
-                    sorted_rules.sort_by_key(|r| r.order);
-
-                    let controls_map: HashMap<i32, HWND> = window_data.controls.clone();
-
-                    let mut current_available_bottom = client_height;
-                    let mut current_available_top = 0;
-                    let mut current_available_left = 0;
-                    let mut current_available_right = client_width;
-                    let mut fill_control_hwnd: Option<HWND> = None;
-                    let mut fill_control_margins: (i32, i32, i32, i32) = (0, 0, 0, 0); // (top, right, bottom, left)
-
-                    for rule in &sorted_rules {
-                        let control_hwnd_opt = controls_map.get(&rule.control_id).cloned();
-                        if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
-                            log::warn!(
-                                "Layout: HWND for control ID {} not found or invalid, skipping layout.",
-                                rule.control_id
-                            );
-                            continue;
-                        }
-                        let control_hwnd = control_hwnd_opt.unwrap();
-
-                        match rule.dock_style {
-                            // TODO: break out each case into a separate function
-                            DockStyle::Bottom => {
-                                let height = rule.fixed_size.unwrap_or(0);
-                                let margin_top = rule.margin.0;
-                                let margin_right = rule.margin.1;
-                                let margin_bottom = rule.margin.2;
-                                let margin_left = rule.margin.3;
-
-                                let x = current_available_left + margin_left;
-                                let item_width = (current_available_right - current_available_left)
-                                    - margin_left
-                                    - margin_right;
-                                let y = current_available_bottom - height - margin_bottom;
-
-                                unsafe {
-                                    MoveWindow(
-                                        control_hwnd,
-                                        x,
-                                        y,
-                                        item_width.max(0),
-                                        height.max(0),
-                                        true,
-                                    );
-                                }
-                                current_available_bottom = y - margin_top;
-
-                                if rule.control_id == ui_constants::STATUS_BAR_PANEL_ID {
-                                    let panel_client_width = item_width.max(0);
-                                    let panel_client_height = height.max(0);
-
-                                    let label_ids = [
-                                        ui_constants::STATUS_LABEL_GENERAL_ID,
-                                        ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                                        ui_constants::STATUS_LABEL_TOKENS_ID,
-                                    ];
-                                    let num_labels = label_ids.len() as i32;
-                                    if num_labels > 0 {
-                                        // Example: 50% general, 25% archive, 25% tokens. TODO: This should be configurable from ui_descriptive_layer
-                                        let general_width =
-                                            (panel_client_width as f32 * 0.50) as i32;
-                                        let archive_width =
-                                            (panel_client_width as f32 * 0.25) as i32;
-                                        let tokens_width =
-                                            panel_client_width - general_width - archive_width;
-
-                                        let label_widths =
-                                            [general_width, archive_width, tokens_width];
-                                        let mut current_x_in_panel = 0;
-
-                                        for (i, &label_id_val) in label_ids.iter().enumerate() {
-                                            if let Some(&label_hwnd) =
-                                                controls_map.get(&label_id_val)
-                                            {
-                                                if !label_hwnd.is_invalid() {
-                                                    let label_width = label_widths[i];
-                                                    unsafe {
-                                                        MoveWindow(
-                                                            label_hwnd,
-                                                            current_x_in_panel,
-                                                            0,
-                                                            label_width.max(0),
-                                                            panel_client_height.max(0),
-                                                            true,
-                                                        );
-                                                    }
-                                                    current_x_in_panel += label_width;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            DockStyle::Top => {
-                                let height = rule.fixed_size.unwrap_or(0);
-                                let margin_top = rule.margin.0;
-                                let margin_right = rule.margin.1;
-                                let margin_bottom = rule.margin.2;
-                                let margin_left = rule.margin.3;
-
-                                let x = current_available_left + margin_left;
-                                let y = current_available_top + margin_top;
-                                let item_width = (current_available_right - current_available_left)
-                                    - margin_left
-                                    - margin_right;
-
-                                unsafe {
-                                    MoveWindow(
-                                        control_hwnd,
-                                        x,
-                                        y,
-                                        item_width.max(0),
-                                        height.max(0),
-                                        true,
-                                    );
-                                }
-                                current_available_top = y + height + margin_bottom;
-                            }
-                            DockStyle::Left => {
-                                let width = rule.fixed_size.unwrap_or(0);
-                                let margin_top = rule.margin.0;
-                                let margin_right = rule.margin.1;
-                                let margin_bottom = rule.margin.2;
-                                let margin_left = rule.margin.3;
-
-                                let x = current_available_left + margin_left;
-                                let y = current_available_top + margin_top;
-                                let item_height = (current_available_bottom
-                                    - current_available_top)
-                                    - margin_top
-                                    - margin_bottom;
-
-                                unsafe {
-                                    MoveWindow(
-                                        control_hwnd,
-                                        x,
-                                        y,
-                                        width.max(0),
-                                        item_height.max(0),
-                                        true,
-                                    );
-                                }
-                                current_available_left = x + width + margin_right;
-                            }
-                            DockStyle::Right => {
-                                let width = rule.fixed_size.unwrap_or(0);
-                                let margin_top = rule.margin.0;
-                                let margin_right = rule.margin.1;
-                                let margin_bottom = rule.margin.2;
-                                let margin_left = rule.margin.3;
-
-                                let x = current_available_right - width - margin_right;
-                                let y = current_available_top + margin_top;
-                                let item_height = (current_available_bottom
-                                    - current_available_top)
-                                    - margin_top
-                                    - margin_bottom;
-                                unsafe {
-                                    MoveWindow(
-                                        control_hwnd,
-                                        x,
-                                        y,
-                                        width.max(0),
-                                        item_height.max(0),
-                                        true,
-                                    );
-                                }
-                                current_available_right = x - margin_left;
-                            }
-                            DockStyle::Fill => {
-                                fill_control_hwnd = Some(control_hwnd);
-                                fill_control_margins = rule.margin;
-                            }
-                            DockStyle::None => { /* No automated layout for this control */ }
-                        }
-                    }
-
-                    if let Some(hwnd_fill) = fill_control_hwnd {
-                        let x = current_available_left + fill_control_margins.3;
-                        let y = current_available_top + fill_control_margins.0;
-                        let width = (current_available_right - current_available_left)
-                            - fill_control_margins.3
-                            - fill_control_margins.1;
-                        let height = (current_available_bottom - current_available_top)
-                            - fill_control_margins.0
-                            - fill_control_margins.2;
-                        unsafe {
-                            MoveWindow(hwnd_fill, x, y, width.max(0), height.max(0), true);
-                        }
+                if let Some(all_window_rules) = &window_data.layout_rules {
+                    if !all_window_rules.is_empty() {
+                        let main_window_client_rect = RECT {
+                            left: 0,
+                            top: 0,
+                            right: client_width,
+                            bottom: client_height,
+                        };
+                        // Start recursive layout from the main window (parent_id_for_layout: None)
+                        self.apply_layout_rules_for_children(
+                            window_id,
+                            None,
+                            main_window_client_rect,
+                            all_window_rules,
+                            &window_data.controls,
+                        );
+                    } else {
+                        log::debug!(
+                            "Platform: WM_SIZE for WinID {:?} - No layout rules defined.",
+                            window_id
+                        );
                     }
                 } else {
                     log::debug!(
-                        "Platform: WM_SIZE for WinID {:?} using OLD hardcoded layout. Client: {}x{}",
-                        window_id,
-                        client_width,
-                        client_height
+                        "Platform: WM_SIZE for WinID {:?} - Layout rules are None.",
+                        window_id
                     );
-                    let treeview_height = client_height - BUTTON_AREA_HEIGHT - STATUS_BAR_HEIGHT;
-                    let button_area_y_pos = treeview_height;
-
-                    if let Some(hwnd_tv) =
-                        window_data.get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
-                    {
-                        if !hwnd_tv.is_invalid() {
-                            unsafe {
-                                MoveWindow(
-                                    hwnd_tv,
-                                    0,
-                                    0,
-                                    client_width,
-                                    treeview_height.max(0),
-                                    true,
-                                );
-                            }
-                        }
-                    }
-                    if let Some(hwnd_btn) = window_data.get_control_hwnd(ID_BUTTON_GENERATE_ARCHIVE)
-                    {
-                        if !hwnd_btn.is_invalid() {
-                            let btn_x_pos = BUTTON_X_PADDING;
-                            let btn_y_pos = button_area_y_pos + BUTTON_Y_PADDING_IN_AREA;
-                            unsafe {
-                                MoveWindow(
-                                    hwnd_btn,
-                                    btn_x_pos,
-                                    btn_y_pos,
-                                    BUTTON_WIDTH,
-                                    BUTTON_HEIGHT,
-                                    true,
-                                );
-                            }
-                        }
-                    }
                 }
+            } else {
+                log::warn!(
+                    "Platform: WM_SIZE - WindowData not found for WinID {:?}",
+                    window_id
+                );
             }
+        } else {
+            log::error!("Platform: WM_SIZE - Failed to get read lock on active_windows.");
         }
+
         Some(AppEvent::WindowResized {
             window_id,
             width: client_width,
@@ -930,23 +1048,18 @@ impl Win32ApiInternalState {
             let control_notification_code = notification_code_raw as u32;
 
             if control_notification_code == BN_CLICKED {
-                if control_id_from_wparam == ID_BUTTON_GENERATE_ARCHIVE {
-                    log::debug!(
-                        "Platform: Button ID {} clicked for window {:?}.",
-                        control_id_from_wparam,
-                        window_id // hwnd_control_lparam removed for brevity
-                    );
-                    return Some(AppEvent::ButtonClicked {
-                        window_id,
-                        control_id: control_id_from_wparam,
-                    });
-                } else {
-                    log::trace!(
-                        "Platform: WM_COMMAND (BN_CLICKED) for unhandled/untraced control ID {} in window {:?}.",
-                        control_id_from_wparam,
-                        window_id // hwnd_control_lparam removed
-                    );
-                }
+                // Check if this button click has a registered action or needs generic handling
+                // For now, only specific known button IDs are handled directly here if needed,
+                // otherwise AppEvent::ButtonClicked is sent.
+                log::debug!(
+                    "Platform: Button ID {} clicked for window {:?}.",
+                    control_id_from_wparam,
+                    window_id
+                );
+                return Some(AppEvent::ButtonClicked {
+                    window_id,
+                    control_id: control_id_from_wparam,
+                });
             }
         } else {
             log::warn!(

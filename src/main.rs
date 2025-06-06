@@ -42,7 +42,14 @@ use time::macros::format_description;
  *    application logic as the event handler.
  */
 fn main() -> PlatformResult<()> {
-    initialize_logging();
+    let log_level = if std::env::var("LOG_TRACE").is_ok() {
+        LevelFilter::Trace
+    } else {
+        LevelFilter::Debug
+    };
+
+    #[cfg(not(test))] // Use macro to shut up IDE warnings
+    initialize_logging(LevelFilter::Trace);
 
     log::debug!("Initialize Platform Layer");
 
@@ -130,69 +137,69 @@ fn main() -> PlatformResult<()> {
     Ok(())
 }
 
-pub fn initialize_logging() {
-    #[cfg(not(test))]
-    {
-        // Production logger (to file)
-        let log_file_path = "source_packer.log";
-        match std::fs::File::create(log_file_path) {
-            Ok(file) => {
-                let mut config_builder = ConfigBuilder::new();
+#[cfg(not(test))]
+pub fn initialize_logging(log_level: LevelFilter) {
+    // Production logger (to file)
+    let log_file_path = "source_packer.log";
+    match std::fs::File::create(log_file_path) {
+        Ok(file) => {
+            let mut config_builder = ConfigBuilder::new();
 
-                if let Err(err) = config_builder.set_time_offset_to_local() {
-                    eprintln!("Warning: Failed to set local time offset: {:?}", err);
-                    // Ignore for now
-                }
+            if let Err(err) = config_builder.set_time_offset_to_local() {
+                eprintln!("Warning: Failed to set local time offset: {:?}", err);
+                // Ignore for now
+            }
 
-                let config = config_builder
-                    .set_thread_level(LevelFilter::Off)
-                    .set_location_level(LevelFilter::Debug)
-                    .set_time_format_custom(format_description!(
-                        "[hour]:[minute]:[second].[subsecond digits:3]"
-                    ))
-                    .build();
-                if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
-                    simplelog::LevelFilter::Debug,
-                    config,
-                    file,
-                )]) {
-                    eprintln!("Failed to initialize file logger: {}", e);
-                }
+            let config = config_builder
+                .set_thread_level(LevelFilter::Off)
+                .set_location_level(LevelFilter::Debug)
+                .set_time_format_custom(format_description!(
+                    "[hour]:[minute]:[second].[subsecond digits:3]"
+                ))
+                .build();
+            if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
+                log_level, config, file,
+            )]) {
+                eprintln!("Failed to initialize file logger: {}", e);
             }
-            Err(e) => {
-                eprintln!("Failed to create log file '{}': {}", log_file_path, e);
-            }
+        }
+        Err(e) => {
+            eprintln!("Failed to create log file '{}': {}", log_file_path, e);
         }
     }
+    println!(
+        "Logging initialized to file: {}, at level {}",
+        log_file_path, log_level,
+    );
+}
 
-    #[cfg(test)]
+#[cfg(test)]
+pub fn initialize_logging() {
+    // Test logger (to stdout/stderr)
+    let mut config_builder = ConfigBuilder::new();
+
+    if let Err(err) = config_builder.set_time_offset_to_local() {
+        eprintln!("Warning: Failed to set local time offset: {:?}", err);
+        // Ignore for now
+    }
+
+    let config = config_builder
+        .set_thread_level(LevelFilter::Off)
+        .set_location_level(LevelFilter::Trace)
+        .build();
+
+    if simplelog::TermLogger::init(
+        simplelog::LevelFilter::Trace,
+        config,
+        simplelog::TerminalMode::Mixed,
+        simplelog::ColorChoice::Auto,
+    )
+    .is_err()
     {
-        // Test logger (to stdout/stderr)
-        let mut config_builder = ConfigBuilder::new();
-
-        if let Err(err) = config_builder.set_time_offset_to_local() {
-            eprintln!("Warning: Failed to set local time offset: {:?}", err);
-            // Ignore for now
-        }
-
-        let config = config_builder
-            .set_thread_level(LevelFilter::Off)
-            .set_location_level(LevelFilter::Trace)
-            .build();
-
-        if simplelog::TermLogger::init(
-            simplelog::LevelFilter::Trace,
-            config,
-            simplelog::TerminalMode::Mixed,
-            simplelog::ColorChoice::Auto,
-        )
-        .is_err()
-        {
-            let _ = simplelog::SimpleLogger::init(
-                simplelog::LevelFilter::Warn,
-                simplelog::Config::default(),
-            );
-            eprintln!("TermLogger failed, fell back to SimpleLogger for tests.");
-        }
+        let _ = simplelog::SimpleLogger::init(
+            simplelog::LevelFilter::Warn,
+            simplelog::Config::default(),
+        );
+        eprintln!("TermLogger failed, fell back to SimpleLogger for tests.");
     }
 }

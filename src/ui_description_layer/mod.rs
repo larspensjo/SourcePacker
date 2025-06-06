@@ -111,22 +111,49 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     // 5. Define Layout Rules for the controls
     let layout_rules = vec![
-        // New Status Bar Panel: Docks to the bottom.
+        // Status Bar Panel: Docks to the bottom. Parent is main window.
         LayoutRule {
             control_id: ui_constants::STATUS_BAR_PANEL_ID,
+            parent_control_id: None,
             dock_style: DockStyle::Bottom,
-            order: 0, // Now the primary bottom-docked item
+            order: 0,
             fixed_size: Some(STATUS_BAR_HEIGHT),
             margin: (0, 0, 0, 0),
         },
-        // TreeView: Fills the remaining space. Order 10 (processed last).
-        // Its order doesn't strictly need to change but keeping it high is fine.
+        // TreeView: Fills the remaining space. Parent is main window.
         LayoutRule {
             control_id: ID_TREEVIEW_CTRL,
+            parent_control_id: None,
             dock_style: DockStyle::Fill,
             order: 10,
             fixed_size: None,
             margin: (0, 0, 0, 0),
+        },
+        // Layout Rules for labels WITHIN the status bar panel
+        // Their parent is STATUS_BAR_PANEL_ID.
+        LayoutRule {
+            control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+            parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
+            dock_style: DockStyle::ProportionalFill { weight: 2.0 },
+            order: 1,
+            fixed_size: None,
+            margin: (0, 1, 0, 1),
+        },
+        LayoutRule {
+            control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+            parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
+            dock_style: DockStyle::ProportionalFill { weight: 1.0 },
+            order: 1,
+            fixed_size: None,
+            margin: (0, 1, 0, 1),
+        },
+        LayoutRule {
+            control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+            parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
+            dock_style: DockStyle::ProportionalFill { weight: 1.0 },
+            order: 1,
+            fixed_size: None,
+            margin: (0, 1, 0, 0),
         },
     ];
 

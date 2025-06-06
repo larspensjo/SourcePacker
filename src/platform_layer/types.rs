@@ -99,14 +99,15 @@ pub struct MenuItemConfig {
  * This is a simplified docking model. More advanced anchoring or grid systems
  * could be introduced later.
  */
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DockStyle {
     None,   // No docking, control is positioned manually or by other rules.
     Top,    // Docks to the top edge of the container.
     Bottom, // Docks to the bottom edge of the container.
     Left,   // Docks to the left edge of the container.
     Right,  // Docks to the right edge of the container.
-    Fill,   // Fills the remaining space in the container.
+    Fill,   // Fills all remaining space in the container (both axes).
+    ProportionalFill { weight: f32 }, // Fills space along main axis proportionally with siblings.
 }
 
 /*
@@ -114,10 +115,13 @@ pub enum DockStyle {
  * The `order` field can be used to determine the sequence in which docking
  * calculations are performed (e.g., top/bottom docks first, then left/right, then fill).
  * Lower order values are typically processed first.
+ * The `parent_control_id` specifies the logical ID of the parent control; `None` indicates
+ * the main window client area is the parent.
  */
 #[derive(Debug, Clone)]
 pub struct LayoutRule {
-    pub control_id: i32, // The ID of the control this rule applies to.
+    pub control_id: i32,                // The ID of the control this rule applies to.
+    pub parent_control_id: Option<i32>, // ID of the parent control, None for main window.
     pub dock_style: DockStyle,
     pub order: u32, // Order of application (e.g., 0 for top, 1 for bottom, 10 for fill)
     pub fixed_size: Option<i32>, // For Top/Bottom, this is height. For Left/Right, this is width. Not used for Fill/None.
