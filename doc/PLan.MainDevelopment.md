@@ -12,14 +12,6 @@ This plan breaks down the development of SourcePacker into small, incremental st
 
 This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
 
-### P2.11.4: Testing Improvements (Medium Priority)
-*   **Integration Testing Considerations for `PlatformInterface::main_event_loop()`:**
-    *   **Problem:** The main event loop is complex to unit test.
-    *   **Action:** Acknowledge as integration testing. Focus on unit tests for `MyAppLogic`, `AppSessionData`, `MainWindowUiState`, and command handlers.
-    *   **Rationale:** Balances testing effort.
-    *   **Status:** Ongoing strategy.
-*   The ui_descrptive_layer builds the UI. There should be some test to assert that the same ID isn't re-used.
-
 ### P2.11.5: Future Enhancements & Nice-to-Haves (Low Priority for P2)
 *   **Structured Application Settings File:**
     *   **Problem:** `last_profile_name.txt` is limited.
@@ -36,7 +28,7 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   When you click on a button or click on a menu item, the execution flow is different. But it should be harmonized. The event should be made independent of the source.
     * For example, when I changed a regular button into a menu item, I had to change code in types.rs, ui_descrptive_layer, handler.rs
 
-### P2.11.7: SHould the treeview be createed from ui_descriptive_layer?
+### P2.11.7: Should the treeview be createed from ui_descriptive_layer?
 
 ## P2.13: Improved Profile management
 *   Implement a proper dialog for profile selection in the platform layer (not a stub).
