@@ -6,7 +6,7 @@
  * this session data, facilitating dependency injection and testing.
  */
 use crate::core::{
-    FileNode, SelectionState, FileSystemScannerOperations, Profile, NodeStateApplicatorOperations,
+    FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, SelectionState,
     TokenCounterOperations, file_node::FileTokenDetails,
 };
 use std::{
@@ -51,6 +51,11 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
         new_state: SelectionState,
         state_manager: &dyn NodeStateApplicatorOperations,
     ) -> Vec<(PathBuf, SelectionState)>;
+    /*
+     * Checks if the file or folder at the given path, or any of its descendants
+     * (if it's a folder), contains any file in the 'New' state.
+     */
+    fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool;
 
     // Token related data
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails>;
@@ -320,13 +325,35 @@ impl ProfileRuntimeData {
     }
 
     // Helper: Collects (PathBuf, FileState) for a node and its children.
-    fn collect_node_states_recursive(node: &FileNode, updates: &mut Vec<(PathBuf, SelectionState)>) {
+    fn collect_node_states_recursive(
+        node: &FileNode,
+        updates: &mut Vec<(PathBuf, SelectionState)>,
+    ) {
         updates.push((node.path.clone(), node.state));
         if node.is_dir {
             for child in &node.children {
                 Self::collect_node_states_recursive(child, updates);
             }
         }
+    }
+
+    /*
+     * Recursively checks if the given node or any of its descendants is a file
+     * in the 'New' state.
+     */
+    fn does_node_contain_new_file_recursive(node: &FileNode) -> bool {
+        if !node.is_dir {
+            // It's a file
+            return node.state == SelectionState::New;
+        }
+
+        // It's a directory, check its children
+        for child in &node.children {
+            if Self::does_node_contain_new_file_recursive(child) {
+                return true; // Found a new file in a descendant
+            }
+        }
+        false // No new file found in this directory or its descendants
     }
 }
 
@@ -405,6 +432,28 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             );
         }
         collected_changes
+    }
+
+    /*
+     * Checks if the file or folder at the given path, or any of its descendants
+     * (if it's a folder), contains any file in the 'New' state.
+     * This is used to determine if a folder node in the UI should display the "New" indicator.
+     */
+    fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool {
+        log::trace!(
+            "ProfileRuntimeData: Checking if path or descendants contain new file for: {:?}",
+            path
+        );
+        match Self::find_node_recursive_ref(&self.file_system_snapshot_nodes, path) {
+            Some(node) => Self::does_node_contain_new_file_recursive(node),
+            None => {
+                log::warn!(
+                    "ProfileRuntimeData: Path {:?} not found in snapshot for new file check.",
+                    path
+                );
+                false
+            }
+        }
     }
 
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
@@ -528,7 +577,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         // from self.cached_file_token_details for selected files.
         fn gather_states_and_cached_details_recursive(
             nodes: &[FileNode],
-            cached_details: &HashMap<PathBuf, FileTokenDetails>, // Read-only access to the main cache
+            cached_details: &HashMap<PathBuf, FileTokenDetails>, // Read-only access to the current cache
             selected_paths_out: &mut HashSet<PathBuf>,
             deselected_paths_out: &mut HashSet<PathBuf>,
             file_details_out: &mut HashMap<PathBuf, FileTokenDetails>, // Populate this
@@ -683,8 +732,8 @@ mod tests {
     use super::*;
     use crate::core::checksum_utils;
     use crate::core::{
-        FileNode, SelectionState, FileSystemError, FileSystemScannerOperations, Profile,
-        NodeStateApplicatorOperations, TokenCounterOperations,
+        FileNode, FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations,
+        Profile, SelectionState, TokenCounterOperations,
     };
     use std::collections::{HashMap, HashSet};
     use std::fs::{self, File};
@@ -938,18 +987,24 @@ mod tests {
                     checksum: Some("cs2".to_string()),
                 },
             ],
-            cached_token_count: 0,
+            cached_token_count: 0, // Not directly used by create_profile_snapshot itself
             cached_file_token_details: HashMap::new(),
         };
-        let mut specific_token_counter = MockTokenCounter::new(0);
-        let file1_content_as_read = format!("{}\n", file1_content_written);
-        specific_token_counter.set_count_for_content(&file1_content_as_read, 10);
+        // Populate cached_file_token_details as update_total_token_count_for_selected_files would
+        session_data.cached_file_token_details.insert(
+            file1_path.clone(),
+            FileTokenDetails {
+                checksum: "cs1".to_string(), // Ensure this matches the FileNode's checksum if it's to be used
+                token_count: 10,
+            },
+        );
 
         // Act
         let mut new_profile = session_data.create_profile_snapshot();
-        new_profile.name = "NewProfile".to_string();
+        new_profile.name = "NewProfile".to_string(); // Simulate renaming on save as
 
         // Assert
+        assert_eq!(new_profile.name, "NewProfile");
         assert_eq!(new_profile.root_folder, temp_dir.path().join("new_root"));
         assert!(new_profile.selected_paths.contains(&file1_path));
         assert!(!new_profile.selected_paths.contains(&file2_path));
@@ -1072,8 +1127,8 @@ mod tests {
         initial_profile_file_details.insert(
             file2_path.clone(),
             FileTokenDetails {
-                checksum: "cs2_disk_old_stale".to_string(),
-                token_count: 15,
+                checksum: "cs2_disk_old_stale".to_string(), // Stale checksum
+                token_count: 15,                            // Old token count
             },
         );
 
@@ -1093,7 +1148,7 @@ mod tests {
                 path: file1_path.clone(),
                 name: "f1.txt".into(),
                 is_dir: false,
-                state: SelectionState::New,
+                state: SelectionState::New, // Will be updated by apply_selection_states_to_nodes
                 children: Vec::new(),
                 checksum: Some(file1_checksum_disk.clone()),
             },
@@ -1101,9 +1156,9 @@ mod tests {
                 path: file2_path.clone(),
                 name: "f2.txt".into(),
                 is_dir: false,
-                state: SelectionState::New,
+                state: SelectionState::New, // Will be updated
                 children: Vec::new(),
-                checksum: Some(file2_checksum_disk.clone()),
+                checksum: Some(file2_checksum_disk.clone()), // New checksum on disk
             },
         ];
         mock_scanner.set_scan_directory_result(&root_folder, Ok(nodes_from_scanner.clone()));
@@ -1124,18 +1179,31 @@ mod tests {
             Some(profile_name)
         );
 
+        // Verify that apply_selection_states_to_nodes was called and updated the states in snapshot_nodes
+        let apply_calls = mock_state_manager.get_apply_profile_to_tree_calls();
+        assert_eq!(apply_calls.len(), 1);
+        let (selected_in_call, _, _) = &apply_calls[0];
+        assert!(selected_in_call.contains(&file1_path));
+        assert!(selected_in_call.contains(&file2_path));
+
+        // After load_profile_into_session, the session_data.file_system_snapshot_nodes
+        // should have their states (Selected/Deselected/New) correctly set by apply_selection_states_to_nodes.
+        // And then update_total_token_count_for_selected_files uses these states.
+
         let session_details = session_data.get_cached_file_token_details();
         assert_eq!(session_details.get(&file1_path).unwrap().token_count, 10);
         assert_eq!(
             session_details.get(&file1_path).unwrap().checksum,
             file1_checksum_disk
         );
+        // For file2, since disk checksum changed, its token count should be re-calculated (20)
+        // and cache updated.
         assert_eq!(session_details.get(&file2_path).unwrap().token_count, 20);
         assert_eq!(
             session_details.get(&file2_path).unwrap().checksum,
             file2_checksum_disk
         );
-        assert_eq!(session_data.get_cached_total_token_count(), 30);
+        assert_eq!(session_data.get_cached_total_token_count(), 30); // 10 (f1) + 20 (f2)
     }
 
     #[test]
@@ -1351,6 +1419,176 @@ mod tests {
         assert_eq!(
             entry_stale.token_count, 20,
             "Cache token count should be updated to 20 after stale"
+        );
+    }
+
+    #[test]
+    fn test_does_path_or_descendants_contain_new_file() {
+        // Arrange
+        let root_path = PathBuf::from("/root");
+        let file1_new_path = root_path.join("file1_new.txt");
+        let file2_selected_path = root_path.join("file2_selected.txt");
+        let dir1_path = root_path.join("dir1");
+        let file3_in_dir1_new_path = dir1_path.join("file3_new.txt");
+        let dir2_path = root_path.join("dir2");
+        let file4_in_dir2_selected_path = dir2_path.join("file4_selected.txt");
+        let dir3_empty_path = root_path.join("dir3_empty");
+        let dir4_deep_new_path = root_path.join("dir4_deep_new");
+        let dir4_1_path = dir4_deep_new_path.join("subdir1");
+        let dir4_2_path = dir4_1_path.join("subdir2");
+        let file5_deep_new_path = dir4_2_path.join("file5_deep_new.txt");
+
+        let mut data = ProfileRuntimeData::new();
+        data.file_system_snapshot_nodes = vec![
+            FileNode {
+                // /root/file1_new.txt
+                path: file1_new_path.clone(),
+                name: "file1_new.txt".into(),
+                is_dir: false,
+                state: SelectionState::New,
+                children: vec![],
+                checksum: None,
+            },
+            FileNode {
+                // /root/file2_selected.txt
+                path: file2_selected_path.clone(),
+                name: "file2_selected.txt".into(),
+                is_dir: false,
+                state: SelectionState::Selected,
+                children: vec![],
+                checksum: None,
+            },
+            FileNode {
+                // /root/dir1
+                path: dir1_path.clone(),
+                name: "dir1".into(),
+                is_dir: true,
+                state: SelectionState::New,
+                children: vec![FileNode {
+                    // /root/dir1/file3_new.txt
+                    path: file3_in_dir1_new_path.clone(),
+                    name: "file3_new.txt".into(),
+                    is_dir: false,
+                    state: SelectionState::New,
+                    children: vec![],
+                    checksum: None,
+                }],
+                checksum: None,
+            },
+            FileNode {
+                // /root/dir2
+                path: dir2_path.clone(),
+                name: "dir2".into(),
+                is_dir: true,
+                state: SelectionState::New,
+                children: vec![FileNode {
+                    // /root/dir2/file4_selected.txt
+                    path: file4_in_dir2_selected_path.clone(),
+                    name: "file4_selected.txt".into(),
+                    is_dir: false,
+                    state: SelectionState::Selected,
+                    children: vec![],
+                    checksum: None,
+                }],
+                checksum: None,
+            },
+            FileNode {
+                // /root/dir3_empty
+                path: dir3_empty_path.clone(),
+                name: "dir3_empty".into(),
+                is_dir: true,
+                state: SelectionState::New,
+                children: vec![],
+                checksum: None,
+            },
+            FileNode {
+                // /root/dir4_deep_new
+                path: dir4_deep_new_path.clone(),
+                name: "dir4_deep_new".into(),
+                is_dir: true,
+                state: SelectionState::Selected,
+                children: vec![FileNode {
+                    // /root/dir4_deep_new/subdir1
+                    path: dir4_1_path.clone(),
+                    name: "subdir1".into(),
+                    is_dir: true,
+                    state: SelectionState::Selected,
+                    children: vec![FileNode {
+                        // /root/dir4_deep_new/subdir1/subdir2
+                        path: dir4_2_path.clone(),
+                        name: "subdir2".into(),
+                        is_dir: true,
+                        state: SelectionState::New,
+                        children: vec![FileNode {
+                            // /root/dir4_deep_new/subdir1/subdir2/file5_deep_new.txt
+                            path: file5_deep_new_path.clone(),
+                            name: "file5_deep_new.txt".into(),
+                            is_dir: false,
+                            state: SelectionState::New,
+                            children: vec![],
+                            checksum: None,
+                        }],
+                        checksum: None,
+                    }],
+                    checksum: None,
+                }],
+                checksum: None,
+            },
+        ];
+
+        // Act & Assert
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&file1_new_path),
+            "File 1 (New) should be true"
+        );
+        assert!(
+            !data.does_path_or_descendants_contain_new_file(&file2_selected_path),
+            "File 2 (Selected) should be false"
+        );
+
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&dir1_path),
+            "Dir 1 (contains new file3) should be true"
+        );
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&file3_in_dir1_new_path),
+            "File 3 (New, in dir1) should be true"
+        );
+
+        assert!(
+            !data.does_path_or_descendants_contain_new_file(&dir2_path),
+            "Dir 2 (contains selected file4) should be false"
+        );
+        assert!(
+            !data.does_path_or_descendants_contain_new_file(&file4_in_dir2_selected_path),
+            "File 4 (Selected, in dir2) should be false"
+        );
+
+        assert!(
+            !data.does_path_or_descendants_contain_new_file(&dir3_empty_path),
+            "Dir 3 (empty) should be false"
+        );
+
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&dir4_deep_new_path),
+            "Dir 4 (contains deep new file5) should be true"
+        );
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&dir4_1_path),
+            "Dir 4_1 (descendant contains new file5) should be true"
+        );
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&dir4_2_path),
+            "Dir 4_2 (contains new file5) should be true"
+        );
+        assert!(
+            data.does_path_or_descendants_contain_new_file(&file5_deep_new_path),
+            "File 5 (New, deep) should be true"
+        );
+
+        assert!(
+            !data.does_path_or_descendants_contain_new_file(&PathBuf::from("/non_existent_path")),
+            "Non-existent path should be false"
         );
     }
 }

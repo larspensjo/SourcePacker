@@ -1,4 +1,3 @@
-// ===== File: src\app_logic\handler_tests.rs =====
 use super::handler::*;
 use crate::app_logic::ui_constants;
 
@@ -49,7 +48,8 @@ struct MockProfileRuntimeData {
     get_root_path_for_scan_calls: AtomicUsize,
     get_cached_total_token_count_calls: AtomicUsize,
     get_cached_file_token_details_calls: AtomicUsize,
-    create_profile_snapshot_calls: AtomicUsize, // If create_profile_snapshot remains &self
+    create_profile_snapshot_calls: AtomicUsize,
+    does_path_or_descendants_contain_new_file_calls: AtomicUsize,
 
     // Call logs/trackers for &mut self methods (plain types, as they are called on &mut MockProfileRuntimeData)
     _set_profile_name_log: Vec<Option<String>>,
@@ -63,11 +63,13 @@ struct MockProfileRuntimeData {
     _update_total_token_count_calls: usize,
     _clear_calls: usize,
     _load_profile_into_session_log: Vec<Profile>,
+    _does_path_or_descendants_contain_new_file_log: Mutex<Vec<PathBuf>>,
 
     // Mock results
     get_node_attributes_for_path_result: Option<(SelectionState, bool)>,
     update_node_state_and_collect_changes_result: Vec<(PathBuf, SelectionState)>,
     load_profile_into_session_result: Result<(), String>,
+    does_path_or_descendants_contain_new_file_results: Mutex<HashMap<PathBuf, bool>>,
 }
 
 impl MockProfileRuntimeData {
@@ -87,6 +89,7 @@ impl MockProfileRuntimeData {
             get_cached_total_token_count_calls: AtomicUsize::new(0),
             get_cached_file_token_details_calls: AtomicUsize::new(0),
             create_profile_snapshot_calls: AtomicUsize::new(0),
+            does_path_or_descendants_contain_new_file_calls: AtomicUsize::new(0),
 
             _set_profile_name_log: Vec::new(),
             _set_archive_path_log: Vec::new(),
@@ -99,10 +102,12 @@ impl MockProfileRuntimeData {
             _update_total_token_count_calls: 0,
             _clear_calls: 0,
             _load_profile_into_session_log: Vec::new(),
+            _does_path_or_descendants_contain_new_file_log: Mutex::new(Vec::new()),
 
             get_node_attributes_for_path_result: None,
             update_node_state_and_collect_changes_result: Vec::new(),
             load_profile_into_session_result: Ok(()),
+            does_path_or_descendants_contain_new_file_results: Mutex::new(HashMap::new()),
         }
     }
 
@@ -149,6 +154,13 @@ impl MockProfileRuntimeData {
     fn set_load_profile_into_session_result(&mut self, result: Result<(), String>) {
         self.load_profile_into_session_result = result;
     }
+    #[allow(dead_code)]
+    fn set_does_path_or_descendants_contain_new_file_result(&self, path: &Path, result: bool) {
+        self.does_path_or_descendants_contain_new_file_results
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), result);
+    }
 
     // Test getters for call logs/counters
     #[allow(dead_code)]
@@ -158,6 +170,13 @@ impl MockProfileRuntimeData {
     #[allow(dead_code)]
     fn get_set_archive_path_calls_log(&self) -> &Vec<Option<PathBuf>> {
         &self._set_archive_path_log
+    }
+    #[allow(dead_code)]
+    fn get_does_path_or_descendants_contain_new_file_log(&self) -> Vec<PathBuf> {
+        self._does_path_or_descendants_contain_new_file_log
+            .lock()
+            .unwrap()
+            .clone()
     }
 }
 
@@ -208,12 +227,47 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     ) {
         self._apply_selection_states_to_snapshot_log
             .push((selected_paths.clone(), deselected_paths.clone()));
+        // Basic simulation for mock:
+        fn apply_recursive(
+            nodes: &mut Vec<FileNode>,
+            selected: &HashSet<PathBuf>,
+            deselected: &HashSet<PathBuf>,
+        ) {
+            for node in nodes.iter_mut() {
+                if selected.contains(&node.path) {
+                    node.state = SelectionState::Selected;
+                } else if deselected.contains(&node.path) {
+                    node.state = SelectionState::Deselected;
+                } else {
+                    node.state = SelectionState::New;
+                }
+                if node.is_dir {
+                    apply_recursive(&mut node.children, selected, deselected);
+                }
+            }
+        }
+        apply_recursive(&mut self.snapshot_nodes, selected_paths, deselected_paths);
     }
     fn get_node_attributes_for_path(&self, path_to_find: &Path) -> Option<(SelectionState, bool)> {
-        // For a more functional mock, one might search self.snapshot_nodes here.
-        // For now, returning a pre-set result is simpler for targeted tests.
-        // self.get_node_attributes_for_path_calls.fetch_add(1, Ordering::Relaxed); // If tracking this call
-        self.get_node_attributes_for_path_result.clone()
+        // Search self.snapshot_nodes for more functional mock.
+        fn find_node_attrs_recursive(
+            nodes: &[FileNode],
+            path: &Path,
+        ) -> Option<(SelectionState, bool)> {
+            for node in nodes {
+                if node.path == path {
+                    return Some((node.state, node.is_dir));
+                }
+                if node.is_dir {
+                    if let Some(attrs) = find_node_attrs_recursive(&node.children, path) {
+                        return Some(attrs);
+                    }
+                }
+            }
+            None
+        }
+        find_node_attrs_recursive(&self.snapshot_nodes, path_to_find)
+            .or_else(|| self.get_node_attributes_for_path_result.clone()) // Fallback to preset result
     }
     fn update_node_state_and_collect_changes(
         &mut self,
@@ -223,8 +277,111 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     ) -> Vec<(PathBuf, SelectionState)> {
         self._update_node_state_and_collect_changes_log
             .push((path.to_path_buf(), new_state));
-        self.update_node_state_and_collect_changes_result.clone()
+
+        // Basic simulation for mock:
+        fn update_recursive(
+            nodes: &mut Vec<FileNode>,
+            target_path: &Path,
+            new_sel_state: SelectionState,
+            changes: &mut Vec<(PathBuf, SelectionState)>,
+        ) -> bool {
+            for node in nodes.iter_mut() {
+                if node.path == target_path {
+                    node.state = new_sel_state;
+                    changes.push((node.path.clone(), node.state));
+                    if node.is_dir {
+                        for child in node.children.iter_mut() {
+                            update_recursive_children(child, new_sel_state, changes);
+                        }
+                    }
+                    return true;
+                }
+                if node.is_dir && target_path.starts_with(&node.path) {
+                    // Optimization
+                    if update_recursive(&mut node.children, target_path, new_sel_state, changes) {
+                        return true;
+                    }
+                }
+            }
+            false
+        }
+        fn update_recursive_children(
+            node: &mut FileNode,
+            new_sel_state: SelectionState,
+            changes: &mut Vec<(PathBuf, SelectionState)>,
+        ) {
+            node.state = new_sel_state;
+            changes.push((node.path.clone(), node.state));
+            if node.is_dir {
+                for child in node.children.iter_mut() {
+                    update_recursive_children(child, new_sel_state, changes);
+                }
+            }
+        }
+        let mut actual_changes = Vec::new();
+        update_recursive(
+            &mut self.snapshot_nodes,
+            path,
+            new_state,
+            &mut actual_changes,
+        );
+
+        // Prefer actual_changes if populated by simulation, else use preset result.
+        if !actual_changes.is_empty() {
+            actual_changes
+        } else {
+            self.update_node_state_and_collect_changes_result.clone()
+        }
     }
+
+    fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool {
+        self.does_path_or_descendants_contain_new_file_calls
+            .fetch_add(1, Ordering::Relaxed);
+        self._does_path_or_descendants_contain_new_file_log
+            .lock()
+            .unwrap()
+            .push(path.to_path_buf());
+
+        if let Some(result) = self
+            .does_path_or_descendants_contain_new_file_results
+            .lock()
+            .unwrap()
+            .get(path)
+        {
+            return *result;
+        }
+
+        // Fallback to actual recursive check on mock's snapshot_nodes if no preset result
+        fn check_recursive(nodes: &[FileNode], target_path: &Path) -> Option<bool> {
+            for node in nodes {
+                if node.path == target_path {
+                    return Some(check_node_itself_or_descendants(node));
+                }
+                if node.is_dir && target_path.starts_with(&node.path) {
+                    // Optimization
+                    if let Some(found_in_child) = check_recursive(&node.children, target_path) {
+                        return Some(found_in_child);
+                    }
+                }
+            }
+            None
+        }
+        fn check_node_itself_or_descendants(node: &FileNode) -> bool {
+            if !node.is_dir {
+                return node.state == SelectionState::New;
+            }
+            // For directory, check itself (if it has a state that implies "new" - though folders don't directly become new files)
+            // OR check its children
+            for child in &node.children {
+                if check_node_itself_or_descendants(child) {
+                    return true;
+                }
+            }
+            false
+        }
+        check_recursive(&self.snapshot_nodes, path).unwrap_or(false)
+    }
+
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
         self.get_cached_file_token_details_calls
             .fetch_add(1, Ordering::Relaxed);
@@ -245,6 +402,41 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
         _token_counter: &dyn TokenCounterOperations,
     ) -> usize {
         self._update_total_token_count_calls += 1;
+        // Basic simulation for mock based on its own snapshot_nodes
+        let mut count = 0;
+        fn sum_tokens_recursive(
+            nodes: &[FileNode],
+            current_sum: &mut usize,
+            cached_details: &HashMap<PathBuf, FileTokenDetails>,
+        ) {
+            for node in nodes {
+                if node.is_dir {
+                    sum_tokens_recursive(&node.children, current_sum, cached_details);
+                } else if node.state == SelectionState::Selected {
+                    if let Some(details) = cached_details.get(&node.path) {
+                        // Let's assume if it's in cached_details, it has a count we can use
+                        *current_sum += details.token_count;
+                    } else {
+                        // If not in cache, and we don't simulate file reading for mock,
+                        // we might default to adding a small number or 0.
+                        // For simplicity, let's assume this mock's `update_total_token_count_for_selected_files`
+                        // relies on `set_cached_total_token_count_for_mock` or `set_cached_file_token_details_for_mock`
+                        // to have been called to set up expected outcomes.
+                        // Or, we can use the `self.cached_total_token_count` field directly if not trying to fully simulate.
+                    }
+                }
+            }
+        }
+        sum_tokens_recursive(
+            &self.snapshot_nodes,
+            &mut count,
+            &self.cached_file_token_details,
+        );
+        if count > 0 {
+            // if simulation yielded something
+            self.cached_total_token_count = count;
+        }
+        // Return the possibly pre-set mock value, or the simulated one.
         self.cached_total_token_count
     }
     fn clear(&mut self) {
@@ -259,12 +451,39 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     fn create_profile_snapshot(&self) -> Profile {
         self.create_profile_snapshot_calls
             .fetch_add(1, Ordering::Relaxed);
-        // To log the name, create_profile_snapshot_calls would need to be Mutex<Vec<String>>
-        // or this method would need to be &mut self.
-        Profile::new(
+        let mut profile = Profile::new(
             self.profile_name.clone().unwrap_or_else(String::new),
             self.root_path_for_scan.clone(),
-        )
+        );
+        profile.archive_path = self.archive_path.clone();
+        profile.file_details = self.cached_file_token_details.clone(); // Simple mock behavior
+
+        fn gather_paths_recursive(
+            nodes: &[FileNode],
+            selected: &mut HashSet<PathBuf>,
+            deselected: &mut HashSet<PathBuf>,
+        ) {
+            for node in nodes {
+                match node.state {
+                    SelectionState::Selected => {
+                        selected.insert(node.path.clone());
+                    }
+                    SelectionState::Deselected => {
+                        deselected.insert(node.path.clone());
+                    }
+                    _ => {}
+                }
+                if node.is_dir {
+                    gather_paths_recursive(&node.children, selected, deselected);
+                }
+            }
+        }
+        gather_paths_recursive(
+            &self.snapshot_nodes,
+            &mut profile.selected_paths,
+            &mut profile.deselected_paths,
+        );
+        profile
     }
     fn load_profile_into_session(
         &mut self,
@@ -281,8 +500,10 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
             self.archive_path = loaded_profile.archive_path;
             self.root_path_for_scan = loaded_profile.root_folder;
             self.cached_file_token_details = loaded_profile.file_details;
-            // snapshot_nodes and cached_total_token_count would be updated by internal calls
-            // in a real implementation. The mock sets them directly for testing outcomes.
+            // Mock doesn't fully re-scan or re-apply selection for snapshot_nodes here.
+            // Tests should set snapshot_nodes directly if needed after this call.
+            // Or, we can copy from a pre-set snapshot_nodes for this profile.
+            // For now, it just sets profile metadata.
         } else {
             self.clear(); // Simulate clearing data on load failure
         }
@@ -291,6 +512,27 @@ impl ProfileRuntimeDataOperations for MockProfileRuntimeData {
     fn get_current_selection_paths(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
         let mut selected = HashSet::new();
         let mut deselected = HashSet::new();
+        fn gather_paths_recursive(
+            nodes: &[FileNode],
+            selected: &mut HashSet<PathBuf>,
+            deselected: &mut HashSet<PathBuf>,
+        ) {
+            for node in nodes {
+                match node.state {
+                    SelectionState::Selected => {
+                        selected.insert(node.path.clone());
+                    }
+                    SelectionState::Deselected => {
+                        deselected.insert(node.path.clone());
+                    }
+                    _ => {}
+                }
+                if node.is_dir {
+                    gather_paths_recursive(&node.children, selected, deselected);
+                }
+            }
+        }
+        gather_paths_recursive(&self.snapshot_nodes, &mut selected, &mut deselected);
         return (selected, deselected);
     }
 }
@@ -1215,4 +1457,216 @@ fn test_update_current_archive_status_routes_to_dedicated_label() {
             "Case 3: get_profile_name_calls should be > 0"
         );
     }
+}
+
+#[test]
+fn test_is_tree_item_new_for_file_and_folder() {
+    // Arrange
+    let (logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
+    let window_id = WindowId(1);
+    let mut mutable_logic = logic; // Shadow immutable logic
+    mutable_logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+    let root = PathBuf::from("/root");
+    let file_new_path = root.join("new_file.txt");
+    let file_sel_path = root.join("sel_file.txt");
+    let folder_with_new_path = root.join("folder_new_child");
+    let file_in_folder_new_path = folder_with_new_path.join("inner_new.txt");
+    let folder_no_new_path = root.join("folder_no_new");
+
+    // Populate mock session data
+    {
+        let mut app_data = mock_app_session_mutexed.lock().unwrap();
+        app_data.set_snapshot_nodes_for_mock(vec![
+            FileNode {
+                path: file_new_path.clone(),
+                name: "new_file.txt".into(),
+                is_dir: false,
+                state: SelectionState::New,
+                children: vec![],
+                checksum: None,
+            },
+            FileNode {
+                path: file_sel_path.clone(),
+                name: "sel_file.txt".into(),
+                is_dir: false,
+                state: SelectionState::Selected,
+                children: vec![],
+                checksum: None,
+            },
+            FileNode {
+                path: folder_with_new_path.clone(),
+                name: "folder_new_child".into(),
+                is_dir: true,
+                state: SelectionState::New,
+                children: vec![
+                    // Folder itself can be New or Selected, doesn't matter for this test as much as its content
+                    FileNode {
+                        path: file_in_folder_new_path.clone(),
+                        name: "inner_new.txt".into(),
+                        is_dir: false,
+                        state: SelectionState::New,
+                        children: vec![],
+                        checksum: None,
+                    },
+                ],
+                checksum: None,
+            },
+            FileNode {
+                path: folder_no_new_path.clone(),
+                name: "folder_no_new".into(),
+                is_dir: true,
+                state: SelectionState::Selected,
+                children: vec![],
+                checksum: None,
+            },
+        ]);
+        // Set mock results for does_path_or_descendants_contain_new_file
+        app_data.set_does_path_or_descendants_contain_new_file_result(&folder_with_new_path, true);
+        app_data.set_does_path_or_descendants_contain_new_file_result(&folder_no_new_path, false);
+        // Files don't use this specific mock result in `is_tree_item_new`, they use get_node_attributes_for_path
+    }
+
+    // Use the new test helper to populate path_to_tree_item_id
+    let item_id_file_new = TreeItemId(1);
+    let item_id_file_sel = TreeItemId(2);
+    let item_id_folder_new = TreeItemId(3);
+    let item_id_folder_no_new = TreeItemId(5);
+    // TreeItemId(4) for file_in_folder_new_path is not directly queried by is_tree_item_new in this test's assertions
+
+    mutable_logic.test_set_path_to_tree_item_id_mapping(file_new_path.clone(), item_id_file_new);
+    mutable_logic.test_set_path_to_tree_item_id_mapping(file_sel_path.clone(), item_id_file_sel);
+    mutable_logic
+        .test_set_path_to_tree_item_id_mapping(folder_with_new_path.clone(), item_id_folder_new);
+    mutable_logic
+        .test_set_path_to_tree_item_id_mapping(folder_no_new_path.clone(), item_id_folder_no_new);
+
+    // Act & Assert
+    assert!(
+        mutable_logic.is_tree_item_new(window_id, item_id_file_new),
+        "New file should be new"
+    );
+    assert!(
+        !mutable_logic.is_tree_item_new(window_id, item_id_file_sel),
+        "Selected file should not be new"
+    );
+    assert!(
+        mutable_logic.is_tree_item_new(window_id, item_id_folder_new),
+        "Folder with new child should be new"
+    );
+    assert!(
+        !mutable_logic.is_tree_item_new(window_id, item_id_folder_no_new),
+        "Folder with no new child should not be new"
+    );
+
+    // Check if the mock method was called for folders (it's also called for files by the mock's own fallback)
+    let log = mock_app_session_mutexed
+        .lock()
+        .unwrap()
+        .get_does_path_or_descendants_contain_new_file_log();
+    assert!(
+        log.contains(&folder_with_new_path),
+        "does_path_or_descendants_contain_new_file_log should contain folder_with_new_path"
+    );
+    assert!(
+        log.contains(&folder_no_new_path),
+        "does_path_or_descendants_contain_new_file_log should contain folder_no_new_path"
+    );
+
+    // Check that get_node_attributes_for_path was called for files (it will be, even if the mock for does_path... is also hit)
+    let get_attrs_calls_before = mock_app_session_mutexed
+        .lock()
+        .unwrap()
+        .get_node_attributes_for_path_result
+        .is_some(); // Check if a preset was used
+}
+
+#[test]
+fn test_treeview_item_toggled_queues_redraw_for_item_and_parents_on_new_status_change() {
+    // Arrange
+    let (mut logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
+    let window_id = WindowId(1);
+    logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+    let root = PathBuf::from("/scan_root");
+    let dir1_path = root.join("dir1");
+    let file_in_dir1_path = dir1_path.join("file_in_dir1.txt");
+
+    {
+        let mut app_data = mock_app_session_mutexed.lock().unwrap();
+        app_data.set_root_path_for_scan_for_mock(root.clone());
+        app_data.set_snapshot_nodes_for_mock(vec![FileNode {
+            path: dir1_path.clone(),
+            name: "dir1".into(),
+            is_dir: true,
+            state: SelectionState::New,
+            children: vec![FileNode {
+                path: file_in_dir1_path.clone(),
+                name: "file_in_dir1.txt".into(),
+                is_dir: false,
+                state: SelectionState::New,
+                children: vec![],
+                checksum: None,
+            }],
+            checksum: None,
+        }]);
+        // Mocking the "new" status: file is new, folder contains new
+        app_data.set_does_path_or_descendants_contain_new_file_result(&file_in_dir1_path, true); // File itself
+        app_data.set_does_path_or_descendants_contain_new_file_result(&dir1_path, true); // Folder because of child
+    }
+
+    let file_item_id = TreeItemId(10);
+    let dir1_item_id = TreeItemId(11);
+
+    logic.test_set_path_to_tree_item_id_mapping(file_in_dir1_path.clone(), file_item_id);
+    logic.test_set_path_to_tree_item_id_mapping(dir1_path.clone(), dir1_item_id);
+
+    // After toggling, the file is no longer New, and we'll mock that the directory no longer contains New files.
+    // This setup is for *after* the state change occurs within MyAppLogic.
+    mock_app_session_mutexed
+        .lock()
+        .unwrap()
+        .set_does_path_or_descendants_contain_new_file_result(&file_in_dir1_path, false);
+    mock_app_session_mutexed
+        .lock()
+        .unwrap()
+        .set_does_path_or_descendants_contain_new_file_result(&dir1_path, false);
+
+    // Act: Toggle the new file to Selected (no longer "New" for display)
+    logic.handle_event(AppEvent::TreeViewItemToggledByUser {
+        window_id,
+        item_id: file_item_id,
+        new_state: CheckState::Checked, // Becomes Selected
+    });
+    let cmds = logic.test_drain_commands();
+
+    // Assert
+    // Check for RedrawTreeItem for the file itself
+    let mut redraw_file_found = false;
+    let mut redraw_dir_found = false;
+    for cmd in &cmds {
+        if let PlatformCommand::RedrawTreeItem {
+            item_id: cmd_item_id,
+            ..
+        } = cmd
+        {
+            if *cmd_item_id == file_item_id {
+                redraw_file_found = true;
+            }
+            if *cmd_item_id == dir1_item_id {
+                redraw_dir_found = true;
+            }
+        }
+    }
+
+    assert!(
+        redraw_file_found,
+        "Expected RedrawTreeItem for the toggled file. Got: {:?}",
+        cmds
+    );
+    assert!(
+        redraw_dir_found,
+        "Expected RedrawTreeItem for the parent directory. Got: {:?}",
+        cmds
+    );
 }

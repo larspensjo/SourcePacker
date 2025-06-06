@@ -1083,7 +1083,8 @@ impl Win32ApiInternalState {
      * Handles the NM_CUSTOMDRAW notification specifically for the TreeView control.
      * This function orchestrates the custom drawing stages to render a "New" item indicator.
      * It interacts with the `PlatformEventHandler` (application logic) to determine if an
-     * item is "New" and then performs the drawing operations on the item's HDC.
+     * item is "New" (now considering files and folders appropriately) and then performs
+     * the drawing operations on the item's HDC.
      */
     fn handle_nm_customdraw_treeview(
         self: &Arc<Self>,
@@ -1095,7 +1096,10 @@ impl Win32ApiInternalState {
 
         match nmtvcd.nmcd.dwDrawStage {
             CDDS_PREPAINT => {
-                log::trace!("NM_CUSTOMDRAW TreeView ({:?}): CDDS_PREPAINT", window_id);
+                log::trace!(
+                    "NM_CUSTOMDRAW TreeView ({:?}): CDDS_PREPAINT. Requesting CDRF_NOTIFYITEMDRAW.",
+                    window_id
+                );
                 return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
             }
             CDDS_ITEMPREPAINT => {
@@ -1110,8 +1114,8 @@ impl Win32ApiInternalState {
                 if let Some(handler_arc) = event_handler_opt {
                     if let Ok(handler_guard) = handler_arc.lock() {
                         if handler_guard.is_tree_item_new(window_id, tree_item_id) {
-                            log::trace!(
-                                "NM_CUSTOMDRAW TreeView ({:?}): Item {:?} IS NEW. Requesting CDRF_NOTIFYPOSTPAINT.",
+                            log::debug!(
+                                "NM_CUSTOMDRAW TreeView ({:?}): Item {:?} IS NEW (file or folder with new descendants). Requesting CDRF_NOTIFYPOSTPAINT.",
                                 window_id,
                                 tree_item_id
                             );
@@ -1125,14 +1129,16 @@ impl Win32ApiInternalState {
                         }
                     } else {
                         log::warn!(
-                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPREPAINT.",
-                            window_id
+                            "NM_CUSTOMDRAW TreeView ({:?}): Failed to lock event handler for ITEMPREPAINT. Defaulting for item {:?}.",
+                            window_id,
+                            tree_item_id
                         );
                     }
                 } else {
                     log::warn!(
-                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPREPAINT.",
-                        window_id
+                        "NM_CUSTOMDRAW TreeView ({:?}): Event handler not available for ITEMPREPAINT. Defaulting for item {:?}.",
+                        window_id,
+                        tree_item_id
                     );
                 }
                 return LRESULT(CDRF_DODEFAULT as isize);
@@ -1145,13 +1151,9 @@ impl Win32ApiInternalState {
                 let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize); // Actual HTREEITEM
                 let hwnd_treeview = nmtvcd.nmcd.hdr.hwndFrom;
 
-                let mut item_rect_data = RECT::default(); // This will receive the coordinates
+                let mut item_rect_data = RECT::default();
 
-                // Prepare the RECT structure for TVM_GETITEMRECT.
-                // The HTREEITEM must be written into the beginning of the RECT's memory block.
                 unsafe {
-                    // Cast the pointer to item_rect_data to *mut HTREEITEM and write h_item_native.
-                    // This relies on the TreeView control correctly interpreting this memory layout.
                     let p_hitem_in_rect = &mut item_rect_data as *mut RECT as *mut HTREEITEM;
                     *p_hitem_in_rect = h_item_native;
                 }
@@ -1162,25 +1164,30 @@ impl Win32ApiInternalState {
                     SendMessageW(
                         hwnd_treeview,
                         TVM_GETITEMRECT,
-                        Some(WPARAM(0)), // FALSE for text-only part of the item
+                        Some(WPARAM(1)), // TRUE (1) for text-only part of the item for positioning circle next to text
                         Some(lparam_for_getrect),
                     )
                 };
 
                 if get_rect_success != LRESULT(0) {
-                    // Non-zero means success
-                    // item_rect_data now contains the valid rectangle for the item's text.
-                    let x1 = item_rect_data.left;
-                    let y1 = item_rect_data.top;
-                    let x2 = item_rect_data.left + CIRCLE_DIAMETER;
-                    let y2 = item_rect_data.top + CIRCLE_DIAMETER;
+                    // Position circle slightly to the left of the text rectangle's left edge
+                    let circle_offset_x = -(CIRCLE_DIAMETER + 2); // Offset to the left of text
+                    let x1 = item_rect_data.left + circle_offset_x;
+                    let y1 = item_rect_data.top
+                        + (item_rect_data.bottom - item_rect_data.top - CIRCLE_DIAMETER) / 2; // Vertically center with text
+                    let x2 = x1 + CIRCLE_DIAMETER;
+                    let y2 = y1 + CIRCLE_DIAMETER;
 
                     log::debug!(
-                        "NM_CUSTOMDRAW TreeView ({:?}): Drawing 'New' indicator for item {:?} (HTREEITEM {:?}) at text_rect: ({:?})",
+                        "NM_CUSTOMDRAW TreeView ({:?}): Drawing 'New' indicator for item {:?} (HTREEITEM {:?}) at text_rect: {:?}, circle_coords: ({},{},{},{})",
                         window_id,
                         tree_item_id,
                         h_item_native,
-                        item_rect_data
+                        item_rect_data,
+                        x1,
+                        y1,
+                        x2,
+                        y2
                     );
 
                     unsafe {
@@ -1191,8 +1198,8 @@ impl Win32ApiInternalState {
 
                             Ellipse(hdc, x1, y1, x2, y2);
 
-                            SelectObject(hdc, old_brush_obj); // Restore old brush
-                            DeleteObject(brush_obj); // Delete the brush we created
+                            SelectObject(hdc, old_brush_obj);
+                            DeleteObject(brush_obj);
                         } else {
                             log::error!(
                                 "NM_CUSTOMDRAW TreeView ({:?}): Failed to create brush for 'New' indicator. LastError: {:?}",

@@ -461,18 +461,26 @@ impl MyAppLogic {
         };
 
         // Get the original state of the node before updating it.
-        let original_node_state_was_new = {
+        // We need to check if the node *itself* was New, or if it's a folder,
+        // if it or any descendants contained a new file.
+        let was_considered_new_for_display: bool = {
             let app_data_guard = self.app_session_data_ops.lock().unwrap();
-            if let Some((original_state, _is_dir)) =
+            if let Some((original_state, is_dir)) =
                 app_data_guard.get_node_attributes_for_path(&path_for_model_update)
             {
-                original_state == SelectionState::New
+                if is_dir {
+                    // For directories, it was "new" for display if it or its descendants had a new file
+                    app_data_guard.does_path_or_descendants_contain_new_file(&path_for_model_update)
+                } else {
+                    // For files, it was "new" if its state was New
+                    original_state == SelectionState::New
+                }
             } else {
                 log::warn!(
                     "AppLogic: Could not get original node attributes for path {:?} to check if it was New.",
                     path_for_model_update
                 );
-                false // Assume not new if we can't find it, to avoid unnecessary redraws
+                false
             }
         };
 
@@ -512,6 +520,14 @@ impl MyAppLogic {
                         new_state: check_state_for_ui,
                     },
                 );
+                // After a state change, we also need to check if the "New" indicator needs to be redrawn
+                // for this specific item (and potentially its parents, handled by is_tree_item_new).
+                // This redraw is particularly for the item whose state directly changed.
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::RedrawTreeItem {
+                        window_id,
+                        item_id: *tree_item_id_to_update,
+                    });
             } else {
                 log::error!(
                     "AppLogic: Path {:?} (from collected_changes) not found in path_to_tree_item_id during TreeViewItemToggled update.",
@@ -520,20 +536,55 @@ impl MyAppLogic {
             }
         }
 
-        // If the item's state *was* New and just changed (to Selected/Deselected),
-        // queue a command to redraw it so the custom "New" indicator disappears.
-        if original_node_state_was_new {
-            // The new_model_file_state will be Selected or Deselected, so it's implicitly not New anymore.
+        // If the primary item toggled *was* considered "new" for display purposes,
+        // and its state changed (to Selected/Deselected),
+        // queue a command to redraw it and its affected ancestors.
+        // The actual `is_tree_item_new` check for the *current* state will determine if the dot remains.
+        // The RedrawTreeItem command ensures the UI updates if the "new" status *might* have changed.
+        if was_considered_new_for_display {
+            // The primary item itself needs a redraw check
             self.synchronous_command_queue
-                .push_back(PlatformCommand::RedrawTreeItem {
-                    window_id, // The window_id from the event
-                    item_id,   // The item_id from the event (of the primary item toggled)
-                });
+                .push_back(PlatformCommand::RedrawTreeItem { window_id, item_id });
             log::debug!(
-                "AppLogic: Item {:?} (path {:?}) was New and changed state. Queueing RedrawTreeItem.",
+                "AppLogic: Item {:?} (path {:?}) was considered 'New' for display and changed state. Queueing RedrawTreeItem.",
                 item_id,
                 path_for_model_update
             );
+
+            // Also, enqueue redraws for all parent items, as their "contains new file" status might have changed.
+            let mut current_path_for_ancestor_check = path_for_model_update.clone();
+            // Loop while current path has a parent and that parent is not "above" the scan root
+            // (i.e., parent_path is not equal to the parent of the scan root itself).
+            let scan_root_parent = self
+                .app_session_data_ops
+                .lock()
+                .unwrap()
+                .get_root_path_for_scan()
+                .parent()
+                .map(|p| p.to_path_buf());
+
+            while let Some(parent_path) = current_path_for_ancestor_check.parent() {
+                // Stop if parent_path is effectively the directory containing the root_path_for_scan
+                if Some(parent_path.to_path_buf()) == scan_root_parent
+                    || parent_path.as_os_str().is_empty()
+                {
+                    break;
+                }
+
+                if let Some(parent_item_id) = ui_state_ref.path_to_tree_item_id.get(parent_path) {
+                    self.synchronous_command_queue
+                        .push_back(PlatformCommand::RedrawTreeItem {
+                            window_id,
+                            item_id: *parent_item_id,
+                        });
+                    log::debug!(
+                        "AppLogic: Queueing RedrawTreeItem for ancestor {:?} (path {:?}) due to toggle of descendant.",
+                        parent_item_id,
+                        parent_path
+                    );
+                }
+                current_path_for_ancestor_check = parent_path.to_path_buf();
+            }
         }
 
         self.update_current_archive_status();
@@ -1676,7 +1727,10 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     /*
-     * Queries if a specific tree item's corresponding file node is in the "New" state.
+     * Queries if a specific tree item should display the "New" indicator.
+     * For files, this means the file's state is `SelectionState::New`.
+     * For folders, this means the folder itself or any of its descendant files
+     * are in the `SelectionState::New` state.
      * It looks up the path for the item_id, then queries ProfileRuntimeDataOperations.
      */
     fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool {
@@ -1708,20 +1762,31 @@ impl PlatformEventHandler for MyAppLogic {
             }
         };
 
-        match self
-            .app_session_data_ops
-            .lock()
-            .unwrap()
-            .get_node_attributes_for_path(path)
-        {
+        let app_data_guard = self.app_session_data_ops.lock().unwrap();
+        match app_data_guard.get_node_attributes_for_path(path) {
             Some((file_state, is_dir)) => {
-                log::debug!(
-                    "is_tree_item_new: Found FileNode attributes for path {:?}: state {:?}, is_dir {}.",
-                    path,
-                    file_state,
-                    is_dir
-                );
-                file_state == SelectionState::New && !is_dir
+                if is_dir {
+                    // For directories, check if it or any descendant contains a new file
+                    let contains_new =
+                        app_data_guard.does_path_or_descendants_contain_new_file(path);
+                    log::debug!(
+                        "is_tree_item_new: Directory {:?} (ItemID {:?}) contains new file: {}.",
+                        path,
+                        item_id,
+                        contains_new
+                    );
+                    contains_new
+                } else {
+                    // For files, check its own state
+                    let is_new_file = file_state == SelectionState::New;
+                    log::debug!(
+                        "is_tree_item_new: File {:?} (ItemID {:?}) is new: {}.",
+                        path,
+                        item_id,
+                        is_new_file
+                    );
+                    is_new_file
+                }
             }
             None => {
                 log::trace!(
@@ -1734,6 +1799,7 @@ impl PlatformEventHandler for MyAppLogic {
     }
 }
 
+// The purpose of these test helpers is to allow testing the internal state of MyAppLogic
 #[cfg(test)]
 impl MyAppLogic {
     pub(crate) fn test_set_main_window_id_and_init_ui_state(&mut self, id: WindowId) {
@@ -1750,5 +1816,20 @@ impl MyAppLogic {
 
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
         self.synchronous_command_queue.drain(..).collect()
+    }
+
+    pub(crate) fn test_set_path_to_tree_item_id_mapping(&mut self, path: PathBuf, id: TreeItemId) {
+        if let Some(ui_state) = &mut self.ui_state {
+            log::debug!(
+                "Test helper: Mapping path {:?} to TreeItemId {:?}",
+                path,
+                id
+            );
+            ui_state.path_to_tree_item_id.insert(path, id);
+        } else {
+            panic!(
+                "ui_state not initialized in test_set_path_to_tree_item_id_mapping. Call test_set_main_window_id_and_init_ui_state first."
+            );
+        }
     }
 }

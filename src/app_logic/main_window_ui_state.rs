@@ -165,7 +165,7 @@ impl MainWindowUiState {
         let save_button_enabled = app_session_data_ops.get_archive_path().is_some();
         commands.push(PlatformCommand::SetControlEnabled {
             window_id,
-            control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC,
+            control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC, // TODO: This ID is problematic.
             enabled: save_button_enabled,
         });
 
@@ -178,8 +178,8 @@ mod tests {
     use super::*;
     use crate::app_logic::ui_constants;
     use crate::core::{
-        ArchiveStatus, FileNode, SelectionState, FileSystemScannerOperations, Profile,
-        ProfileRuntimeDataOperations, NodeStateApplicatorOperations, TokenCounterOperations,
+        ArchiveStatus, FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations,
+        Profile, ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
         file_node::FileTokenDetails,
     };
     use crate::platform_layer::WindowId;
@@ -189,7 +189,6 @@ mod tests {
 
     // --- MockProfileRuntimeDataOperations for MainWindowUiState tests ---
     // This is a simplified mock, just enough for these tests.
-    // A more complete mock might be shared if handler_tests also needs one.
     #[derive(Default)]
     struct MockProfileRuntimeDataOps {
         profile_name: Option<String>,
@@ -211,25 +210,25 @@ mod tests {
 
         // --- Unused methods for these specific tests, provide default/dummy implementations ---
         fn set_profile_name(&mut self, _name: Option<String>) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: set_profile_name")
         }
         fn set_archive_path(&mut self, _path: Option<PathBuf>) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: set_archive_path")
         }
         fn get_root_path_for_scan(&self) -> PathBuf {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: get_root_path_for_scan")
         }
         fn set_root_path_for_scan(&mut self, _path: PathBuf) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: set_root_path_for_scan")
         }
         fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: get_snapshot_nodes")
         }
         fn clear_snapshot_nodes(&mut self) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: clear_snapshot_nodes")
         }
         fn set_snapshot_nodes(&mut self, _nodes: Vec<FileNode>) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: set_snapshot_nodes")
         }
         fn apply_selection_states_to_snapshot(
             &mut self,
@@ -237,10 +236,10 @@ mod tests {
             _selected_paths: &HashSet<PathBuf>,
             _deselected_paths: &HashSet<PathBuf>,
         ) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: apply_selection_states_to_snapshot")
         }
         fn get_node_attributes_for_path(&self, _path: &Path) -> Option<(SelectionState, bool)> {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: get_node_attributes_for_path")
         }
         fn update_node_state_and_collect_changes(
             &mut self,
@@ -248,25 +247,35 @@ mod tests {
             _new_state: SelectionState,
             _state_manager: &dyn NodeStateApplicatorOperations,
         ) -> Vec<(PathBuf, SelectionState)> {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: update_node_state_and_collect_changes")
+        }
+        fn does_path_or_descendants_contain_new_file(&self, _path: &Path) -> bool {
+            // For MainWindowUiState tests, this method isn't directly called by the tested functions.
+            // However, to satisfy the trait, a default implementation is needed.
+            // If tests for MainWindowUiState were to indirectly rely on this,
+            // this mock would need to be enhanced (e.g., with a settable result).
+            log::warn!(
+                "MockProfileRuntimeDataOps: does_path_or_descendants_contain_new_file called, returning default false."
+            );
+            false
         }
         fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: get_cached_file_token_details")
         }
         fn set_cached_file_token_details(&mut self, _details: HashMap<PathBuf, FileTokenDetails>) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: set_cached_file_token_details")
         }
         fn update_total_token_count_for_selected_files(
             &mut self,
             _token_counter: &dyn TokenCounterOperations,
         ) -> usize {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: update_total_token_count_for_selected_files")
         }
         fn clear(&mut self) {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: clear")
         }
         fn create_profile_snapshot(&self) -> Profile {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: create_profile_snapshot")
         }
         fn load_profile_into_session(
             &mut self,
@@ -275,12 +284,10 @@ mod tests {
             _state_manager: &dyn NodeStateApplicatorOperations,
             _token_counter: &dyn TokenCounterOperations,
         ) -> Result<(), String> {
-            unimplemented!()
+            unimplemented!("MockProfileRuntimeDataOps: load_profile_into_session")
         }
         fn get_current_selection_paths(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
-            let mut selected = HashSet::new();
-            let mut deselected = HashSet::new();
-            return (selected, deselected);
+            unimplemented!("MockProfileRuntimeDataOps: get_current_selection_paths")
         }
     }
 
@@ -333,7 +340,7 @@ mod tests {
         let window_id = WindowId(1);
         let mut ui_state = MainWindowUiState::new(window_id);
 
-        let mut mock_app_session_ops = MockProfileRuntimeDataOps {
+        let mock_app_session_ops = MockProfileRuntimeDataOps {
             profile_name: Some("TestProfile".to_string()),
             archive_path: Some(PathBuf::from("/root/archive.txt")),
             cached_total_token_count: 123,
@@ -346,14 +353,12 @@ mod tests {
 
         // Act
         let commands = ui_state.build_initial_profile_display_commands(
-            &mock_app_session_ops, // Pass the mock ops
+            &mock_app_session_ops,
             initial_status_msg_text.clone(),
             true, // scan_was_successful
         );
 
         // Assert
-        // (Assertions for command content remain largely the same as before,
-        //  as they check the generated PlatformCommands)
         let mut general_initial_status_found = false;
         let mut dedicated_token_status_found = false;
         let mut dedicated_archive_status_found = false;
