@@ -23,19 +23,7 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
 **Sub-Phase A.II: Implementing Generic Layout, Controls, and Handlers**
 
 **Step A.II.1: Aggressively Implement a Truly Generic Layout Engine (Strengthens Original A.II.1)**
-    *   **Action (Platform Layer):**
-        1.  **Remove "OLD hardcoded layout" fallback:** Modify `platform_layer::window_common::handle_wm_size` to *exclusively* use stored `LayoutRule`s. Remove any fallback logic. If no rules are provided for a control, it remains at its initial creation size/position.
-        2.  **Redesign `LayoutRule` and `handle_wm_size` for Hierarchical Proportional Layout:**
-            *   Extend `platform_layer::types::LayoutRule` to include a mechanism for proportional sizing within a parent (e.g., `proportional_weight: Option<f32>` or a new `DockStyle::ProportionalFill { weight: f32 }`). This weight would be relative to siblings within the same parent panel.
-            *   Refactor `platform_layer::window_common::handle_wm_size` to:
-                *   Lay out top-level controls (children of the main window).
-                *   For each control that is a panel and has child controls with layout rules, recursively apply layout logic for that panel's client area and its children. This includes interpreting the new proportional sizing rules.
-                *   **Remove the hardcoded proportional split** (e.g., 0.50, 0.25, 0.25) for status bar labels from `handle_wm_size`. This logic must be driven by `LayoutRule`s on the label controls themselves.
-    *   **Action (UI Description Layer):**
-        1.  Modify `ui_description_layer::build_main_window_static_layout` to:
-            *   Generate `LayoutRule`s for status bar labels (e.g., `STATUS_LABEL_GENERAL_ID`) that specify their proportional size *within* the `STATUS_BAR_PANEL_ID` using the new `LayoutRule` features.
-            *   Ensure a complete set of `LayoutRule`s is provided for *all* controls managed by the layout engine. Constants like `STATUS_BAR_HEIGHT` (used for the panel's fixed size) remain in `ui_description_layer` (or `app_logic::ui_constants`).
-    *   *Verification:* Main window layout is entirely driven by `DefineLayout` commands. `handle_wm_size` is generic and contains no application-specific layout code. Status bar segments (labels) are laid out proportionally within their parent panel, according to rules originating from `ui_description_layer`.
+    *   **(Completed)**
 
 **Step A.II.2: Generic Control Creation (e.g., Static Text/Labels)**
     *   **(Mostly Completed)** `PlatformCommand::CreateLabel` and `PlatformCommand::CreatePanel` are used. Layout of labels *within* the status panel needs to be driven by their own generic `LayoutRule`s (addressed in A.II.1).
