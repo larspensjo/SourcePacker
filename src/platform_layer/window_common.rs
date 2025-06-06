@@ -21,11 +21,14 @@ use windows::{
             RECT, WPARAM,
         },
         Graphics::Gdi::{
-            BeginPaint, COLOR_WINDOW, COLOR_WINDOWTEXT, CreateSolidBrush, DeleteObject, Ellipse,
-            EndPaint, FillRect, GetSysColor, GetSysColorBrush, HBRUSH, HDC, HGDIOBJ,
-            InvalidateRect, PAINTSTRUCT, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
+            BeginPaint, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, COLOR_WINDOWTEXT, CreateFontW,
+            CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_QUALITY, DeleteObject, Ellipse, EndPaint,
+            FF_DONTCARE, FW_NORMAL, FillRect, GetDC, GetDeviceCaps, GetSysColor, GetSysColorBrush,
+            HBRUSH, HDC, HFONT, HGDIOBJ, InvalidateRect, LOGPIXELSY, OUT_DEFAULT_PRECIS,
+            PAINTSTRUCT, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
             TRANSPARENT,
         },
+        System::WindowsProgramming::MulDiv,
         UI::Controls::{
             CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT,
             CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NM_CLICK, NM_CUSTOMDRAW, NMHDR,
@@ -83,37 +86,19 @@ const CIRCLE_COLOR_BLUE: COLORREF = COLORREF(0x00FF0000); // BGR format for Blue
 pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
     pub(crate) id: WindowId,
-    /*
-     * Stores the specific internal state for the TreeView control if one exists.
-     * This is initialized by the `CreateTreeView` command handler.
-     */
+    // The specific internal state for the TreeView control if one exists.
     pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
-    /*
-     * Stores HWNDs for various controls (buttons, status bar, treeview, etc.)
-     * keyed by their logical control ID.
-     */
+    // HWNDs for various controls (buttons, status bar, treeview, etc.)
     pub(crate) controls: HashMap<i32, HWND>,
-    /*
-     * Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
-     * This map is populated when the menu is created.
-     */
+    // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     pub(crate) menu_action_map: HashMap<i32, MenuAction>,
-    /*
-     * Counter to generate unique `i32` IDs for menu items that have an action.
-     * Initialized to a high value (e.g., 30000) to avoid clashes with other control IDs.
-     */
+    // Counter to generate unique `i32` IDs for menu items that have an action.
     pub(crate) next_menu_item_id_counter: i32,
-    /*
-     * Stores layout rules for controls within this window.
-     * Populated by the `PlatformCommand::DefineLayout` command.
-     * If `None`, a default or hardcoded layout might be used (initially).
-     */
+    // ayout rules for controls within this window.
     pub(crate) layout_rules: Option<Vec<LayoutRule>>,
-    /*
-     * Stores the current severity for each new status label, keyed by their logical ID.
-     * This is used by the WM_CTLCOLORSTATIC handler to set text color.
-     */
+    /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
+    pub(crate) status_bar_font: Option<HFONT>,
 }
 
 impl NativeWindowData {
@@ -554,6 +539,69 @@ impl Win32ApiInternalState {
             hwnd,
             window_id
         );
+
+        // Create and store the status bar font
+        if let Ok(mut windows_map_guard) = self.active_windows.write() {
+            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+                let font_name_hstring = HSTRING::from("Segoe UI"); // Or "Tahoma"
+                let font_point_size = 9;
+
+                let hdc_screen = unsafe { GetDC(None) };
+                let logical_font_height = if !hdc_screen.is_invalid() {
+                    let height = -unsafe {
+                        MulDiv(
+                            font_point_size,
+                            GetDeviceCaps(Some(hdc_screen), LOGPIXELSY),
+                            72,
+                        )
+                    };
+                    unsafe { ReleaseDC(None, hdc_screen) };
+                    height
+                } else {
+                    log::warn!(
+                        "Could not get screen DC for font metrics, using direct point size for height."
+                    );
+                    -font_point_size // Fallback if GetDC fails
+                };
+
+                let h_font = unsafe {
+                    CreateFontW(
+                        logical_font_height,  // nHeight
+                        0,                    // nWidth
+                        0,                    // nEscapement
+                        0,                    // nOrientation
+                        FW_NORMAL.0 as i32,   // fnWeight
+                        0,                    // fdwItalic
+                        0,                    // fdwUnderline
+                        0,                    // fdwStrikeOut
+                        DEFAULT_CHARSET,      // nCharSet
+                        OUT_DEFAULT_PRECIS,   // nOutPrecision
+                        CLIP_DEFAULT_PRECIS,  // nClipPrecision
+                        DEFAULT_QUALITY,      // nQuality
+                        FF_DONTCARE.0 as u32, // nPitchAndFamily (FF_SWISS for Segoe UI/Tahoma often works well)
+                        &font_name_hstring,   // lpszFaceName
+                    )
+                };
+
+                if h_font.is_invalid() {
+                    log::error!("Failed to create status bar font: {:?}", unsafe {
+                        GetLastError()
+                    });
+                    window_data.status_bar_font = None;
+                } else {
+                    log::debug!(
+                        "Status bar font created: {:?} for window {:?}",
+                        h_font,
+                        window_id
+                    );
+                    window_data.status_bar_font = Some(h_font);
+                }
+            }
+        } else {
+            log::error!(
+                "Failed to get write lock on active_windows in WM_CREATE for font creation."
+            );
+        }
     }
 
     /*
@@ -931,6 +979,22 @@ impl Win32ApiInternalState {
             window_id
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
+            if let Some(mut window_data_ref) = windows_map_guard.get_mut(&window_id) {
+                // Get mutable ref
+                // Clean up custom font if it exists
+                if let Some(h_font) = window_data_ref.status_bar_font.take() {
+                    // .take() to get ownership and remove from Option
+                    if !h_font.is_invalid() {
+                        log::debug!(
+                            "Platform: Deleting status bar font {:?} for WindowId {:?}",
+                            h_font,
+                            window_id
+                        );
+                        unsafe { DeleteObject(HGDIOBJ(h_font.0)) };
+                    }
+                }
+            }
+
             if windows_map_guard.remove(&window_id).is_some() {
                 log::debug!(
                     "Platform: Successfully removed WindowId {:?} from active_windows.",

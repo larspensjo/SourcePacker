@@ -9,7 +9,9 @@ use crate::app_logic::ui_constants;
 
 use crate::platform_layer::{
     control_treeview::ID_TREEVIEW_CTRL,
-    types::{DockStyle, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId},
+    types::{
+        DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
+    },
     window_common::STATUS_BAR_HEIGHT,
 };
 
@@ -90,18 +92,21 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
         label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
         initial_text: "Status: Initial".to_string(),
+        class: LabelClass::StatusBar,
     });
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
         label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
         initial_text: "Archive: Initial".to_string(),
+        class: LabelClass::StatusBar,
     });
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
         label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
         initial_text: "Tokens: Initial".to_string(),
+        class: LabelClass::StatusBar,
     });
 
     // 5. Define Layout Rules for the controls

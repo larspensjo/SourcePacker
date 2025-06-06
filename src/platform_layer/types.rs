@@ -205,6 +205,13 @@ pub enum MessageSeverity {
     Error,       // An error has occurred
 }
 
+// --- Label Classification ---
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LabelClass {
+    Default,
+    StatusBar,
+}
+
 // Represents platform-agnostic commands sent from the application logic to the platform layer.
 //
 // These commands instruct the platform layer to perform specific actions on
@@ -304,6 +311,7 @@ pub enum PlatformCommand {
         parent_panel_id: i32,
         label_id: i32,
         initial_text: String,
+        class: LabelClass, // Classify labels for potential specific styling
     },
     UpdateLabelText {
         window_id: WindowId,

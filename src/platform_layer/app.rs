@@ -417,12 +417,14 @@ impl Win32ApiInternalState {
                 parent_panel_id,
                 label_id,
                 initial_text,
+                class,
             } => command_executor::execute_create_label(
                 self,
                 window_id,
                 parent_panel_id,
                 label_id,
                 initial_text,
+                class,
             ),
             PlatformCommand::UpdateLabelText {
                 window_id,
@@ -486,6 +488,7 @@ impl PlatformInterface {
             next_menu_item_id_counter: 30000, // Default starting ID for menu items
             layout_rules: None,
             label_severities: HashMap::new(),
+            status_bar_font: None,
         };
 
         // Insert preliminary data into the active_windows map.

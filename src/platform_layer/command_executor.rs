@@ -18,7 +18,7 @@ use crate::platform_layer::window_common::{BUTTON_AREA_HEIGHT, SS_LEFT, WC_BUTTO
 use std::sync::Arc;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND},
+        Foundation::{GetLastError, HWND, LPARAM, WPARAM},
         Graphics::Gdi::InvalidateRect,
         UI::{
             Controls::{
@@ -28,8 +28,9 @@ use windows::{
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu,
-                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CHILD, WS_VISIBLE,
+                DestroyMenu, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING, PostQuitMessage,
+                SendMessageW, SetMenu, SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
+                WS_BORDER, WS_CHILD, WS_VISIBLE,
             },
         },
     },
@@ -557,13 +558,15 @@ pub(crate) fn execute_create_label(
     parent_panel_id: i32, // Logical ID of the parent panel
     label_id: i32,        // Logical ID for this new label
     initial_text: String,
+    class: super::types::LabelClass,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_create_label for WinID {:?}, LabelID: {}, ParentPanelID: {}, Text: '{}'",
+        "CommandExecutor: execute_create_label for WinID {:?}, LabelID: {}, ParentPanelID: {}, Text: '{}', Class: {:?}",
         window_id,
         label_id,
         parent_panel_id,
-        initial_text
+        initial_text,
+        class,
     );
 
     let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
@@ -603,6 +606,43 @@ pub(crate) fn execute_create_label(
                 None,
             )?
         };
+
+        // Apply custom font if this is a status bar label and font exists
+        if (class == super::types::LabelClass::StatusBar) {
+            if let Some(h_font) = window_data.status_bar_font {
+                if !h_font.is_invalid() {
+                    unsafe {
+                        SendMessageW(
+                            hwnd_label,
+                            WM_SETFONT,
+                            Some(WPARAM(h_font.0 as usize)),
+                            Some(LPARAM(1)),
+                        )
+                    }; // LPARAM(1) to redraw
+                    log::debug!("Applied status bar font to label ID {}", label_id);
+                }
+            }
+        }
+
+        // Apply custom font if this is a status bar label (based on class) and font exists
+        if class == super::types::LabelClass::StatusBar {
+            if let Some(h_font) = window_data.status_bar_font {
+                if !h_font.is_invalid() {
+                    unsafe {
+                        SendMessageW(
+                            hwnd_label,
+                            WM_SETFONT,
+                            Some(WPARAM(h_font.0 as usize)),
+                            Some(LPARAM(1)),
+                        )
+                    }; // LPARAM(1) to redraw
+                    log::debug!(
+                        "Applied status bar font to label ID {} (class: StatusBar)",
+                        label_id
+                    );
+                }
+            }
+        }
         window_data.controls.insert(label_id, hwnd_label);
         window_data
             .label_severities
