@@ -8,7 +8,6 @@
  * `PlatformEventHandler` trait that the application logic must implement.
  */
 
-use std::any::Any;
 use std::path::PathBuf;
 
 // An opaque identifier for a native window, managed by the platform layer.
@@ -98,7 +97,9 @@ pub struct MenuItemConfig {
  * Defines how a control should dock within its parent container.
  * This is a simplified docking model. More advanced anchoring or grid systems
  * could be introduced later.
+ * TODO: I think many of these have not been implemented yet.
  */
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DockStyle {
     None,   // No docking, control is positioned manually or by other rules.
@@ -165,7 +166,6 @@ pub enum AppEvent {
     },
     // Signals that a menu item was clicked, identified by its semantic `MenuAction`.
     MenuActionClicked {
-        window_id: WindowId,
         action: MenuAction,
     },
     // Signals the result of a "Save File" dialog.
@@ -199,17 +199,18 @@ pub enum AppEvent {
 }
 
 // Defines the severity of a message to be displayed, e.g., in the status bar.
-// Ordered from least to most severe for comparison. `None` clears, `Debug` is for dev info.
+// Ordered from least to most severe for comparison. `None` clears.
+// TODO: 'None' isn't used, is it needed?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessageSeverity {
     None,        // Clears the status, or lowest priority if not explicitly clearing
-    Debug,       // For debug-level information, potentially hidden in release
     Information, // Neutral information
     Warning,     // A warning to the user
     Error,       // An error has occurred
 }
 
 // --- Label Classification ---
+// TODO: Only 'StatusBar' is currently used, is it needed?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelClass {
     Default,
@@ -344,9 +345,6 @@ pub trait PlatformEventHandler: Send + Sync + 'static {
     // Called by the platform layer when the application is about to exit its main loop.
     // This allows the application logic to perform any necessary cleanup.
     fn on_quit(&mut self) {}
-
-    // Provides a way to get `&mut dyn Any` for downcasting, if necessary.
-    fn as_any_mut(&mut self) -> &mut dyn Any;
 
     // Attempts to dequeue a single `PlatformCommand` from the internal queue.
     // This is called by the platform layer's run loop.

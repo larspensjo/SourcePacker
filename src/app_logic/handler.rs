@@ -1600,10 +1600,7 @@ impl PlatformEventHandler for MyAppLogic {
             } => {
                 self.handle_button_clicked(window_id, control_id);
             }
-            AppEvent::MenuActionClicked {
-                window_id: _, // Assuming menu actions are global or context is derived
-                action,
-            } => match action {
+            AppEvent::MenuActionClicked { action } => match action {
                 MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
                 MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
                 MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
@@ -1710,10 +1707,6 @@ impl PlatformEventHandler for MyAppLogic {
                 e
             ),
         }
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
-        self
     }
 
     /*

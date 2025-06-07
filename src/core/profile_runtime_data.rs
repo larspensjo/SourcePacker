@@ -654,10 +654,6 @@ mod tests {
                 .unwrap()
                 .insert(path.to_path_buf(), result);
         }
-
-        fn get_scan_directory_calls(&self) -> Vec<PathBuf> {
-            self.scan_directory_calls.lock().unwrap().clone()
-        }
     }
 
     impl FileSystemScannerOperations for MockFileSystemScanner {

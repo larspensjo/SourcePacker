@@ -9,10 +9,8 @@ use super::app::Win32ApiInternalState;
 use super::control_treeview;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformCommand,
-    TreeItemId, WindowId,
+    AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, TreeItemId, WindowId,
 };
-use crate::app_logic::ui_constants;
 
 use windows::{
     Win32::{
@@ -24,18 +22,15 @@ use windows::{
             BeginPaint, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, COLOR_WINDOWTEXT, CreateFontW,
             CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_QUALITY, DeleteObject, Ellipse, EndPaint,
             FF_DONTCARE, FW_NORMAL, FillRect, GetDC, GetDeviceCaps, GetSysColor, GetSysColorBrush,
-            HBRUSH, HDC, HFONT, HGDIOBJ, InvalidateRect, LOGPIXELSY, OUT_DEFAULT_PRECIS,
-            PAINTSTRUCT, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
-            TRANSPARENT,
+            HBRUSH, HDC, HFONT, HGDIOBJ, LOGPIXELSY, OUT_DEFAULT_PRECIS, PAINTSTRUCT, ReleaseDC,
+            ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
         },
         System::WindowsProgramming::MulDiv,
         UI::Controls::{
             CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT,
             CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NM_CLICK, NM_CUSTOMDRAW, NMHDR,
-            NMTREEVIEWW, NMTVCUSTOMDRAW, TVHITTESTINFO, TVHITTESTINFO_FLAGS, TVHT_ONITEMSTATEICON,
-            TVI_LAST, TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW,
-            TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMEXW, TVITEMEXW_CHILDREN, TVM_DELETEITEM,
-            TVM_GETITEMRECT, TVM_GETITEMW, TVM_HITTEST, TVM_INSERTITEMW, TVM_SETITEMW,
+            NMTVCUSTOMDRAW, TVHITTESTINFO, TVHITTESTINFO_FLAGS, TVHT_ONITEMSTATEICON, TVIF_PARAM,
+            TVIF_STATE, TVIS_STATEIMAGEMASK, TVITEMEXW, TVM_GETITEMRECT, TVM_GETITEMW, TVM_HITTEST,
             TVN_ITEMCHANGEDW,
         },
         UI::WindowsAndMessaging::*,
@@ -48,7 +43,6 @@ use std::ffi::c_void;
 use std::sync::{Arc, Mutex};
 
 // Control IDs
-pub(crate) const ID_BUTTON_GENERATE_ARCHIVE: i32 = 1002;
 
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
@@ -567,21 +561,6 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Retrieves the HWND of the parent control for a given logical control ID.
-     * If parent_control_id is None, it returns the main window's HWND.
-     * Otherwise, it looks up the parent control's HWND from the NativeWindowData.controls map.
-     */
-    fn get_parent_hwnd(
-        window_data: &NativeWindowData,
-        parent_control_id: Option<i32>,
-    ) -> Option<HWND> {
-        match parent_control_id {
-            None => Some(window_data.hwnd), // Main window is the parent
-            Some(id) => window_data.get_control_hwnd(id),
-        }
-    }
-
-    /*
      * Applies layout rules to child controls within a given parent rectangle.
      * This function is called recursively to handle hierarchical layouts.
      * It filters rules for direct children of the specified parent_id, sorts them,
@@ -654,7 +633,7 @@ impl Win32ApiInternalState {
                         _ => unreachable!(), // Already filtered
                     }
                     unsafe {
-                        MoveWindow(
+                        _ = MoveWindow(
                             control_hwnd,
                             item_rect.left,
                             item_rect.top,
@@ -725,7 +704,7 @@ impl Win32ApiInternalState {
                             (total_height_for_proportional - rule.margin.0 - rule.margin.2).max(0);
 
                         unsafe {
-                            MoveWindow(
+                            _ = MoveWindow(
                                 control_hwnd,
                                 final_x,
                                 final_y,
@@ -776,7 +755,7 @@ impl Win32ApiInternalState {
                 bottom: current_available_rect.bottom - rule.margin.2,
             };
             unsafe {
-                MoveWindow(
+                _ = MoveWindow(
                     *control_hwnd,
                     fill_rect.left,
                     fill_rect.top,
@@ -1037,10 +1016,7 @@ impl Win32ApiInternalState {
                             command_id,
                             window_id
                         );
-                        return Some(AppEvent::MenuActionClicked {
-                            window_id,
-                            action: *action,
-                        });
+                        return Some(AppEvent::MenuActionClicked { action: *action });
                     } else {
                         log::warn!(
                             "Platform: WM_COMMAND (Menu/Accel) for unknown ID {} received for window {:?}.",
@@ -1103,7 +1079,7 @@ impl Win32ApiInternalState {
             window_id
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
-            if let Some(mut window_data_ref) = windows_map_guard.get_mut(&window_id) {
+            if let Some(window_data_ref) = windows_map_guard.get_mut(&window_id) {
                 // Get mutable ref
                 // Clean up custom font if it exists
                 if let Some(h_font) = window_data_ref.status_bar_font.take() {
@@ -1114,7 +1090,7 @@ impl Win32ApiInternalState {
                             h_font,
                             window_id
                         );
-                        unsafe { DeleteObject(HGDIOBJ(h_font.0)) };
+                        unsafe { _ = DeleteObject(HGDIOBJ(h_font.0)) };
                     }
                 }
             }
@@ -1156,7 +1132,7 @@ impl Win32ApiInternalState {
                     &ps.rcPaint,
                     HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void),
                 );
-                EndPaint(hwnd, &ps);
+                _ = EndPaint(hwnd, &ps);
             }
         }
         LRESULT(0)
@@ -1384,10 +1360,10 @@ impl Win32ApiInternalState {
                             let brush_obj = HGDIOBJ(h_brush.0);
                             let old_brush_obj = SelectObject(hdc, brush_obj);
 
-                            Ellipse(hdc, x1, y1, x2, y2);
+                            _ = Ellipse(hdc, x1, y1, x2, y2);
 
                             SelectObject(hdc, old_brush_obj);
-                            DeleteObject(brush_obj);
+                            _ = DeleteObject(brush_obj);
                         } else {
                             log::error!(
                                 "NM_CUSTOMDRAW TreeView ({:?}): Failed to create brush for 'New' indicator. LastError: {:?}",
@@ -1478,7 +1454,7 @@ pub(crate) fn show_window(
     if let Some(windows_guard) = internal_state.active_windows.read().ok() {
         if let Some(window_data) = windows_guard.get(&window_id) {
             let cmd = if show { SW_SHOW } else { SW_HIDE };
-            unsafe { ShowWindow(window_data.hwnd, cmd) };
+            unsafe { _ = ShowWindow(window_data.hwnd, cmd) };
             Ok(())
         } else {
             Err(PlatformError::InvalidHandle(format!(

@@ -47,7 +47,6 @@ mod handler_tests {
         get_archive_path_calls: AtomicUsize,
         get_snapshot_nodes_calls: AtomicUsize,
         get_root_path_for_scan_calls: AtomicUsize,
-        get_cached_total_token_count_calls: AtomicUsize,
         create_profile_snapshot_calls: AtomicUsize,
         does_path_or_descendants_contain_new_file_calls: AtomicUsize,
 
@@ -85,7 +84,6 @@ mod handler_tests {
                 get_archive_path_calls: AtomicUsize::new(0),
                 get_snapshot_nodes_calls: AtomicUsize::new(0),
                 get_root_path_for_scan_calls: AtomicUsize::new(0),
-                get_cached_total_token_count_calls: AtomicUsize::new(0),
                 create_profile_snapshot_calls: AtomicUsize::new(0),
                 does_path_or_descendants_contain_new_file_calls: AtomicUsize::new(0),
 
@@ -1251,7 +1249,6 @@ mod handler_tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            window_id: main_window_id,
             action: MenuAction::GenerateArchive,
         });
         let cmds = logic.test_drain_commands();
@@ -1282,7 +1279,6 @@ mod handler_tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            window_id: main_window_id,
             action: MenuAction::GenerateArchive,
         });
         let cmds = logic.test_drain_commands();
@@ -1305,7 +1301,6 @@ mod handler_tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            window_id: main_window_id,
             action: MenuAction::GenerateArchive,
         });
         let cmds = logic.test_drain_commands();

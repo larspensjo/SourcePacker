@@ -305,8 +305,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
 struct InputDialogData {
     prompt_text: String,
     input_text: String,
-    context_tag: Option<String>, // To identify the dialog's purpose if multiple input dialogs are used
-    success: bool,               // True if OK was pressed, false if Cancel or closed
+    success: bool, // True if OK was pressed, false if Cancel or closed
 }
 
 // Helper to extract the low word from WPARAM, typically a command ID.
@@ -399,11 +398,6 @@ unsafe extern "system" fn input_dialog_proc(
 // Helper to push a u16 word (little-endian) to a byte vector.
 fn push_word(vec: &mut Vec<u8>, word: u16) {
     vec.extend_from_slice(&word.to_le_bytes());
-}
-
-// Helper to push a u32 dword (little-endian) to a byte vector.
-fn push_dword(vec: &mut Vec<u8>, dword: u32) {
-    vec.extend_from_slice(&dword.to_le_bytes());
 }
 
 // Helper to push a null-terminated UTF-16 string to a byte vector.
@@ -553,7 +547,6 @@ pub(crate) fn handle_show_input_dialog_command(
     let mut dialog_data = InputDialogData {
         prompt_text: prompt,
         input_text: default_text.unwrap_or_default(),
-        context_tag: context_tag.clone(), // Clone for the event.
         success: false,
     };
 

@@ -96,7 +96,6 @@ mod tests {
     struct MockProfileRuntimeDataOps {
         profile_name: Option<String>,
         archive_path: Option<PathBuf>,
-        cached_total_token_count: usize,
         // We don't need to mock all methods, only those used by MainWindowUiState
     }
 
