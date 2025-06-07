@@ -17,7 +17,7 @@ use crate::platform_layer::window_common::{SS_LEFT, WC_BUTTON, WC_STATIC};
 use std::sync::Arc;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND, LPARAM, WPARAM},
+        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, WPARAM},
         Graphics::Gdi::InvalidateRect,
         UI::{
             Controls::{
@@ -27,9 +27,9 @@ use windows::{
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SendMessageW, SetMenu,
-                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT, WS_BORDER, WS_CHILD,
-                WS_VISIBLE,
+                DestroyMenu, DestroyWindow, HMENU, MF_POPUP, MF_STRING, PostQuitMessage,
+                SendMessageW, SetMenu, SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT,
+                WS_BORDER, WS_CHILD, WS_VISIBLE,
             },
         },
     },
@@ -222,7 +222,7 @@ pub(crate) fn execute_create_main_menu(
  * Helper function to recursively add menu items.
  * This is an internal implementation detail for `execute_create_main_menu`.
  */
-unsafe fn add_menu_item_recursive_impl(
+pub(crate) unsafe fn add_menu_item_recursive_impl(
     parent_menu_handle: HMENU,
     item_config: &MenuItemConfig,
     window_data: &mut window_common::NativeWindowData,
@@ -370,81 +370,175 @@ pub(crate) fn execute_create_treeview(
     window_id: WindowId,
     control_id: i32,
 ) -> PlatformResult<()> {
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
-        PlatformError::OperationFailed("Failed to lock windows map for TreeView creation".into())
-    })?;
+    let hwnd_parent_for_creation: HWND;
+    let h_instance_for_creation: HINSTANCE;
 
-    if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+    // Phase 1: Acquire lock, perform checks, and get necessary data for CreateWindowExW
+    {
+        let windows_map_guard = internal_state.active_windows.read().map_err(|_| {
+            PlatformError::OperationFailed(
+                "Failed to lock windows map (read) for TreeView creation pre-check".into(),
+            )
+        })?;
+
+        let window_data = windows_map_guard.get(&window_id).ok_or_else(|| {
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for CreateTreeView pre-check",
+                window_id
+            ))
+        })?;
+
         if window_data.controls.contains_key(&control_id) || window_data.treeview_state.is_some() {
             return Err(PlatformError::ControlCreationFailed(format!(
                 "TreeView with ID {} or existing TreeView state already present for window {:?}",
                 control_id, window_id
             )));
         }
-        let tvs_style = WINDOW_STYLE(
-            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES,
-        );
-        let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
-        let hwnd_tv = unsafe {
-            CreateWindowExW(
-                WINDOW_EX_STYLE(0),
-                WC_TREEVIEWW,
-                None,
-                combined_style,
-                0,
-                0,
-                10,
-                10, // Dummies, WM_SIZE/LayoutRules will adjust
-                Some(window_data.hwnd),
-                Some(HMENU(control_id as *mut _)),
-                Some(internal_state.h_instance),
-                None,
-            )?
-        };
-        window_data.controls.insert(control_id, hwnd_tv);
-        window_data.treeview_state = Some(control_treeview::TreeViewInternalState::new());
-        log::debug!(
-            "CommandExecutor: Created TreeView (ID {}) for window {:?} with HWND {:?}",
-            control_id,
-            window_id,
-            hwnd_tv
-        );
-        Ok(())
-    } else {
-        Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for CreateTreeView",
-            window_id
-        )))
+        hwnd_parent_for_creation = window_data.hwnd;
+        h_instance_for_creation = internal_state.h_instance;
+
+        if hwnd_parent_for_creation.is_invalid() {
+            return Err(PlatformError::InvalidHandle(format!(
+                "Parent HWND for CreateTreeView is invalid (WinID: {:?})",
+                window_id
+            )));
+        }
     }
+
+    // Phase 2: Create the window without holding the lock
+    let tvs_style = WINDOW_STYLE(
+        TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_CHECKBOXES,
+    );
+    let combined_style = WS_CHILD | WS_VISIBLE | WS_BORDER | tvs_style;
+    let hwnd_tv = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            WC_TREEVIEWW,
+            None,
+            combined_style,
+            0,
+            0,
+            10,
+            10, // Dummies, WM_SIZE/LayoutRules will adjust
+            Some(hwnd_parent_for_creation),
+            Some(HMENU(control_id as *mut _)),
+            Some(h_instance_for_creation),
+            None,
+        )?
+    };
+
+    // Phase 3: Re-acquire lock to update NativeWindowData
+    {
+        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+            log::error!(
+                "Failed to re-acquire write lock for TreeView creation post-update: {:?}",
+                e
+            );
+            // Try to clean up the orphaned window if lock acquisition fails
+            unsafe {
+                DestroyWindow(hwnd_tv).ok();
+            }
+            PlatformError::OperationFailed(
+                "Failed to re-acquire write lock for TreeView creation post-update".into(),
+            )
+        })?;
+
+        if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
+            // Check again in case the window was destroyed or control created by another thread
+            // while the lock was released.
+            if window_data.controls.contains_key(&control_id)
+                || window_data.treeview_state.is_some()
+            {
+                log::warn!(
+                    "TreeView (ID {}) or state for window {:?} was created concurrently or window was altered. Destroying newly created one.",
+                    control_id,
+                    window_id
+                );
+                unsafe {
+                    DestroyWindow(hwnd_tv).ok();
+                } // Attempt to clean up
+                return Err(PlatformError::ControlCreationFailed(format!(
+                    "TreeView with ID {} or state was concurrently created for window {:?}",
+                    control_id, window_id
+                )));
+            }
+
+            window_data.controls.insert(control_id, hwnd_tv);
+            window_data.treeview_state = Some(control_treeview::TreeViewInternalState::new());
+            log::debug!(
+                "CommandExecutor: Created TreeView (ID {}) for window {:?} with HWND {:?}",
+                control_id,
+                window_id,
+                hwnd_tv
+            );
+        } else {
+            // Window was destroyed while we were creating the control.
+            log::warn!(
+                "WindowId {:?} was destroyed during TreeView (ID {}) creation. Destroying orphaned control.",
+                window_id,
+                control_id
+            );
+            unsafe {
+                DestroyWindow(hwnd_tv).ok();
+            } // Attempt to clean up
+            return Err(PlatformError::InvalidHandle(format!(
+                "WindowId {:?} no longer exists for CreateTreeView post-update",
+                window_id
+            )));
+        }
+    } // Write lock is released
+
+    Ok(())
 }
 
-// Functions for commands that are still handled directly by Win32ApiInternalState
-// or will be moved to dialog_handler.rs. These are just stubs for now if they were
-// in Win32ApiInternalState, or direct calls if they were simple enough.
-// For this step, we are only moving the non-dialog ones listed above.
-
-// Example of a command that would eventually go to dialog_handler.rs
-// pub(crate) fn execute_show_save_file_dialog(...) -> PlatformResult<()> { ... }
-
-// Commands that are delegated to other modules (like control_treeview) remain as direct calls
-// for now in `_execute_platform_command`.
 pub(crate) fn execute_populate_treeview(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
+    control_id: i32, /* New: Logical ID of the TreeView */
     items: Vec<super::types::TreeItemDescriptor>,
 ) -> PlatformResult<()> {
-    control_treeview::populate_treeview(internal_state, window_id, items)
+    log::debug!(
+        "CommandExecutor: execute_populate_treeview for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+    /*
+     * The actual call to control_treeview::populate_treeview will happen here.
+     * This function will first retrieve the HWND of the TreeView using window_id and control_id.
+     * Then, it will pass this HWND (and other necessary state if TreeViewInternalState
+     * becomes mapped by control_id) to control_treeview::populate_treeview.
+     * For now, we assume control_treeview::populate_treeview will be updated
+     * to accept the HWND directly or the control_id to manage its own state.
+     *
+     * The original `control_treeview::populate_treeview` took `internal_state` and `window_id`.
+     * It internally resolved the TreeView HWND and state.
+     * The goal here is to make `control_treeview` more generic.
+     * So, `command_executor` should resolve the HWND using `control_id` and pass that.
+     */
+    control_treeview::populate_treeview(internal_state, window_id, control_id, items)
 }
 
 pub(crate) fn execute_update_tree_item_visual_state(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
+    control_id: i32, /* New: Logical ID of the TreeView */
     item_id: TreeItemId,
     new_state: CheckState,
 ) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_update_tree_item_visual_state for WinID {:?}, ControlID {}, ItemID {:?}",
+        window_id,
+        control_id,
+        item_id
+    );
+    /*
+     * Similar to populate_treeview, this will resolve the TreeView HWND using control_id
+     * and then call a (to-be-modified) control_treeview::update_treeview_item_visual_state.
+     */
     control_treeview::update_treeview_item_visual_state(
         internal_state,
         window_id,
+        control_id,
         item_id,
         new_state,
     )

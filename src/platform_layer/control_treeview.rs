@@ -8,7 +8,6 @@
 use super::app::Win32ApiInternalState;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId};
-// use super::window_common::NativeWindowData; // No longer needed here directly for NativeWindowData struct
 
 use windows::{
     Win32::{
@@ -25,8 +24,6 @@ use windows::{
 
 use std::collections::HashMap;
 use std::sync::Arc;
-
-pub(crate) const ID_TREEVIEW_CTRL: i32 = 1001;
 
 #[derive(Debug)]
 pub(crate) struct TreeViewInternalState {
@@ -139,15 +136,17 @@ impl TreeViewInternalState {
 pub(crate) fn populate_treeview(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
+    control_id: i32, /* ID of the TreeView control to populate */
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "Platform: control_treeview::populate_treeview called for WinID {:?}",
-        window_id
+        "Platform: control_treeview::populate_treeview called for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
     );
 
     let hwnd_treeview: HWND;
-    let mut taken_tv_state: Option<TreeViewInternalState>; // To hold the state outside the lock
+    let mut taken_tv_state: Option<TreeViewInternalState>;
 
     // Phase 1: Lock, get HWND, take tv_state
     {
@@ -165,27 +164,29 @@ pub(crate) fn populate_treeview(
         })?;
 
         hwnd_treeview = window_data
-            .get_control_hwnd(ID_TREEVIEW_CTRL)
+            .get_control_hwnd(control_id) // Use control_id to get HWND
             .ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for window ID {:?} before populating.",
-                    window_id
+                    "TreeView HWND not found for ControlID {} in WinID {:?} before populating.",
+                    control_id, window_id
                 ))
             })?;
 
         if hwnd_treeview.is_invalid() {
             return Err(PlatformError::InvalidHandle(format!(
-                "TreeView HWND is invalid for window ID {:?} before populating.",
-                window_id
+                "TreeView HWND is invalid for ControlID {} in WinID {:?} before populating.",
+                control_id, window_id
             )));
         }
         // Take the state out of window_data. If it's None, create a new one.
+        // This assumes treeview_state in NativeWindowData is for the TreeView identified by `control_id``.
+        // If multiple treeviews were supported, treeview_state would need to be a map from control_id to TreeViewInternalState.
         taken_tv_state = window_data.treeview_state.take();
         if taken_tv_state.is_none() {
-            // This case should ideally not happen if CreateTreeView command ensures state is created.
             log::warn!(
-                "TreeView state was None for WinID {:?}, creating new for population.",
-                window_id
+                "TreeView state was None for WinID {:?}/ControlID {}, creating new for population.",
+                window_id,
+                control_id
             );
             taken_tv_state = Some(TreeViewInternalState::new());
         }
@@ -195,17 +196,16 @@ pub(crate) fn populate_treeview(
     if let Some(mut tv_state_actual) = taken_tv_state {
         tv_state_actual.clear_items_impl(hwnd_treeview);
         log::debug!(
-            "Platform: Cleared existing items from TreeView (HWND {:?}) for WinID {:?}",
+            "Platform: Cleared existing items from TreeView (HWND {:?}) for WinID {:?}/ControlID {}.",
             hwnd_treeview,
-            window_id
+            window_id,
+            control_id
         );
 
         for item_desc in items {
             if let Err(e) =
                 tv_state_actual.add_item_recursive_impl(hwnd_treeview, HTREEITEM(0), &item_desc)
             {
-                // If adding an item fails, we should put the state back before returning the error.
-                // Re-acquire lock to put state back.
                 {
                     let mut windows_map_guard =
                         internal_state.active_windows.write().map_err(|_| {
@@ -227,14 +227,13 @@ pub(crate) fn populate_treeview(
             }
         }
         log::debug!(
-            "Platform: Finished populating TreeView (HWND {:?}) for WinID {:?}",
+            "Platform: Finished populating TreeView (HWND {:?}) for WinID {:?}/ControlID {}.",
             hwnd_treeview,
-            window_id
+            window_id,
+            control_id
         );
-        // Update taken_tv_state with the modified state
         taken_tv_state = Some(tv_state_actual);
     } else {
-        // This should not be reached if taken_tv_state was initialized above.
         return Err(PlatformError::OperationFailed(
             "TreeView state was unexpectedly None after take".to_string(),
         ));
@@ -250,17 +249,17 @@ pub(crate) fn populate_treeview(
         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
             window_data.treeview_state = taken_tv_state;
         } else {
-            // This would be a serious issue if the window disappeared between phases.
             log::error!(
-                "WindowId {:?} disappeared while TreeView was being populated.",
-                window_id
+                "WindowId {:?} disappeared while TreeView (ControlID {}) was being populated.",
+                window_id,
+                control_id
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found when trying to restore TreeView state.",
-                window_id
+                "WindowId {:?} not found when trying to restore TreeView state for ControlID {}.",
+                window_id, control_id
             )));
         }
-    } // Write lock released
+    }
 
     Ok(())
 }
@@ -268,9 +267,17 @@ pub(crate) fn populate_treeview(
 pub(crate) fn update_treeview_item_visual_state(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
+    control_id: i32, /* ID of the TreeView control */
     item_id: TreeItemId,
     new_check_state: CheckState,
 ) -> PlatformResult<()> {
+    log::debug!(
+        "Platform: control_treeview::update_treeview_item_visual_state called for WinID {:?}, ControlID {}, ItemID {:?}",
+        window_id,
+        control_id,
+        item_id
+    );
+
     let hwnd_treeview: HWND;
     let h_item_native: HTREEITEM;
 
@@ -289,18 +296,18 @@ pub(crate) fn update_treeview_item_visual_state(
         })?;
 
         hwnd_treeview = window_data
-            .get_control_hwnd(ID_TREEVIEW_CTRL)
+            .get_control_hwnd(control_id) // Use control_id to get HWND
             .ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for window ID {:?} during UpdateVisualState.",
-                    window_id
+                    "TreeView HWND not found for ControlID {} in WinID {:?} during UpdateVisualState.",
+                    control_id, window_id
                 ))
             })?;
 
         let tv_state = window_data.treeview_state.as_ref().ok_or_else(|| {
             PlatformError::OperationFailed(format!(
-                "No TreeView state exists in window {:?} for UpdateVisualState",
-                window_id
+                "No TreeView state exists in window {:?} for UpdateVisualState (ControlID {})",
+                window_id, control_id
             ))
         })?;
 
@@ -310,16 +317,17 @@ pub(crate) fn update_treeview_item_visual_state(
             .copied()
             .ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeItemId {:?} not found in window {:?} for UpdateVisualState",
-                    item_id, window_id
+                    "TreeItemId {:?} not found in window {:?}/ControlID {} for UpdateVisualState",
+                    item_id, window_id, control_id
                 ))
             })?;
     }
 
     if hwnd_treeview.is_invalid() {
-        return Err(PlatformError::InvalidHandle(
-            "Invalid TreeView HWND for visual update".to_string(),
-        ));
+        return Err(PlatformError::InvalidHandle(format!(
+            "Invalid TreeView HWND for ControlID {} in visual update",
+            control_id
+        )));
     }
 
     let image_index = match new_check_state {
@@ -346,8 +354,9 @@ pub(crate) fn update_treeview_item_visual_state(
 
     if send_result.0 == 0 {
         return Err(PlatformError::OperationFailed(format!(
-            "TVM_SETITEMW failed for item {:?}: {:?}",
+            "TVM_SETITEMW failed for item {:?} in ControlID {}: {:?}",
             item_id,
+            control_id,
             unsafe { GetLastError() }
         )));
     }
@@ -358,33 +367,63 @@ pub(crate) fn handle_treeview_itemchanged_notification(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     lparam: LPARAM,
+    control_id_from_notify: i32, /* ID of the TreeView that sent the notification */
 ) -> Option<AppEvent> {
-    let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) };
+    // let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) }; // Already checked by caller normally
 
-    if nmhdr.idFrom as i32 != ID_TREEVIEW_CTRL {
-        return None;
-    }
+    // The 'control_id_from_notify' is the ID of the TreeView control that sent this notification.
+    log::trace!(
+        "control_treeview::handle_treeview_itemchanged_notification received for WinID {:?}, ControlID {}, lparam {:?}",
+        window_id,
+        control_id_from_notify,
+        lparam
+    );
+
+    // At this point, we know the notification is TVN_ITEMCHANGEDW for the
+    // TreeView identified by `control_id_from_notify`.
 
     let tv_state_exists;
     {
-        let windows_guard = internal_state.active_windows.read().ok()?;
-        let window_data = windows_guard.get(&window_id)?;
-        tv_state_exists = window_data.treeview_state.is_some();
-    }
+        let windows_guard = match internal_state.active_windows.read() {
+            Ok(g) => g,
+            Err(_) => {
+                log::error!(
+                    "Failed to get read lock on active_windows in handle_treeview_itemchanged_notification"
+                );
+                return None;
+            }
+        };
+        let window_data = match windows_guard.get(&window_id) {
+            Some(wd) => wd,
+            None => {
+                log::warn!(
+                    "WindowData not found for WinID {:?} in handle_treeview_itemchanged_notification",
+                    window_id
+                );
+                return None;
+            }
+        };
 
-    if !tv_state_exists {
-        log::warn!(
-            "handle_treeview_itemchanged_notification: tv_state does not exist for WinID {:?}",
-            window_id
-        );
-        return None;
+        // Assuming treeview_state in NativeWindowData is the one for the TreeView
+        // identified by control_id_from_notify. If multiple TreeViews were supported,
+        // TreeViewInternalState would need to be stored in a map keyed by control_id.
+        // For now, we check if *any* treeview_state exists for the window.
+        tv_state_exists = window_data.treeview_state.is_some();
+        if !tv_state_exists {
+            log::warn!(
+                "handle_treeview_itemchanged_notification: tv_state does not exist for WinID {:?}/ControlID {}.",
+                window_id,
+                control_id_from_notify
+            );
+            return None;
+        }
     }
 
     // Actual handling of TVN_ITEMCHANGEDW (if any) would go here.
     // For example, to get item details if needed:
     // let nmtv = unsafe { &*(lparam.0 as *const NMTREEVIEWW) };
-    // log::debug!("TVN_ITEMCHANGEDW: uOldState: {:#X}, uNewState: {:#X}, action: {:#X}, item id via param: {}",
-    //    nmtv.itemOld.state, nmtv.itemNew.state, nmtv.action, nmtv.itemNew.lParam);
+    // log::debug!("TVN_ITEMCHANGEDW: uOldState: {:#X}, uNewState: {:#X}, action: {:#X}, item id via param: {} for ControlID {}",
+    //    nmtv.itemOld.state, nmtv.itemNew.state, nmtv.action, nmtv.itemNew.lParam, control_id_from_notify);
 
     None
 }

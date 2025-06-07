@@ -8,7 +8,6 @@
 use crate::app_logic::ui_constants;
 
 use crate::platform_layer::{
-    control_treeview::ID_TREEVIEW_CTRL,
     types::{
         DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
     },
@@ -75,7 +74,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // 2. Create TreeView
     commands.push(PlatformCommand::CreateTreeView {
         window_id,
-        control_id: ID_TREEVIEW_CTRL,
+        control_id: ui_constants::ID_TREEVIEW_CTRL,
     });
 
     // --- New Status Bar Elements (Phase 5) ---
@@ -122,7 +121,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         },
         // TreeView: Fills the remaining space. Parent is main window.
         LayoutRule {
-            control_id: ID_TREEVIEW_CTRL,
+            control_id: ui_constants::ID_TREEVIEW_CTRL,
             parent_control_id: None,
             dock_style: DockStyle::Fill,
             order: 10,

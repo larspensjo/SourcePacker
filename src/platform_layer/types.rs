@@ -235,10 +235,12 @@ pub enum PlatformCommand {
     },
     PopulateTreeView {
         window_id: WindowId,
+        control_id: i32, /* New: Logical ID of the TreeView to populate */
         items: Vec<TreeItemDescriptor>,
     },
     UpdateTreeItemVisualState {
         window_id: WindowId,
+        control_id: i32, /* New: Logical ID of the TreeView containing the item */
         item_id: TreeItemId,
         new_state: CheckState,
     },
@@ -293,7 +295,7 @@ pub enum PlatformCommand {
     },
     CreateTreeView {
         window_id: WindowId,
-        control_id: i32, // The logical ID for the TreeView (e.g., ID_TREEVIEW_CTRL)
+        control_id: i32, // The logical ID for the TreeView
                          // Position/size will be managed by DefineLayout command.
     },
     // Signals to the platform layer that all initial UI description commands
@@ -326,6 +328,7 @@ pub enum PlatformCommand {
     },
     RedrawTreeItem {
         window_id: WindowId,
+        control_id: i32, /* New: Logical ID of the TreeView containing the item */
         item_id: TreeItemId,
     },
 }

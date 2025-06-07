@@ -18,6 +18,5 @@ pub const STATUS_LABEL_ARCHIVE_ID: i32 = 1012;
 // Logical ID for the label displaying token count information.
 pub const STATUS_LABEL_TOKENS_ID: i32 = 1013;
 
-// Add other logical control IDs here as needed for future UI elements.
-// Ensure these IDs are unique and do not clash with existing hardcoded IDs
-// from the old system if they are still in use temporarily (e.g., ID_STATUS_BAR_CTRL = 1003).
+// Logical ID for the main TreeView control.
+pub const ID_TREEVIEW_CTRL: i32 = 1001; // Value from platform_layer::control_treeview

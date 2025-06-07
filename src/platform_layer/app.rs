@@ -103,16 +103,11 @@ impl Win32ApiInternalState {
         let no_active_windows = self.active_windows.read().map_or_else(
             |poisoned_err| {
                 log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}", poisoned_err);
-                // Decide on a safe default. If poisoned, it's hard to know the true state.
-                // Assuming not empty might prevent premature quit but could also lead to hanging if state is truly empty.
-                // For now, let's default to false (i.e., assume not empty) to be cautious about premature quitting.
                 false
             },
             |guard| guard.is_empty()
         );
 
-        // Quit if no windows are left, OR if a quit was previously signaled and now no windows are left.
-        // The `is_quitting` flag handles cases where QuitApplication is called before the last window closes.
         if no_active_windows {
             log::debug!(
                 "Platform: Last active window closed (or was already closed and quit signaled). Posting WM_QUIT."
@@ -123,10 +118,10 @@ impl Win32ApiInternalState {
 
     /*
      * Executes the `RedrawTreeItem` command, triggering an immediate repaint
-     * for a specific item in a TreeView. This is vital for updating custom-drawn
-     * elements, like the "New" item indicator, promptly after its underlying
-     * data state changes. The method translates the logical `item_id` to its
-     * native TreeView and item handles.
+     * for a specific item in a TreeView identified by `control_id`.
+     * This is vital for updating custom-drawn elements, like the "New" item indicator,
+     * promptly after its underlying data state changes. The method translates the
+     * logical `item_id` to its native TreeView and item handles.
      *
      * Using these native handles, it retrieves the item's bounding rectangle via
      * the `TVM_GETITEMRECT` message. A successful retrieval leads to invalidating
@@ -138,11 +133,13 @@ impl Win32ApiInternalState {
     fn _execute_redraw_tree_item(
         self: &Arc<Self>,
         window_id: WindowId,
+        control_id: i32, /* ID of the TreeView control */
         item_id: TreeItemId,
     ) -> PlatformResult<()> {
         log::debug!(
-            "Win32ApiInternalState: _execute_redraw_tree_item for WinID {:?}, ItemID {:?}",
+            "Win32ApiInternalState: _execute_redraw_tree_item for WinID {:?}, ControlID {}, ItemID {:?}",
             window_id,
+            control_id,
             item_id
         );
 
@@ -165,85 +162,86 @@ impl Win32ApiInternalState {
         })?;
 
         let hwnd_treeview = window_data
-            .get_control_hwnd(control_treeview::ID_TREEVIEW_CTRL)
+            .get_control_hwnd(control_id) /* Use control_id to get HWND */
             .ok_or_else(|| {
                 log::warn!(
-                    "TreeView control not found for WinID {:?} during RedrawTreeItem.",
+                    "TreeView control (ID {}) not found for WinID {:?} during RedrawTreeItem.",
+                    control_id,
                     window_id
                 );
                 PlatformError::InvalidHandle(format!(
-                    "TreeView control not found for WinID {:?} during RedrawTreeItem.",
-                    window_id
+                    "TreeView control (ID {}) not found for WinID {:?} during RedrawTreeItem.",
+                    control_id, window_id
                 ))
             })?;
 
         if hwnd_treeview.is_invalid() {
             log::warn!(
-                "TreeView HWND is invalid for WinID {:?} during RedrawTreeItem.",
+                "TreeView HWND for ControlID {} is invalid for WinID {:?} during RedrawTreeItem.",
+                control_id,
                 window_id
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "TreeView HWND is invalid for WinID {:?} during RedrawTreeItem.",
-                window_id
+                "TreeView HWND for ControlID {} is invalid for WinID {:?} during RedrawTreeItem.",
+                control_id, window_id
             )));
         }
 
+        // TreeViewInternalState is still assumed to be singular per window for now.
+        // If multiple TreeViews were supported, this state would need to be mapped by control_id.
         let tv_state = window_data.treeview_state.as_ref().ok_or_else(|| {
             log::warn!(
-                "TreeView state not found for WinID {:?} during RedrawTreeItem.",
-                window_id
+                "TreeView state not found for WinID {:?} (ControlID {}) during RedrawTreeItem.",
+                window_id,
+                control_id
             );
             PlatformError::OperationFailed(format!(
-                "TreeView state not found for WinID {:?} during RedrawTreeItem.",
-                window_id
+                "TreeView state not found for WinID {:?} (ControlID {}) during RedrawTreeItem.",
+                window_id, control_id
             ))
         })?;
 
         let htreeitem = tv_state.item_id_to_htreeitem.get(&item_id).ok_or_else(|| {
             log::warn!(
-                "HTREEITEM not found for ItemID {:?} during RedrawTreeItem. Cannot invalidate.",
-                item_id
+                "HTREEITEM not found for ItemID {:?} (ControlID {}) during RedrawTreeItem. Cannot invalidate.",
+                item_id,
+                control_id
             );
             PlatformError::InvalidHandle(format!(
-                "HTREEITEM not found for ItemID {:?} during RedrawTreeItem.",
-                item_id
+                "HTREEITEM not found for ItemID {:?} (ControlID {}) during RedrawTreeItem.",
+                item_id, control_id
             ))
         })?;
 
         let mut item_rect = RECT::default();
-
-        // For TVM_GETITEMRECT, the HTREEITEM of the target item is passed by
-        // setting it as the value of the `left` field of the RECT structure
-        // pointed to by lParam. This is true whether wParam (fTextOnly) is
-        // TRUE (for text-only part) or FALSE (for the entire item line).
-        // We use wParam=0 (FALSE) to get the full line for invalidation.
-        item_rect.left = htreeitem.0 as i32; // Set the HTREEITEM into the RECT.left
+        item_rect.left = htreeitem.0 as i32;
 
         let get_rect_success = unsafe {
             SendMessageW(
                 hwnd_treeview,
                 TVM_GETITEMRECT,
-                Some(WPARAM(0)), // FALSE (0) for entire item line, not just text.
+                Some(WPARAM(0)),
                 Some(LPARAM(&mut item_rect as *mut _ as isize)),
             )
         };
 
         if get_rect_success.0 != 0 {
-            // Non-zero means success, item_rect is now populated
             unsafe {
                 _ = InvalidateRect(Some(hwnd_treeview), Some(&item_rect), true);
             }
             log::debug!(
-                "Invalidated rect {:?} for item ID {:?} (HTREEITEM {:?})",
+                "Invalidated rect {:?} for item ID {:?} (HTREEITEM {:?}, ControlID {})",
                 item_rect,
                 item_id,
-                htreeitem
+                htreeitem,
+                control_id
             );
         } else {
             log::warn!(
-                "TVM_GETITEMRECT failed for item ID {:?} (HTREEITEM {:?}) during RedrawTreeItem. Invalidating whole control. Error: {:?}",
+                "TVM_GETITEMRECT failed for item ID {:?} (HTREEITEM {:?}, ControlID {}) during RedrawTreeItem. Invalidating whole control. Error: {:?}",
                 item_id,
                 htreeitem,
+                control_id,
                 unsafe { GetLastError() }
             );
             unsafe {
@@ -269,15 +267,18 @@ impl Win32ApiInternalState {
             PlatformCommand::CloseWindow { window_id } => {
                 command_executor::execute_close_window(self, window_id)
             }
-            PlatformCommand::PopulateTreeView { window_id, items } => {
-                command_executor::execute_populate_treeview(self, window_id, items)
-            }
+            PlatformCommand::PopulateTreeView {
+                window_id,
+                control_id,
+                items,
+            } => command_executor::execute_populate_treeview(self, window_id, control_id, items),
             PlatformCommand::UpdateTreeItemVisualState {
                 window_id,
+                control_id,
                 item_id,
                 new_state,
             } => command_executor::execute_update_tree_item_visual_state(
-                self, window_id, item_id, new_state,
+                self, window_id, control_id, item_id, new_state,
             ),
             PlatformCommand::ShowSaveFileDialog {
                 window_id,
@@ -399,9 +400,11 @@ impl Win32ApiInternalState {
             } => command_executor::execute_update_label_text(
                 self, window_id, label_id, text, severity,
             ),
-            PlatformCommand::RedrawTreeItem { window_id, item_id } => {
-                self._execute_redraw_tree_item(window_id, item_id) // Call the new method
-            }
+            PlatformCommand::RedrawTreeItem {
+                window_id,
+                control_id,
+                item_id,
+            } => self._execute_redraw_tree_item(window_id, control_id, item_id),
         }
     }
 }
@@ -443,20 +446,18 @@ impl PlatformInterface {
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
         let window_id = self.internal_state.generate_unique_window_id();
 
-        // Create preliminary data for the window map. HWND will be filled after creation.
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: HWND(std::ptr::null_mut()), // Invalid HWND initially
+            hwnd: window_common::HWND_INVALID,
             id: window_id,
             treeview_state: None,
             controls: HashMap::new(),
             menu_action_map: HashMap::new(),
-            next_menu_item_id_counter: 30000, // Default starting ID for menu items
+            next_menu_item_id_counter: 30000,
             layout_rules: None,
             label_severities: HashMap::new(),
             status_bar_font: None,
         };
 
-        // Insert preliminary data into the active_windows map.
         self.internal_state
             .active_windows
             .write()
@@ -475,7 +476,6 @@ impl PlatformInterface {
             window_id
         );
 
-        // Attempt to create the native window.
         let hwnd = match window_common::create_native_window(
             &self.internal_state,
             window_id,
@@ -485,8 +485,6 @@ impl PlatformInterface {
         ) {
             Ok(h) => h,
             Err(e) => {
-                // If creation fails, attempt to remove the preliminary data.
-                // Log any error during removal but return the original creation error.
                 if let Ok(mut guard) = self.internal_state.active_windows.write() {
                     guard.remove(&window_id);
                 } else {
@@ -499,7 +497,7 @@ impl PlatformInterface {
                     "Platform: Removed (or attempted to remove) preliminary NativeWindowData for WindowId {:?} due to creation failure.",
                     window_id
                 );
-                return Err(e); // Return the original creation error
+                return Err(e);
             }
         };
         log::debug!(
@@ -508,7 +506,6 @@ impl PlatformInterface {
             window_id
         );
 
-        // Update the NativeWindowData with the actual HWND.
         match self.internal_state.active_windows.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
@@ -518,12 +515,10 @@ impl PlatformInterface {
                         window_id,
                     );
                 } else {
-                    // This should ideally not happen if insert succeeded and no other thread removed it.
                     log::error!(
                         "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
                         window_id
                     );
-                    // Attempt to destroy the orphaned window if possible.
                     if !hwnd.is_invalid() {
                         unsafe {
                             DestroyWindow(hwnd).ok();
@@ -540,7 +535,6 @@ impl PlatformInterface {
                     "Platform: Failed to lock active_windows for HWND update: {:?}",
                     e
                 );
-                // Attempt to destroy the orphaned window if possible.
                 if !hwnd.is_invalid() {
                     unsafe {
                         DestroyWindow(hwnd).ok();
@@ -565,7 +559,6 @@ impl PlatformInterface {
         event_handler_param: Arc<Mutex<dyn PlatformEventHandler>>,
         initial_commands_to_execute: Vec<PlatformCommand>,
     ) -> PlatformResult<()> {
-        // Store a weak reference to the application's event handler.
         *self
             .internal_state
             .application_event_handler
@@ -583,7 +576,6 @@ impl PlatformInterface {
             initial_commands_to_execute.len()
         );
 
-        // Execute initial UI setup commands.
         for command in initial_commands_to_execute {
             log::debug!("Platform: Executing initial command: {:?}", command);
             if let Err(e) = self.internal_state._execute_platform_command(command) {
@@ -596,12 +588,10 @@ impl PlatformInterface {
         }
         log::debug!("Platform: Initial UI commands processed successfully.");
 
-        // Keep a strong reference to the event handler for the duration of the run loop.
         let app_logic_ref_for_loop = event_handler_param;
         unsafe {
             let mut msg = MSG::default();
             loop {
-                // Process commands from the application logic queue.
                 loop {
                     let command_to_execute: Option<PlatformCommand> = {
                         match app_logic_ref_for_loop.lock() {
@@ -619,17 +609,14 @@ impl PlatformInterface {
                     if let Some(command) = command_to_execute {
                         if let Err(e) = self.internal_state._execute_platform_command(command) {
                             log::error!("Platform: Error executing command from queue: {:?}", e);
-                            // Continue processing other commands/messages.
                         }
                     } else {
-                        break; // No more commands in the queue.
+                        break;
                     }
                 }
 
-                // Process Windows messages.
                 let result = GetMessageW(&mut msg, None, 0, 0);
                 if result.0 > 0 {
-                    // Message other than WM_QUIT
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 } else if result.0 == 0 {
@@ -643,7 +630,6 @@ impl PlatformInterface {
                         "Platform: GetMessageW failed with return -1. LastError: {:?}",
                         last_error
                     );
-                    // Check if we are already in a quit sequence and no windows are left.
                     let should_still_break =
                         self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
                             && self
@@ -664,7 +650,6 @@ impl PlatformInterface {
                 }
             }
         }
-        // Application quit: notify the application logic.
         if let Ok(mut handler_guard) = app_logic_ref_for_loop.lock() {
             handler_guard.on_quit();
         } else {
@@ -677,8 +662,6 @@ impl PlatformInterface {
                     "Platform: Failed to lock application_event_handler to clear it (poisoned): {:?}",
                     e
                 );
-                // If this fails due to poisoning, the program is exiting anyway.
-                // We can't easily "fix" the poisoned lock at this stage for this specific operation.
             }
         }
         log::debug!("Platform: Message loop exited cleanly.");
@@ -688,13 +671,10 @@ impl PlatformInterface {
 
 #[cfg(test)]
 mod app_tests {
-    // use crate::platform_layer::window_common::HWND_INVALID; // Not directly used in these tests
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use std::path::PathBuf;
 
-    // This test helper remains for historical reasons or if other parts of app_tests use it.
-    // The actual pathbuf_from_buf used by dialogs is now in dialog_handler.rs.
     pub fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
         let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
         let path_os_string = OsString::from_wide(&buffer[..len]);

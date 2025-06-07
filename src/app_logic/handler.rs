@@ -105,12 +105,11 @@ impl MyAppLogic {
     }
 
     fn build_tree_item_descriptors_recursive_internal(
-        nodes: &[FileNode], // This now comes from app_session_data_ops.get_snapshot_nodes()
-        path_to_tree_item_id: &mut PathToTreeItemIdMap, // Belongs to MainWindowUiState
-        next_tree_item_id_counter: &mut u64, // Belongs to MainWindowUiState
+        nodes: &[FileNode],
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
     ) -> Vec<TreeItemDescriptor> {
-        // TODO: Phase 3: This method should be moved to MainWindowUiState.
-        // For now, it remains a static helper here.
+        // TODO: Phase 3: This method could be moved to MainWindowUiState?
         let mut descriptors = Vec::new();
         for node in nodes {
             let id_val = *next_tree_item_id_counter;
@@ -226,16 +225,17 @@ impl MyAppLogic {
             .lock()
             .unwrap()
             .get_snapshot_nodes()
-            .to_vec(); // Clone to avoid holding lock during recursive call if it were an issue
+            .to_vec();
 
         let descriptors = Self::build_tree_item_descriptors_recursive_internal(
-            &snapshot_nodes, // Use cloned or ref from lock
+            &snapshot_nodes,
             &mut ui_state.path_to_tree_item_id,
             &mut ui_state.next_tree_item_id_counter,
         );
         self.synchronous_command_queue
             .push_back(PlatformCommand::PopulateTreeView {
                 window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
                 items: descriptors,
             });
     }
@@ -275,7 +275,7 @@ impl MyAppLogic {
             (
                 data.get_profile_name(),
                 data.get_archive_path(),
-                data.get_snapshot_nodes().to_vec(), // Clone to release lock
+                data.get_snapshot_nodes().to_vec(),
             )
         };
 
@@ -332,8 +332,6 @@ impl MyAppLogic {
         }
     }
 
-    // collect_visual_updates_recursive is removed, replaced by logic in handle_treeview_item_toggled.
-
     /*
      * Recalculates the estimated token count for all currently selected files and
      * requests the UI to display this count.
@@ -346,7 +344,7 @@ impl MyAppLogic {
             .unwrap()
             .update_total_token_count_for_selected_files(&*self.token_counter_manager);
 
-        app_info!(self, "Token count updated"); // This logs to general status
+        app_info!(self, "Token count updated");
 
         if let Some(ui_state_ref) = &self.ui_state {
             self.synchronous_command_queue
@@ -432,19 +430,14 @@ impl MyAppLogic {
             }
         };
 
-        // Get the original state of the node before updating it.
-        // We need to check if the node *itself* was New, or if it's a folder,
-        // if it or any descendants contained a new file.
         let was_considered_new_for_display: bool = {
             let app_data_guard = self.app_session_data_ops.lock().unwrap();
             if let Some((original_state, is_dir)) =
                 app_data_guard.get_node_attributes_for_path(&path_for_model_update)
             {
                 if is_dir {
-                    // For directories, it was "new" for display if it or its descendants had a new file
                     app_data_guard.does_path_or_descendants_contain_new_file(&path_for_model_update)
                 } else {
-                    // For files, it was "new" if its state was New
                     original_state == SelectionState::New
                 }
             } else {
@@ -483,11 +476,12 @@ impl MyAppLogic {
             {
                 let check_state_for_ui = match new_file_state {
                     SelectionState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked, // This includes Deselected and New (though New shouldn't be set here by update_folder_selection)
+                    _ => CheckState::Unchecked,
                 };
                 self.synchronous_command_queue.push_back(
                     PlatformCommand::UpdateTreeItemVisualState {
                         window_id,
+                        control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
                         item_id: *tree_item_id_to_update,
                         new_state: check_state_for_ui,
                     },
@@ -498,6 +492,7 @@ impl MyAppLogic {
                 self.synchronous_command_queue
                     .push_back(PlatformCommand::RedrawTreeItem {
                         window_id,
+                        control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
                         item_id: *tree_item_id_to_update,
                     });
             } else {
@@ -514,19 +509,19 @@ impl MyAppLogic {
         // The actual `is_tree_item_new` check for the *current* state will determine if the dot remains.
         // The RedrawTreeItem command ensures the UI updates if the "new" status *might* have changed.
         if was_considered_new_for_display {
-            // The primary item itself needs a redraw check
             self.synchronous_command_queue
-                .push_back(PlatformCommand::RedrawTreeItem { window_id, item_id });
+                .push_back(PlatformCommand::RedrawTreeItem {
+                    window_id,
+                    control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
+                    item_id,
+                });
             log::debug!(
                 "AppLogic: Item {:?} (path {:?}) was considered 'New' for display and changed state. Queueing RedrawTreeItem.",
                 item_id,
                 path_for_model_update
             );
 
-            // Also, enqueue redraws for all parent items, as their "contains new file" status might have changed.
             let mut current_path_for_ancestor_check = path_for_model_update.clone();
-            // Loop while current path has a parent and that parent is not "above" the scan root
-            // (i.e., parent_path is not equal to the parent of the scan root itself).
             let scan_root_parent = self
                 .app_session_data_ops
                 .lock()
@@ -536,7 +531,6 @@ impl MyAppLogic {
                 .map(|p| p.to_path_buf());
 
             while let Some(parent_path) = current_path_for_ancestor_check.parent() {
-                // Stop if parent_path is effectively the directory containing the root_path_for_scan
                 if Some(parent_path.to_path_buf()) == scan_root_parent
                     || parent_path.as_os_str().is_empty()
                 {
@@ -547,6 +541,7 @@ impl MyAppLogic {
                     self.synchronous_command_queue
                         .push_back(PlatformCommand::RedrawTreeItem {
                             window_id,
+                            control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
                             item_id: *parent_item_id,
                         });
                     log::debug!(
@@ -575,7 +570,7 @@ impl MyAppLogic {
             (
                 data.get_profile_name(),
                 data.get_archive_path(),
-                data.get_snapshot_nodes().to_vec(), // Clone to release lock
+                data.get_snapshot_nodes().to_vec(),
                 data.get_root_path_for_scan(),
             )
         };
@@ -752,7 +747,6 @@ impl MyAppLogic {
      * This function delegates to specific handlers based on that action.
      */
     fn handle_file_save_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        // Ensure UI state exists for the given window_id and get mutable access.
         let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
             Some(s) => s,
             None => {
@@ -764,7 +758,6 @@ impl MyAppLogic {
             }
         };
 
-        // Take the pending action. This consumes it from ui_state_mut.
         let action = ui_state_mut.pending_action.take();
         log::debug!(
             "FileSaveDialogCompleted with pending action: {:?}, for result: {:?}",
@@ -781,15 +774,13 @@ impl MyAppLogic {
             }
             Some(PendingAction::CreatingNewProfileGetName)
             | Some(PendingAction::CreatingNewProfileGetRoot) => {
-                // These pending actions expect an InputDialog or FolderPickerDialog, not a FileSaveDialog.
                 app_error!(
                     self,
                     "FileSaveDialogCompleted received, but was expecting dialog for {:?}. This is a logic error.",
-                    action // action is already Some(PendingAction) here.
+                    action
                 );
             }
             None => {
-                // This implies a FileSaveDialog was completed but MyAppLogic wasn't expecting one.
                 app_warn!(
                     self,
                     "FileSaveDialogCompleted received, but no pending action was set. Ignoring."
@@ -813,7 +804,6 @@ impl MyAppLogic {
             Some(p) => p,
             None => {
                 log::debug!("User cancelled the 'Set Archive Path' dialog.");
-                // Update UI elements that might depend on the archive path status being unchanged.
                 self._update_generate_archive_menu_item_state(window_id);
                 return;
             }
@@ -825,17 +815,15 @@ impl MyAppLogic {
             let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
             if profile_runtime_data.get_profile_name().is_none() {
                 app_error!(self, "No profile is active. Cannot set archive path.");
-                return; // No active profile, so nothing to set the path for.
+                return;
             }
             profile_runtime_data.set_archive_path(Some(path.clone()));
             Some(profile_runtime_data.create_profile_snapshot())
         };
 
-        // This should always be Some if we didn't return early due to no active profile.
         let profile_to_save = match profile_to_save_opt {
             Some(p) => p,
             None => {
-                // This case indicates an unexpected logic flow if reached.
                 log::error!(
                     "_handle_file_save_dialog_for_setting_archive_path: profile_to_save was unexpectedly None despite an active profile check."
                 );
@@ -920,12 +908,10 @@ impl MyAppLogic {
             }
         };
 
-        // Update the application session data to reflect the new profile name.
         let profile = {
-            // Local scope for Mutex lock.
             let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
             profile_runtime_data.set_profile_name(Some(profile_name_str));
-            profile_runtime_data.set_archive_path(None); // Reset archive path for new profile
+            profile_runtime_data.set_archive_path(None);
             profile_runtime_data.create_profile_snapshot()
         };
         if let Err(e) = self
@@ -981,24 +967,22 @@ impl MyAppLogic {
                 return;
             }
 
-            // Use the new method here
             let (selected, deselected) = data.get_current_selection_paths();
 
             (
                 name,
                 data.get_root_path_for_scan(),
-                Some((selected, deselected)), // Pass the actual current selections
+                Some((selected, deselected)),
             )
         };
 
         let current_profile_name = match current_profile_name_clone {
             Some(n) => n,
-            None => return, // Already handled by the check above
+            None => return,
         };
         let (current_selected_paths, current_deselected_paths) = match current_selection_paths_opt {
             Some(paths) => paths,
             None => {
-                // Should not happen if profile is active
                 app_error!(
                     self,
                     "Refresh: Could not get current selection paths for active profile."
@@ -1029,16 +1013,6 @@ impl MyAppLogic {
                         &current_selected_paths,
                         &current_deselected_paths,
                     );
-
-                    // The ProfileRuntimeData::update_cached_file_details_recursive logic
-                    // is now internal to load_profile_into_session or similar,
-                    // or would need a dedicated trait method if used standalone.
-                    // For refresh, it's implicitly handled if selections are re-applied and token count is updated.
-                    // We need to ensure the token details are updated.
-                    // For now, let's assume update_total_token_count also refreshes details if necessary,
-                    // or that apply_selection_states_to_snapshot might trigger it.
-                    // A more explicit call might be `data.update_cached_file_details(&*self.token_counter_manager);`
-                    // Let's rely on update_total_token_count to handle this for now.
                 }
 
                 log::debug!(
@@ -1109,7 +1083,7 @@ impl MyAppLogic {
                 .lock()
                 .unwrap()
                 .get_snapshot_nodes()
-                .to_vec(); // Clone to release lock
+                .to_vec();
 
             let descriptors = Self::build_tree_item_descriptors_recursive_internal(
                 &snapshot_nodes_clone,
@@ -1119,6 +1093,7 @@ impl MyAppLogic {
             self.synchronous_command_queue
                 .push_back(PlatformCommand::PopulateTreeView {
                     window_id,
+                    control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
                     items: descriptors,
                 });
         }
@@ -1479,19 +1454,14 @@ impl MyAppLogic {
             "_update_window_title_with_profile_and_archive called with mismatching window ID or no UI state."
         );
 
-        // Lock once to get a reference to app_session_data_ops implementation
         let app_data_ops_guard = self.app_session_data_ops.lock().unwrap();
-        // Pass the dereferenced guard (which is &dyn ProfileRuntimeDataOperations)
-        // to MainWindowUiState::compose_window_title.
         let title = MainWindowUiState::compose_window_title(&*app_data_ops_guard);
-
-        // Explicitly drop the guard before pushing to the command queue if it's no longer needed,
-        // though in this specific case, its scope ends naturally.
         drop(app_data_ops_guard);
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
     }
+
     fn _update_generate_archive_menu_item_state(&mut self, window_id: WindowId) {
         assert!(
             self.ui_state
@@ -1514,7 +1484,7 @@ impl MyAppLogic {
                 "'Generate Archive' menu item functionality depends on archive path (currently not set)."
             );
         }
-        // Note: The actual command to enable/disable the menu item seems to be missing from original logic too.
+        // TODO: The actual command to enable/disable the menu item seems to be missing from original logic too.
         // This method currently only logs. If it's meant to send a command, that needs to be added.
         // For MVP separation, MyAppLogic decides if it should be enabled, then queues a command.
         // The actual PlatformCommand::SetMenuItemEnabled is not shown here.
@@ -1683,7 +1653,6 @@ impl PlatformEventHandler for MyAppLogic {
             "AppLogic: Attempting to save last profile name '{}' to config on exit.",
             profile_name_to_save_in_config
         );
-        // Release lock on `data` before calling config_manager which might involve I/O
         drop(profile_runtime_data);
 
         match self
@@ -1749,7 +1718,6 @@ impl PlatformEventHandler for MyAppLogic {
         match app_data_guard.get_node_attributes_for_path(path) {
             Some((file_state, is_dir)) => {
                 if is_dir {
-                    // For directories, check if it or any descendant contains a new file
                     let contains_new =
                         app_data_guard.does_path_or_descendants_contain_new_file(path);
                     log::debug!(
@@ -1760,7 +1728,6 @@ impl PlatformEventHandler for MyAppLogic {
                     );
                     contains_new
                 } else {
-                    // For files, check its own state
                     let is_new_file = file_state == SelectionState::New;
                     log::debug!(
                         "is_tree_item_new: File {:?} (ItemID {:?}) is new: {}.",
