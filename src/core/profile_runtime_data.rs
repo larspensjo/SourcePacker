@@ -56,8 +56,6 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
     fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool;
 
     // Token related data
-    fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails>;
-    fn get_cached_total_token_count(&self) -> usize;
     fn update_total_token_count_for_selected_files(
         &mut self,
         token_counter: &dyn TokenCounterOperations,
@@ -249,6 +247,16 @@ impl ProfileRuntimeData {
         }
         false // No new file found in this directory or its descendants
     }
+
+    #[cfg(test)]
+    fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
+        self.cached_file_token_details.clone()
+    }
+
+    #[cfg(test)]
+    fn get_cached_total_token_count(&self) -> usize {
+        self.cached_token_count
+    }
 }
 
 impl ProfileRuntimeDataOperations for ProfileRuntimeData {
@@ -340,14 +348,6 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                 false
             }
         }
-    }
-
-    fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
-        self.cached_file_token_details.clone()
-    }
-
-    fn get_cached_total_token_count(&self) -> usize {
-        self.cached_token_count
     }
 
     /*
@@ -618,10 +618,9 @@ mod tests {
         Profile, SelectionState, TokenCounterOperations,
     };
     use std::collections::{HashMap, HashSet};
-    use std::fs::{self, File};
     use std::io::{self, Write};
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
     use tempfile::{NamedTempFile, tempdir};
 
     /*
@@ -978,8 +977,7 @@ mod tests {
     fn test_load_profile_into_session_success_and_updates_session_file_details() {
         // Arrange
         crate::initialize_logging();
-        let mut session_data: Box<dyn ProfileRuntimeDataOperations> =
-            Box::new(ProfileRuntimeData::new());
+        let mut session_data = Box::new(ProfileRuntimeData::new());
         let mock_scanner = MockFileSystemScanner::new();
         let mock_state_manager = MockStateManager::new();
         let mut mock_token_counter = MockTokenCounter::new(0);

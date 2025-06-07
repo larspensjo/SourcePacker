@@ -48,7 +48,6 @@ mod handler_tests {
         get_snapshot_nodes_calls: AtomicUsize,
         get_root_path_for_scan_calls: AtomicUsize,
         get_cached_total_token_count_calls: AtomicUsize,
-        get_cached_file_token_details_calls: AtomicUsize,
         create_profile_snapshot_calls: AtomicUsize,
         does_path_or_descendants_contain_new_file_calls: AtomicUsize,
 
@@ -87,7 +86,6 @@ mod handler_tests {
                 get_snapshot_nodes_calls: AtomicUsize::new(0),
                 get_root_path_for_scan_calls: AtomicUsize::new(0),
                 get_cached_total_token_count_calls: AtomicUsize::new(0),
-                get_cached_file_token_details_calls: AtomicUsize::new(0),
                 create_profile_snapshot_calls: AtomicUsize::new(0),
                 does_path_or_descendants_contain_new_file_calls: AtomicUsize::new(0),
 
@@ -380,16 +378,6 @@ mod handler_tests {
             check_recursive(&self.snapshot_nodes, path).unwrap_or(false)
         }
 
-        fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
-            self.get_cached_file_token_details_calls
-                .fetch_add(1, Ordering::Relaxed);
-            self.cached_file_token_details.clone()
-        }
-        fn get_cached_total_token_count(&self) -> usize {
-            self.get_cached_total_token_count_calls
-                .fetch_add(1, Ordering::Relaxed);
-            self.cached_total_token_count
-        }
         fn update_total_token_count_for_selected_files(
             &mut self,
             _token_counter: &dyn TokenCounterOperations,

@@ -85,10 +85,9 @@ mod tests {
     use crate::core::{
         FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
         ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
-        file_node::FileTokenDetails,
     };
     use crate::platform_layer::WindowId;
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
     use std::path::{Path, PathBuf};
 
     // --- MockProfileRuntimeDataOperations for MainWindowUiState tests ---
@@ -107,9 +106,6 @@ mod tests {
         }
         fn get_archive_path(&self) -> Option<PathBuf> {
             self.archive_path.clone()
-        }
-        fn get_cached_total_token_count(&self) -> usize {
-            self.cached_total_token_count
         }
 
         // --- Unused methods for these specific tests, provide default/dummy implementations ---
@@ -156,9 +152,6 @@ mod tests {
                 "MockProfileRuntimeDataOps: does_path_or_descendants_contain_new_file called, returning default false."
             );
             false
-        }
-        fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
-            unimplemented!("MockProfileRuntimeDataOps: get_cached_file_token_details")
         }
         fn update_total_token_count_for_selected_files(
             &mut self,
