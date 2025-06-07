@@ -11,7 +11,7 @@ use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, WindowId};
 use super::window_common; // For ID_DIALOG_INPUT_EDIT, ID_DIALOG_INPUT_PROMPT_STATIC etc.
 
-use std::ffi::{OsStr, OsString, c_void};
+use std::ffi::{OsString, c_void};
 use std::mem::{align_of, size_of};
 use std::os::windows::ffi::OsStringExt;
 use std::path::PathBuf;
@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use windows::{
     Win32::{
-        Foundation::{FALSE, GetLastError, HWND, LPARAM, TRUE, WPARAM},
+        Foundation::{FALSE, HWND, LPARAM, TRUE, WPARAM},
         System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree},
         UI::Controls::Dialogs::*, // Contains DLGTEMPLATE, DLGITEMTEMPLATE, OPENFILENAMEW etc.
         UI::Shell::{
@@ -28,7 +28,7 @@ use windows::{
         },
         UI::WindowsAndMessaging::*, // Contains GetSaveFileNameW, DialogBoxIndirectParamW etc.
     },
-    core::{BOOL, HSTRING, PCWSTR, PWSTR},
+    core::{HSTRING, PCWSTR},
 };
 
 /*

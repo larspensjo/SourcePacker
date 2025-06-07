@@ -32,7 +32,6 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
 
     // Root scan path
     fn get_root_path_for_scan(&self) -> PathBuf;
-    fn set_root_path_for_scan(&mut self, path: PathBuf);
 
     // File system snapshot (nodes)
     fn get_snapshot_nodes(&self) -> &Vec<FileNode>;
@@ -58,7 +57,6 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
 
     // Token related data
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails>;
-    fn set_cached_file_token_details(&mut self, details: HashMap<PathBuf, FileTokenDetails>);
     fn get_cached_total_token_count(&self) -> usize;
     fn update_total_token_count_for_selected_files(
         &mut self,
@@ -274,10 +272,6 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.root_path_for_scan.clone()
     }
 
-    fn set_root_path_for_scan(&mut self, path: PathBuf) {
-        self.root_path_for_scan = path;
-    }
-
     fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
         &self.file_system_snapshot_nodes
     }
@@ -350,10 +344,6 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
         self.cached_file_token_details.clone()
-    }
-
-    fn set_cached_file_token_details(&mut self, details: HashMap<PathBuf, FileTokenDetails>) {
-        self.cached_file_token_details = details;
     }
 
     fn get_cached_total_token_count(&self) -> usize {

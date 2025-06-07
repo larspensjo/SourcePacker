@@ -122,9 +122,6 @@ mod tests {
         fn get_root_path_for_scan(&self) -> PathBuf {
             unimplemented!("MockProfileRuntimeDataOps: get_root_path_for_scan")
         }
-        fn set_root_path_for_scan(&mut self, _path: PathBuf) {
-            unimplemented!("MockProfileRuntimeDataOps: set_root_path_for_scan")
-        }
         fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
             unimplemented!("MockProfileRuntimeDataOps: get_snapshot_nodes")
         }
@@ -162,9 +159,6 @@ mod tests {
         }
         fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
             unimplemented!("MockProfileRuntimeDataOps: get_cached_file_token_details")
-        }
-        fn set_cached_file_token_details(&mut self, _details: HashMap<PathBuf, FileTokenDetails>) {
-            unimplemented!("MockProfileRuntimeDataOps: set_cached_file_token_details")
         }
         fn update_total_token_count_for_selected_files(
             &mut self,

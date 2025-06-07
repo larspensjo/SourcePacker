@@ -2,19 +2,13 @@ use super::command_executor;
 use super::control_treeview;
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{
-    AppEvent, CheckState, MenuAction, MessageSeverity, PlatformCommand, PlatformEventHandler,
-    TreeItemId, WindowConfig, WindowId,
-};
-use super::{types::MenuItemConfig, window_common};
+use super::types::{PlatformCommand, PlatformEventHandler, TreeItemId, WindowConfig, WindowId};
+use super::window_common;
 
 use windows::{
     Win32::{
-        Foundation::{FALSE, GetLastError, HINSTANCE, HWND, LPARAM, RECT, TRUE, WPARAM},
-        Graphics::Gdi::{
-            BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, HDC, HGDIOBJ,
-            InvalidateRect, PAINTSTRUCT, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
-        },
+        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, RECT, WPARAM},
+        Graphics::Gdi::InvalidateRect,
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
         UI::Controls::{
@@ -22,12 +16,10 @@ use windows::{
         },
         UI::WindowsAndMessaging::*,
     },
-    core::{BOOL, HSTRING, PCWSTR},
+    core::PCWSTR,
 };
 
 use std::collections::HashMap;
-use std::ffi::c_void;
-use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex, RwLock, Weak,
     atomic::{AtomicUsize, Ordering},
@@ -126,33 +118,6 @@ impl Win32ApiInternalState {
                 "Platform: Last active window closed (or was already closed and quit signaled). Posting WM_QUIT."
             );
             unsafe { PostQuitMessage(0) };
-        }
-    }
-
-    /*
-     * If no windows are currently active, it posts WM_QUIT immediately.
-     * Otherwise, WM_QUIT will be posted when the last window closes.
-     */
-    pub(crate) fn signal_quit_intent(&self) {
-        self.is_quitting.store(1, Ordering::Relaxed);
-        let no_active_windows = self.active_windows.read().map_or_else(
-            |poisoned_err| {
-                 log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during signal_quit_intent: {:?}", poisoned_err);
-                 // Similar to above, default to a safe state.
-                 false
-            },
-            |guard| guard.is_empty()
-        );
-
-        if no_active_windows {
-            log::debug!(
-                "Platform: Quit signaled with no active windows, posting WM_QUIT immediately."
-            );
-            unsafe { PostQuitMessage(0) };
-        } else {
-            log::debug!(
-                "Platform: Quit intent signaled. WM_QUIT will be posted when the last window closes."
-            );
         }
     }
 
@@ -266,7 +231,7 @@ impl Win32ApiInternalState {
         if get_rect_success.0 != 0 {
             // Non-zero means success, item_rect is now populated
             unsafe {
-                InvalidateRect(Some(hwnd_treeview), Some(&item_rect), true);
+                _ = InvalidateRect(Some(hwnd_treeview), Some(&item_rect), true);
             }
             log::debug!(
                 "Invalidated rect {:?} for item ID {:?} (HTREEITEM {:?})",
@@ -282,7 +247,7 @@ impl Win32ApiInternalState {
                 unsafe { GetLastError() }
             );
             unsafe {
-                InvalidateRect(Some(hwnd_treeview), None, true);
+                _ = InvalidateRect(Some(hwnd_treeview), None, true);
             }
         }
         Ok(())
@@ -590,13 +555,6 @@ impl PlatformInterface {
     }
 
     /*
-     * Executes a single platform command via the internal state.
-     */
-    pub fn execute_command(&self, command: PlatformCommand) -> PlatformResult<()> {
-        self.internal_state._execute_platform_command(command)
-    }
-
-    /*
      * Takes the application's event handler and a list of initial commands.
      * Processes initial commands, then enters the message loop, dequeuing and
      * executing commands from the event handler before processing OS messages.
@@ -730,7 +688,6 @@ impl PlatformInterface {
 
 #[cfg(test)]
 mod app_tests {
-    use super::*;
     // use crate::platform_layer::window_common::HWND_INVALID; // Not directly used in these tests
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;

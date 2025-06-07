@@ -9,8 +9,7 @@ use super::app::Win32ApiInternalState;
 use super::control_treeview; // For control_treeview operations
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
-    AppEvent, CheckState, LayoutRule, MenuAction, MenuItemConfig, MessageSeverity, TreeItemId,
-    WindowId,
+    AppEvent, CheckState, LayoutRule, MenuItemConfig, MessageSeverity, TreeItemId, WindowId,
 };
 use super::window_common; // For window_common operations like set_window_title
 
@@ -28,9 +27,9 @@ use windows::{
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, GetClientRect, GetDlgCtrlID, HMENU, MF_POPUP, MF_STRING,
-                PostQuitMessage, SendMessageW, SetMenu, SetWindowTextW, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_SETFONT, WS_BORDER, WS_CHILD, WS_VISIBLE,
+                DestroyMenu, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SendMessageW, SetMenu,
+                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETFONT, WS_BORDER, WS_CHILD,
+                WS_VISIBLE,
             },
         },
     },
@@ -156,7 +155,7 @@ pub(crate) fn execute_create_main_menu(
     menu_items: Vec<MenuItemConfig>,
 ) -> PlatformResult<()> {
     let h_main_menu = unsafe { CreateMenu()? };
-    let mut hwnd_owner_opt: Option<HWND> = None;
+    let hwnd_owner_opt: Option<HWND>;
 
     {
         let mut windows_map_guard = internal_state.active_windows.write().map_err(|_| {
@@ -291,7 +290,7 @@ pub(crate) fn execute_set_control_enabled(
             ))
         })?;
         unsafe {
-            EnableWindow(hwnd_ctrl, enabled);
+            _ = EnableWindow(hwnd_ctrl, enabled);
         }
         log::debug!(
             "CommandExecutor: Control ID {} in window {:?} set to enabled: {}",
@@ -617,7 +616,7 @@ pub(crate) fn execute_create_label(
         };
 
         // Apply custom font if this is a status bar label and font exists
-        if (class == super::types::LabelClass::StatusBar) {
+        if class == super::types::LabelClass::StatusBar {
             if let Some(h_font) = window_data.status_bar_font {
                 if !h_font.is_invalid() {
                     unsafe {
@@ -727,7 +726,7 @@ pub(crate) fn execute_update_label_text(
                     GetLastError()
                 )));
             }
-            InvalidateRect(Some(hwnd_label), None, true); // Trigger repaint for WM_CTLCOLORSTATIC
+            _ = InvalidateRect(Some(hwnd_label), None, true); // Trigger repaint for WM_CTLCOLORSTATIC
         }
         Ok(())
     } else {

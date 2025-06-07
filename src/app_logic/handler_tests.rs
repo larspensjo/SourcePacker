@@ -204,10 +204,6 @@ mod handler_tests {
                 .fetch_add(1, Ordering::Relaxed);
             self.root_path_for_scan.clone()
         }
-        fn set_root_path_for_scan(&mut self, path: PathBuf) {
-            self._set_root_path_for_scan_log.push(path.clone());
-            self.root_path_for_scan = path;
-        }
         fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
             self.get_snapshot_nodes_calls
                 .fetch_add(1, Ordering::Relaxed);
@@ -388,11 +384,6 @@ mod handler_tests {
             self.get_cached_file_token_details_calls
                 .fetch_add(1, Ordering::Relaxed);
             self.cached_file_token_details.clone()
-        }
-        fn set_cached_file_token_details(&mut self, details: HashMap<PathBuf, FileTokenDetails>) {
-            self._set_cached_file_token_details_log
-                .push(details.clone());
-            self.cached_file_token_details = details;
         }
         fn get_cached_total_token_count(&self) -> usize {
             self.get_cached_total_token_count_calls
