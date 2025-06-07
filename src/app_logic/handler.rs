@@ -2,7 +2,6 @@ use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode,
     FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
     ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
-    file_node::FileTokenDetails,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
@@ -11,8 +10,7 @@ use crate::platform_layer::{
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::io;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex}; // Added Mutex
 
@@ -336,30 +334,6 @@ impl MyAppLogic {
         }
     }
 
-    // find_filenode_mut is removed as mutations are handled via ProfileRuntimeDataOperations.
-
-    /*
-     * Recursively finds a read-only reference to a FileNode within a slice of nodes.
-     * This is a static helper, typically called with nodes obtained from `ProfileRuntimeDataOperations`.
-     */
-    pub(crate) fn find_filenode_ref<'a>(
-        nodes: &'a [FileNode],
-        path_to_find: &Path,
-    ) -> Option<&'a FileNode> {
-        for node in nodes.iter() {
-            if node.path == path_to_find {
-                return Some(node);
-            }
-            if node.is_dir && !node.children.is_empty() {
-                if let Some(found_in_child) = Self::find_filenode_ref(&node.children, path_to_find)
-                {
-                    return Some(found_in_child);
-                }
-            }
-        }
-        None
-    }
-
     // collect_visual_updates_recursive is removed, replaced by logic in handle_treeview_item_toggled.
 
     /*
@@ -650,8 +624,9 @@ impl MyAppLogic {
 
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
         unimplemented!(
-            "ButtonClicked handler not implemented for control_id: {}",
-            control_id
+            "ButtonClicked handler not implemented for window_id {:?} control_id: {}",
+            window_id,
+            control_id,
         );
     }
 
@@ -1663,12 +1638,12 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
-        let mut data = self.app_session_data_ops.lock().unwrap();
+        let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
-        let active_profile_name_opt = data.get_profile_name();
+        let active_profile_name_opt = profile_runtime_data.get_profile_name();
         if let Some(active_profile_name) = active_profile_name_opt.as_ref() {
             if !active_profile_name.is_empty() {
-                let profile_to_save = data.create_profile_snapshot();
+                let profile_to_save = profile_runtime_data.create_profile_snapshot();
                 log::debug!(
                     "AppLogic: Attempting to save content of active profile '{}' on exit.",
                     active_profile_name
@@ -1696,7 +1671,7 @@ impl PlatformEventHandler for MyAppLogic {
             profile_name_to_save_in_config
         );
         // Release lock on `data` before calling config_manager which might involve I/O
-        drop(data);
+        drop(profile_runtime_data);
 
         match self
             .config_manager

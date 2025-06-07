@@ -7,11 +7,9 @@
  * dialog flows or pending UI actions. It interacts with ProfileRuntimeDataOperations
  * to get necessary data for UI display.
  */
-use crate::app_logic::ui_constants;
 use crate::core::{ArchiveStatus, ProfileRuntimeDataOperations};
-use crate::platform_layer::{MessageSeverity, PlatformCommand, TreeItemId, WindowId};
+use crate::platform_layer::WindowId;
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 // These types are currently defined in `handler.rs`.
 use super::handler::{PathToTreeItemIdMap, PendingAction};
@@ -79,113 +77,19 @@ impl MainWindowUiState {
         }
         title
     }
-
-    /*
-     * Builds a list of `PlatformCommand`s for initially displaying profile information.
-     * This function generates commands reflecting a newly activated profile's state,
-     * including window title, status labels (general, token, archive), and the
-     * "Generate Archive" button state, using data from `ProfileRuntimeDataOperations`.
-     */
-    pub fn build_initial_profile_display_commands(
-        &self,
-        app_session_data_ops: &dyn ProfileRuntimeDataOperations,
-        initial_status_message: String,
-        scan_was_successful: bool,
-    ) -> Vec<PlatformCommand> {
-        let mut commands = Vec::new();
-        let window_id = self.window_id;
-
-        // 1. Set Window Title
-        let title = Self::compose_window_title(app_session_data_ops);
-        commands.push(PlatformCommand::SetWindowTitle { window_id, title });
-
-        // 2. Initial Status Message (General Label)
-        commands.push(PlatformCommand::UpdateLabelText {
-            window_id,
-            label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
-            text: initial_status_message,
-            severity: if scan_was_successful {
-                MessageSeverity::Information
-            } else {
-                MessageSeverity::Error
-            },
-        });
-
-        // 3. Token Count (Dedicated Token Label)
-        // MyAppLogic will also send a "Token count updated" to general status label via app_info!
-        let token_text = format!(
-            "Tokens: {}",
-            app_session_data_ops.get_cached_total_token_count()
-        );
-        commands.push(PlatformCommand::UpdateLabelText {
-            window_id,
-            label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
-            text: token_text,
-            severity: MessageSeverity::Information,
-        });
-
-        // 4. Archive Status (Dedicated Archive Label)
-        // MyAppLogic will also send an error to general status label if archive status is an error.
-        if app_session_data_ops.get_profile_name().is_some() {
-            if let Some(status) = &self.current_archive_status_for_ui {
-                let plain_status_string =
-                    crate::app_logic::handler::MyAppLogic::archive_status_to_plain_string(status);
-                let archive_label_text = format!("Archive: {}", plain_status_string);
-                let archive_severity = if matches!(status, ArchiveStatus::ErrorChecking(_)) {
-                    MessageSeverity::Error
-                } else {
-                    MessageSeverity::Information
-                };
-                commands.push(PlatformCommand::UpdateLabelText {
-                    window_id,
-                    label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                    text: archive_label_text.clone(),
-                    severity: archive_severity,
-                });
-            } else {
-                let unknown_archive_status_text = "Archive: Status pending...".to_string();
-                commands.push(PlatformCommand::UpdateLabelText {
-                    window_id,
-                    label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                    text: unknown_archive_status_text,
-                    severity: MessageSeverity::Information,
-                });
-            }
-        } else {
-            let no_profile_msg_archive_label = "Archive: No profile loaded".to_string();
-            commands.push(PlatformCommand::UpdateLabelText {
-                window_id,
-                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
-                text: no_profile_msg_archive_label.clone(),
-                severity: MessageSeverity::Information,
-            });
-        }
-
-        // 5. "Generate Archive" Button State (ID from handler.rs, might move later)
-        let save_button_enabled = app_session_data_ops.get_archive_path().is_some();
-        commands.push(PlatformCommand::SetControlEnabled {
-            window_id,
-            control_id: super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC, // TODO: This ID is problematic.
-            enabled: save_button_enabled,
-        });
-
-        commands
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app_logic::ui_constants;
     use crate::core::{
-        ArchiveStatus, FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations,
-        Profile, ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
+        FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
+        ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
         file_node::FileTokenDetails,
     };
     use crate::platform_layer::WindowId;
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, RwLock}; // For MockProfileRuntimeDataOps
 
     // --- MockProfileRuntimeDataOperations for MainWindowUiState tests ---
     // This is a simplified mock, just enough for these tests.
@@ -331,83 +235,5 @@ mod tests {
             title3,
             "SourcePacker - [MyProfile] - [/path/to/archive.zip]"
         );
-    }
-
-    #[test]
-    fn test_build_initial_profile_display_commands_generates_update_label_text() {
-        // Arrange
-        crate::initialize_logging();
-        let window_id = WindowId(1);
-        let mut ui_state = MainWindowUiState::new(window_id);
-
-        let mock_app_session_ops = MockProfileRuntimeDataOps {
-            profile_name: Some("TestProfile".to_string()),
-            archive_path: Some(PathBuf::from("/root/archive.txt")),
-            cached_total_token_count: 123,
-        };
-        ui_state.current_archive_status_for_ui = Some(ArchiveStatus::UpToDate);
-
-        let initial_status_msg_text = "Profile loaded.".to_string();
-        let token_msg_text = "Tokens: 123".to_string();
-        let archive_msg_text_plain = "Archive: Up to date.".to_string();
-
-        // Act
-        let commands = ui_state.build_initial_profile_display_commands(
-            &mock_app_session_ops,
-            initial_status_msg_text.clone(),
-            true, // scan_was_successful
-        );
-
-        // Assert
-        let mut general_initial_status_found = false;
-        let mut dedicated_token_status_found = false;
-        let mut dedicated_archive_status_found = false;
-
-        for cmd in &commands {
-            if let PlatformCommand::UpdateLabelText {
-                label_id,
-                text,
-                severity,
-                ..
-            } = cmd
-            {
-                if *label_id == ui_constants::STATUS_LABEL_GENERAL_ID {
-                    if text == &initial_status_msg_text && *severity == MessageSeverity::Information
-                    {
-                        general_initial_status_found = true;
-                    }
-                } else if *label_id == ui_constants::STATUS_LABEL_TOKENS_ID {
-                    if text == &token_msg_text && *severity == MessageSeverity::Information {
-                        dedicated_token_status_found = true;
-                    }
-                } else if *label_id == ui_constants::STATUS_LABEL_ARCHIVE_ID {
-                    if text == &archive_msg_text_plain && *severity == MessageSeverity::Information
-                    {
-                        dedicated_archive_status_found = true;
-                    }
-                }
-            }
-        }
-
-        assert!(
-            general_initial_status_found,
-            "Initial status message for general label not found or incorrect."
-        );
-        assert!(
-            dedicated_token_status_found,
-            "Token status message for dedicated token label not found or incorrect."
-        );
-        assert!(
-            dedicated_archive_status_found,
-            "Archive status for dedicated archive label not found or incorrect."
-        );
-
-        assert!(
-            commands
-                .iter()
-                .any(|cmd| matches!(cmd, PlatformCommand::SetWindowTitle { .. }))
-        );
-        assert!(commands.iter().any(|cmd| matches!(cmd, PlatformCommand::SetControlEnabled { control_id, enabled, .. }
-            if *control_id == crate::app_logic::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC && *enabled)));
     }
 }

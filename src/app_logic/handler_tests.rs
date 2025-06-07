@@ -15,14 +15,13 @@ mod handler_tests {
     };
 
     use std::collections::{HashMap, HashSet};
-    use std::io::{self, Write};
+    use std::io::{self};
     use std::path::{Path, PathBuf};
     use std::sync::{
-        Arc, Mutex, RwLock,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
     use std::time::SystemTime;
-    use tempfile::{NamedTempFile, tempdir};
 
     /*
      * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
@@ -563,9 +562,6 @@ mod handler_tests {
         fn set_load_last_profile_name_result(&self, result: Result<Option<String>, ConfigError>) {
             *self.load_last_profile_name_result.lock().unwrap() = result;
         }
-        fn get_saved_profile_name(&self) -> Option<(String, String)> {
-            self.saved_profile_name.lock().unwrap().clone()
-        }
     }
     impl ConfigManagerOperations for MockConfigManager {
         fn load_last_profile_name(&self, _app_name: &str) -> Result<Option<String>, ConfigError> {
@@ -637,9 +633,6 @@ mod handler_tests {
         #[allow(dead_code)]
         fn set_save_profile_result(&self, result: Result<(), ProfileError>) {
             *self.save_profile_result.lock().unwrap() = result;
-        }
-        fn get_save_profile_calls(&self) -> Vec<(Profile, String)> {
-            self.save_profile_calls.lock().unwrap().clone()
         }
         #[allow(dead_code)]
         fn set_list_profiles_result(&self, result: Result<Vec<String>, ProfileError>) {
@@ -959,12 +952,6 @@ mod handler_tests {
                 default_count,
             }
         }
-        fn set_count_for_content(&self, content: &str, count: usize) {
-            self.counts_for_content
-                .lock()
-                .unwrap()
-                .insert(content.to_string(), count);
-        }
     }
     impl TokenCounterOperations for MockTokenCounter {
         fn count_tokens(&self, content: &str) -> usize {
@@ -1026,20 +1013,6 @@ mod handler_tests {
         F: FnMut(&PlatformCommand) -> bool,
     {
         cmds.iter().find(|&cmd| predicate(cmd))
-    }
-
-    fn create_temp_file_with_content(
-        dir: &tempfile::TempDir,
-        filename_prefix: &str,
-        content: &str,
-    ) -> (PathBuf, NamedTempFile) {
-        let mut temp_file = tempfile::Builder::new()
-            .prefix(filename_prefix)
-            .suffix(".txt")
-            .tempfile_in(dir.path())
-            .unwrap();
-        writeln!(temp_file, "{}", content).unwrap();
-        (temp_file.path().to_path_buf(), temp_file)
     }
 
     #[test]
@@ -1607,12 +1580,7 @@ mod handler_tests {
             "does_path_or_descendants_contain_new_file_log should contain folder_no_new_path"
         );
 
-        // Check that get_node_attributes_for_path was called for files (it will be, even if the mock for does_path... is also hit)
-        let get_attrs_calls_before = mock_app_session_mutexed
-            .lock()
-            .unwrap()
-            .get_node_attributes_for_path_result
-            .is_some(); // Check if a preset was used
+        // TODO: Check that get_node_attributes_for_path was called for files? (it will be, even if the mock for does_path... is also hit)
     }
 
     #[test]

@@ -12,4 +12,5 @@ pub mod ui_constants;
 mod handler_tests;
 
 pub use main_window_ui_state::MainWindowUiState;
+#[cfg(test)]
 pub use ui_constants::*;
