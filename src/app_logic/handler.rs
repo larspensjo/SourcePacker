@@ -869,6 +869,38 @@ impl MyAppLogic {
         }
     }
 
+    fn make_profile_name(path: Option<PathBuf>) -> Result<String, String> {
+        let profile_save_path =
+            path.ok_or_else(|| "User cancelled the 'Save Profile As' dialog.".to_string())?;
+
+        log::debug!(
+            "User selected path for 'Save Profile As': {:?}",
+            profile_save_path
+        );
+
+        let profile_name_osstr = profile_save_path
+            .file_stem()
+            .ok_or_else(|| "Could not extract profile name from save path.".to_string())?;
+
+        let profile_name_str = profile_name_osstr
+            .to_str()
+            .ok_or_else(|| "Profile save filename stem not valid UTF-8.".to_string())?
+            .to_string();
+
+        if profile_name_str.trim().is_empty()
+            || !profile_name_str
+                .chars()
+                .all(core::profiles::is_valid_profile_name_char)
+        {
+            return Err(format!(
+                "Invalid profile name extracted from path: '{}'",
+                profile_name_str
+            ));
+        }
+
+        Ok(profile_name_str)
+    }
+
     /*
      * Handles the outcome of a file save dialog initiated for saving the current profile under a new name or path.
      * If a path is selected, it extracts the new profile name, updates the application session data
@@ -880,132 +912,46 @@ impl MyAppLogic {
         window_id: WindowId,
         result: Option<PathBuf>,
     ) {
-        let profile_save_path = match result {
-            Some(psp) => psp,
-            None => {
-                log::debug!("User cancelled the 'Save Profile As' dialog.");
+        let profile_name_str = match Self::make_profile_name(result) {
+            Ok(pfn) => pfn,
+            Err(e) => {
+                app_error!(self, "{}", e);
                 return;
             }
         };
 
-        log::debug!(
-            "User selected path for 'Save Profile As': {:?}",
-            profile_save_path
-        );
-
-        let profile_name_osstr = match profile_save_path.file_stem() {
-            Some(name) => name,
-            None => {
-                app_error!(
-                    self,
-                    "Could not extract profile name from save path. Profile not saved."
-                );
-                return;
-            }
+        // Update the application session data to reflect the new profile name.
+        let profile = {
+            // Local scope for Mutex lock.
+            let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
+            profile_runtime_data.set_profile_name(Some(profile_name_str));
+            profile_runtime_data.set_archive_path(None); // Reset archive path for new profile
+            profile_runtime_data.create_profile_snapshot()
         };
-
-        let profile_name_str = match profile_name_osstr.to_str().map(|s| s.to_string()) {
-            Some(name_str) => name_str,
-            None => {
-                app_error!(
-                    self,
-                    "Profile save filename stem not valid UTF-8. Profile not saved."
-                );
-                return;
-            }
-        };
-
-        if profile_name_str.trim().is_empty()
-            || !profile_name_str
-                .chars()
-                .all(core::profiles::is_valid_profile_name_char)
+        if let Err(e) = self
+            .profile_manager
+            .save_profile(&profile, APP_NAME_FOR_PROFILES)
         {
             app_error!(
                 self,
-                "Invalid profile name extracted from path: '{}'. Profile not saved.",
-                profile_name_str
+                "Failed to save profile '{}' in 'Save Profile As': {}",
+                profile.name,
+                e
             );
-            return;
         }
-
-        // Create a snapshot of the current profile data. This snapshot will form the basis of the new profile.
-        let mut profile_to_save = {
-            let data = self.app_session_data_ops.lock().unwrap();
-            // 'Save As' implies an existing profile context, even if minimal.
-            if data.get_profile_name().is_none() && data.get_snapshot_nodes().is_empty() {
-                // If there's truly no context (e.g. fresh app, no profile loaded yet, no scan done)
-                log::warn!(
-                    "'Save Profile As' initiated without a fully active profile context. Creating a new profile shell."
-                );
-                // Fallback to a new Profile DTO if no meaningful data exists.
-                // This might happen if SaveProfileAs is enabled too early.
-                // The Profile::new would use a default root, which isn't ideal but better than panic.
-                // A more robust solution might be to disable SaveProfileAs if no profile loaded.
-                // For now, allow creating a "new" profile this way but log it.
-                Profile::new(profile_name_str.clone(), data.get_root_path_for_scan()) // Use current scan root if any
-            } else {
-                data.create_profile_snapshot()
-            }
-        };
-
-        // Crucially, update the profile's name to the one derived from the "Save As" path.
-        profile_to_save.name = profile_name_str; // profile_name_str is already cloned essentially from to_string()
-
-        match self
-            .profile_manager
-            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+        self._update_window_title_with_profile_and_archive(window_id);
+        if let Err(e) = self
+            .config_manager
+            .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
         {
-            Ok(()) => {
-                log::debug!(
-                    "Successfully saved profile as '{}' using profile manager.",
-                    profile_to_save.name
-                );
-
-                // The current application session now becomes this newly saved profile.
-                // Update the session data accordingly.
-                {
-                    let mut data = self.app_session_data_ops.lock().unwrap();
-                    data.set_profile_name(Some(profile_to_save.name.clone()));
-                    data.set_root_path_for_scan(profile_to_save.root_folder.clone());
-                    data.set_archive_path(profile_to_save.archive_path.clone());
-                    data.set_cached_file_token_details(profile_to_save.file_details.clone());
-                    // Note: The selection states (selected/deselected paths) are part of the Profile DTO
-                    // and are implicitly handled by create_profile_snapshot.
-                    // If a full re-application of profile state to session is needed (like load_profile_into_session),
-                    // that would be a more extensive change here. For "Save As", updating these key fields
-                    // to reflect the new identity of the active profile is the primary goal.
-                }
-
-                self._update_window_title_with_profile_and_archive(window_id);
-
-                if let Err(e) = self
-                    .config_manager
-                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile_to_save.name)
-                {
-                    app_warn!(
-                        self,
-                        "Failed to save last profile name '{}' after 'Save As': {:?}",
-                        profile_to_save.name,
-                        e
-                    );
-                }
-                self.update_current_archive_status();
-                self._update_generate_archive_menu_item_state(window_id);
-                app_info!(
-                    self,
-                    "Profile '{}' saved successfully.",
-                    profile_to_save.name
-                );
-            }
-            Err(e) => {
-                app_error!(
-                    self,
-                    "Failed to save profile (via manager) as '{}': {}",
-                    profile_to_save.name,
-                    e
-                );
-            }
+            app_warn!(
+                self,
+                "Failed to save last profile name '{}': {:?}",
+                profile.name,
+                e
+            );
         }
+        self.update_current_archive_status();
     }
 
     fn handle_window_resized(&mut self, _window_id: WindowId, _width: i32, _height: i32) {

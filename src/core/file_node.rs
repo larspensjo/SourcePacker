@@ -69,6 +69,7 @@ pub struct FileTokenDetails {
  * Represents a user profile, storing selection states and configurations for a specific root folder.
  * This structure is serialized to/from JSON for persistence. It now includes an `archive_path`
  * to associate the profile directly with its output archive, and no longer contains whitelist patterns.
+ * TODO: Shouldn't use pub for everything.
  */
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
