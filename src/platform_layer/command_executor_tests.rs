@@ -43,78 +43,81 @@ fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) 
     };
     (internal_state_arc, window_id, native_window_data)
 }
+#[cfg(test)]
+mod tests {
 
-#[test]
-fn test_add_menu_item_recursive_impl_builds_map_and_ids() {
-    let (_internal_state_arc, _window_id, mut native_window_data) = setup_test_env();
+    #[test]
+    fn test_add_menu_item_recursive_impl_builds_map_and_ids() {
+        let (_internal_state_arc, _window_id, mut native_window_data) = setup_test_env();
 
-    let menu_items = vec![
-        MenuItemConfig {
-            action: Some(MenuAction::LoadProfile),
-            text: "Load".to_string(),
-            children: vec![],
-        },
-        MenuItemConfig {
-            action: None,
-            text: "File".to_string(),
-            children: vec![MenuItemConfig {
-                action: Some(MenuAction::SaveProfileAs),
-                text: "Save As".to_string(),
+        let menu_items = vec![
+            MenuItemConfig {
+                action: Some(MenuAction::LoadProfile),
+                text: "Load".to_string(),
                 children: vec![],
-            }],
-        },
-        MenuItemConfig {
-            action: Some(MenuAction::RefreshFileList),
-            text: "Refresh".to_string(),
-            children: vec![],
-        },
-    ];
+            },
+            MenuItemConfig {
+                action: None,
+                text: "File".to_string(),
+                children: vec![MenuItemConfig {
+                    action: Some(MenuAction::SaveProfileAs),
+                    text: "Save As".to_string(),
+                    children: vec![],
+                }],
+            },
+            MenuItemConfig {
+                action: Some(MenuAction::RefreshFileList),
+                text: "Refresh".to_string(),
+                children: vec![],
+            },
+        ];
 
-    unsafe {
-        let h_main_menu = CreateMenu().expect("Failed to create dummy menu for test");
-        // Call the function from the command_executor module directly
-        for item_config in &menu_items {
-            command_executor::add_menu_item_recursive_impl(
-                // No super:: needed if it's a sibling
-                h_main_menu,
-                item_config,
-                &mut native_window_data,
-            )
-            .unwrap();
+        unsafe {
+            let h_main_menu = CreateMenu().expect("Failed to create dummy menu for test");
+            // Call the function from the command_executor module directly
+            for item_config in &menu_items {
+                command_executor::add_menu_item_recursive_impl(
+                    // No super:: needed if it's a sibling
+                    h_main_menu,
+                    item_config,
+                    &mut native_window_data,
+                )
+                .unwrap();
+            }
+            DestroyMenu(h_main_menu).expect("Failed to destroy dummy menu for test");
         }
-        DestroyMenu(h_main_menu).expect("Failed to destroy dummy menu for test");
-    }
 
-    assert_eq!(
-        native_window_data.menu_action_map.len(),
-        3,
-        "Expected 3 actions in map: Load, Save As, Refresh"
-    );
-    assert_eq!(
-        native_window_data.next_menu_item_id_counter, 30003,
-        "Menu item ID counter should advance by 3"
-    );
-
-    let mut found_load = false;
-    let mut found_save_as = false;
-    let mut found_refresh = false;
-
-    for (id, action) in &native_window_data.menu_action_map {
-        assert!(
-            *id >= 30000 && *id < 30003,
-            "Generated menu IDs should be in the expected range"
+        assert_eq!(
+            native_window_data.menu_action_map.len(),
+            3,
+            "Expected 3 actions in map: Load, Save As, Refresh"
         );
-        match action {
-            MenuAction::LoadProfile => found_load = true,
-            MenuAction::SaveProfileAs => found_save_as = true,
-            MenuAction::RefreshFileList => found_refresh = true,
-            _ => panic!("Unexpected action {:?} found in menu_action_map", action),
+        assert_eq!(
+            native_window_data.next_menu_item_id_counter, 30003,
+            "Menu item ID counter should advance by 3"
+        );
+
+        let mut found_load = false;
+        let mut found_save_as = false;
+        let mut found_refresh = false;
+
+        for (id, action) in &native_window_data.menu_action_map {
+            assert!(
+                *id >= 30000 && *id < 30003,
+                "Generated menu IDs should be in the expected range"
+            );
+            match action {
+                MenuAction::LoadProfile => found_load = true,
+                MenuAction::SaveProfileAs => found_save_as = true,
+                MenuAction::RefreshFileList => found_refresh = true,
+                _ => panic!("Unexpected action {:?} found in menu_action_map", action),
+            }
         }
+        assert!(found_load, "MenuAction::LoadProfile not found in map");
+        assert!(found_save_as, "MenuAction::SaveProfileAs not found in map");
+        assert!(
+            found_refresh,
+            "MenuAction::RefreshFileList not found in map"
+        );
     }
-    assert!(found_load, "MenuAction::LoadProfile not found in map");
-    assert!(found_save_as, "MenuAction::SaveProfileAs not found in map");
-    assert!(
-        found_refresh,
-        "MenuAction::RefreshFileList not found in map"
-    );
 }
