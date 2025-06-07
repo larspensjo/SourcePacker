@@ -12,7 +12,6 @@
 use crate::core::path_utils; // Import the new path_utils module
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
 
 const LAST_PROFILE_FILENAME: &str = "last_profile_name.txt";
 
@@ -158,6 +157,7 @@ mod tests {
     use crate::core::path_utils; // For setting up mock directories if ProjectDirs was used directly.
     // Now this might not be needed as TestConfigManager won't use ProjectDirs.
     use std::fs; // For direct fs operations in TestConfigManager
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     // Test helper for CoreConfigManager that allows specifying the config directory

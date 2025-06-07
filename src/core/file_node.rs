@@ -121,8 +121,7 @@ pub enum ArchiveStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{FileNode, SelectionState, FileTokenDetails, Profile};
-    use std::io;
+    use super::{FileNode, FileTokenDetails, Profile, SelectionState};
     use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
 
     #[test]

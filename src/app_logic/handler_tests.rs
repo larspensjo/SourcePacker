@@ -57,7 +57,6 @@ mod handler_tests {
         _set_archive_path_log: Vec<Option<PathBuf>>,
         _set_root_path_for_scan_log: Vec<PathBuf>,
         _set_snapshot_nodes_log: Vec<Vec<FileNode>>,
-        _clear_snapshot_nodes_calls: usize,
         _apply_selection_states_to_snapshot_log: Vec<(HashSet<PathBuf>, HashSet<PathBuf>)>,
         _update_node_state_and_collect_changes_log: Vec<(PathBuf, SelectionState)>,
         _set_cached_file_token_details_log: Vec<HashMap<PathBuf, FileTokenDetails>>,
@@ -96,7 +95,6 @@ mod handler_tests {
                 _set_archive_path_log: Vec::new(),
                 _set_root_path_for_scan_log: Vec::new(),
                 _set_snapshot_nodes_log: Vec::new(),
-                _clear_snapshot_nodes_calls: 0,
                 _apply_selection_states_to_snapshot_log: Vec::new(),
                 _update_node_state_and_collect_changes_log: Vec::new(),
                 _set_cached_file_token_details_log: Vec::new(),
@@ -214,10 +212,6 @@ mod handler_tests {
             self.get_snapshot_nodes_calls
                 .fetch_add(1, Ordering::Relaxed);
             &self.snapshot_nodes
-        }
-        fn clear_snapshot_nodes(&mut self) {
-            self._clear_snapshot_nodes_calls += 1;
-            self.snapshot_nodes.clear();
         }
         fn set_snapshot_nodes(&mut self, nodes: Vec<FileNode>) {
             self._set_snapshot_nodes_log.push(nodes.clone());

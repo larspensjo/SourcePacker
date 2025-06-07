@@ -59,7 +59,6 @@ pub fn calculate_sha256_checksum(file_path: &Path) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use std::io::Write;
     use tempfile::NamedTempFile;
 

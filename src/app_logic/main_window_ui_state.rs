@@ -128,9 +128,6 @@ mod tests {
         fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
             unimplemented!("MockProfileRuntimeDataOps: get_snapshot_nodes")
         }
-        fn clear_snapshot_nodes(&mut self) {
-            unimplemented!("MockProfileRuntimeDataOps: clear_snapshot_nodes")
-        }
         fn set_snapshot_nodes(&mut self, _nodes: Vec<FileNode>) {
             unimplemented!("MockProfileRuntimeDataOps: set_snapshot_nodes")
         }

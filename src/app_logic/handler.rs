@@ -11,13 +11,12 @@ use crate::platform_layer::{
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex}; // Added Mutex
 
 // Import log macros
 use log::{error, info, warn};
 
-pub const ID_BUTTON_GENERATE_ARCHIVE_LOGIC: i32 = 1002; // TODO Not used in this file. Where should it go?
 pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 
 // These type aliases are used by MainWindowUiState.
@@ -25,7 +24,6 @@ pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PendingAction {
-    SavingArchive, // TODO: This is considered obsolete but kept for now to avoid breaking unrelated tests
     SavingProfile,
     CreatingNewProfileGetName,
     CreatingNewProfileGetRoot,
@@ -810,15 +808,6 @@ impl MyAppLogic {
                             );
                         }
                     }
-                }
-            }
-            Some(PendingAction::SavingArchive) => {
-                app_warn!(
-                    self,
-                    "Obsolete 'SavingArchive' action handled. This should not happen."
-                );
-                if result.is_none() {
-                    log::debug!("Save archive (obsolete path) cancelled.");
                 }
             }
             Some(PendingAction::SavingProfile) => {

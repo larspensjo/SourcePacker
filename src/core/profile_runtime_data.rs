@@ -36,7 +36,6 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
 
     // File system snapshot (nodes)
     fn get_snapshot_nodes(&self) -> &Vec<FileNode>;
-    fn clear_snapshot_nodes(&mut self);
     fn set_snapshot_nodes(&mut self, nodes: Vec<FileNode>);
     fn apply_selection_states_to_snapshot(
         &mut self,
@@ -384,10 +383,6 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 
     fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
         &self.file_system_snapshot_nodes
-    }
-
-    fn clear_snapshot_nodes(&mut self) {
-        self.file_system_snapshot_nodes.clear();
     }
 
     fn set_snapshot_nodes(&mut self, nodes: Vec<FileNode>) {

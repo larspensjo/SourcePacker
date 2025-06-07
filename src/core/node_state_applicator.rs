@@ -1,6 +1,6 @@
-use super::file_node::{FileNode, SelectionState, Profile};
+use super::file_node::{FileNode, SelectionState};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /*
  * This module is responsible for managing the state of `FileNode` trees,
@@ -100,7 +100,7 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::file_node::{FileNode, SelectionState, Profile}; // Ensure full path if needed
+    use crate::core::file_node::{FileNode, SelectionState}; // Ensure full path if needed
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -187,7 +187,10 @@ mod tests {
         assert_eq!(tree[1].state, SelectionState::New); // dir1
         assert_eq!(tree[1].children[0].state, SelectionState::Deselected); // dir1/file2.txt
         assert_eq!(tree[1].children[1].state, SelectionState::New); // dir1/subdir
-        assert_eq!(tree[1].children[1].children[0].state, SelectionState::Selected); // dir1/subdir/file3.txt
+        assert_eq!(
+            tree[1].children[1].children[0].state,
+            SelectionState::Selected
+        ); // dir1/subdir/file3.txt
         assert_eq!(tree[2].state, SelectionState::New); // file4.ext
     }
 
@@ -223,7 +226,10 @@ mod tests {
             assert_eq!(tree[1].state, SelectionState::Selected);
             assert_eq!(tree[1].children[0].state, SelectionState::Selected);
             assert_eq!(tree[1].children[1].state, SelectionState::Selected);
-            assert_eq!(tree[1].children[1].children[0].state, SelectionState::Selected);
+            assert_eq!(
+                tree[1].children[1].children[0].state,
+                SelectionState::Selected
+            );
             assert_eq!(tree[0].state, SelectionState::New); // Other nodes unaffected
         });
     }
@@ -242,7 +248,10 @@ mod tests {
             assert_eq!(tree[1].state, SelectionState::Deselected);
             assert_eq!(tree[1].children[0].state, SelectionState::Deselected);
             assert_eq!(tree[1].children[1].state, SelectionState::Deselected);
-            assert_eq!(tree[1].children[1].children[0].state, SelectionState::Deselected);
+            assert_eq!(
+                tree[1].children[1].children[0].state,
+                SelectionState::Deselected
+            );
         });
     }
 

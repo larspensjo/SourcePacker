@@ -1,4 +1,4 @@
-use super::file_node::{ArchiveStatus, FileNode, SelectionState, Profile};
+use super::file_node::{ArchiveStatus, FileNode, SelectionState};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -251,7 +251,7 @@ impl ArchiverOperations for CoreArchiver {
 #[cfg(test)]
 mod archiver_tests {
     use super::*;
-    use crate::core::file_node::{FileNode, SelectionState, Profile};
+    use crate::core::file_node::{FileNode, SelectionState};
     use std::fs::File;
     use std::io::Write;
     use std::path::{Path, PathBuf};
@@ -311,7 +311,13 @@ mod archiver_tests {
             File::create(&file3_path)?.sync_all()?;
 
             let nodes = vec![
-                new_test_file_node(base_path, "file1.txt", false, SelectionState::Selected, vec![]),
+                new_test_file_node(
+                    base_path,
+                    "file1.txt",
+                    false,
+                    SelectionState::Selected,
+                    vec![],
+                ),
                 new_test_file_node(
                     base_path,
                     "subdir",
@@ -325,7 +331,13 @@ mod archiver_tests {
                         vec![],
                     )],
                 ),
-                new_test_file_node(base_path, "file3.md", false, SelectionState::Deselected, vec![]),
+                new_test_file_node(
+                    base_path,
+                    "file3.md",
+                    false,
+                    SelectionState::Deselected,
+                    vec![],
+                ),
             ];
 
             // Act
@@ -608,7 +620,13 @@ mod archiver_tests {
             let dir = tempdir()?;
             let base_path = dir.path();
             let nodes = vec![
-                new_test_file_node(base_path, "file1.txt", false, SelectionState::Deselected, vec![]),
+                new_test_file_node(
+                    base_path,
+                    "file1.txt",
+                    false,
+                    SelectionState::Deselected,
+                    vec![],
+                ),
                 new_test_file_node(base_path, "file2.txt", false, SelectionState::New, vec![]),
             ];
 
