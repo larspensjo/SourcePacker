@@ -73,9 +73,11 @@ impl TokenCounterOperations for CoreTikTokenCounter {
 /*
  * A concrete implementation of `TokenCounterOperations` that estimates tokens
  * by counting words separated by whitespace. This is a very basic estimation.
+ * TODO: Unused today, maybe allow the user to switch?
  */
 pub struct SimpleWhitespaceTokenCounter;
 
+#[cfg(test)]
 impl SimpleWhitespaceTokenCounter {
     /*
      * Creates a new instance of `SimpleWhitespaceTokenCounter`.

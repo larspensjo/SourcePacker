@@ -21,26 +21,29 @@ pub mod tokenizer_utils;
 pub use file_node::{ArchiveStatus, FileNode, Profile, SelectionState};
 
 // Re-export file system related items
-pub use file_system::{CoreFileSystemScanner, FileSystemError, FileSystemScannerOperations};
+pub use file_system::{CoreFileSystemScanner, FileSystemScannerOperations};
+
+#[cfg(test)]
+pub use file_system::FileSystemError;
 
 // Re-export profile related items
-pub use profiles::{
-    CoreProfileManager, ProfileError, ProfileManagerOperations, sanitize_profile_name,
-};
+pub use profiles::{CoreProfileManager, ProfileManagerOperations};
+
+#[cfg(test)]
+pub use profiles::ProfileError;
 
 // Re-export archiver related items
 pub use archiver::{ArchiverOperations, CoreArchiver};
 
 // Re-export config related items
-pub use config::{
-    ConfigError, ConfigManagerOperations, CoreConfigManager as CoreConfigManagerForConfig,
-};
+pub use config::{ConfigManagerOperations, CoreConfigManager as CoreConfigManagerForConfig};
+
+#[cfg(test)]
+pub use config::ConfigError;
 
 pub use node_state_applicator::{NodeStateApplicator, NodeStateApplicatorOperations};
 
-pub use tokenizer_utils::{
-    CoreTikTokenCounter, SimpleWhitespaceTokenCounter, TokenCounterOperations,
-};
+pub use tokenizer_utils::{CoreTikTokenCounter, TokenCounterOperations};
 
 // Re-export AppSessionData (now ProfileRuntimeData) related items
 pub use profile_runtime_data::{ProfileRuntimeData, ProfileRuntimeDataOperations};
