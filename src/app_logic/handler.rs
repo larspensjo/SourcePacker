@@ -24,7 +24,7 @@ pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PendingAction {
-    SavingProfile,
+    SavingProfileAs,
     CreatingNewProfileGetName,
     CreatingNewProfileGetRoot,
     SettingArchivePath,
@@ -735,7 +735,7 @@ impl MyAppLogic {
         let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
         let default_filename = format!("{}.json", sanitized_current_name);
 
-        ui_state_mut.pending_action = Some(PendingAction::SavingProfile);
+        ui_state_mut.pending_action = Some(PendingAction::SavingProfileAs);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {
                 window_id: ui_state_mut.window_id,
@@ -746,182 +746,263 @@ impl MyAppLogic {
             });
     }
 
+    /*
+     * Handles the outcome of a file save dialog. The behavior depends on the
+     * `pending_action` that was active when the dialog was initiated.
+     * This function delegates to specific handlers based on that action.
+     */
     fn handle_file_save_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        let ui_state_mut_option = self.ui_state.as_mut().filter(|s| s.window_id == window_id);
-        let ui_state_mut = match ui_state_mut_option {
+        // Ensure UI state exists for the given window_id and get mutable access.
+        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
             Some(s) => s,
             None => {
                 log::warn!(
-                    "FileSaveDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
+                    "FileSaveDialogCompleted received for an unknown or non-main window (ID: {:?}). Ignoring event.",
                     window_id
                 );
                 return;
             }
         };
 
+        // Take the pending action. This consumes it from ui_state_mut.
         let action = ui_state_mut.pending_action.take();
+        log::debug!(
+            "FileSaveDialogCompleted with pending action: {:?}, for result: {:?}",
+            action,
+            result
+        );
+
         match action {
             Some(PendingAction::SettingArchivePath) => {
-                let path = match result {
-                    Some(p) => p,
-                    None => {
-                        log::debug!("Set archive path cancelled.");
-                        self._update_generate_archive_menu_item_state(window_id); // This may need adjustment if it relies on app_session_data directly
-                        return;
-                    }
-                };
-
-                log::debug!("Archive path selected: {:?}", path);
-                let profile_to_save_opt = {
-                    let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
-                    if profile_runtime_data.get_profile_name().is_none() {
-                        app_error!(self, "No profile active to set archive path for.");
-                        None // Indicate failure to get profile_to_save
-                    } else {
-                        profile_runtime_data.set_archive_path(Some(path.clone()));
-                        Some(profile_runtime_data.create_profile_snapshot())
-                    }
-                };
-
-                if let Some(profile_to_save) = profile_to_save_opt {
-                    match self
-                        .profile_manager
-                        .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-                    {
-                        Ok(_) => {
-                            app_info!(
-                                self,
-                                "Archive path set to '{}' for profile '{}' and saved.",
-                                path.display(),
-                                profile_to_save.name
-                            );
-                            self._update_window_title_with_profile_and_archive(window_id);
-                            self.update_current_archive_status();
-                            self._update_generate_archive_menu_item_state(window_id);
-                        }
-                        Err(e) => {
-                            app_error!(
-                                self,
-                                "Failed to save profile '{}' after setting archive path: {}",
-                                profile_to_save.name,
-                                e
-                            );
-                        }
-                    }
-                }
+                self._handle_file_save_dialog_for_setting_archive_path(window_id, result);
             }
-            Some(PendingAction::SavingProfile) => {
-                let profile_save_path = match result {
-                    Some(psp) => psp,
-                    None => {
-                        log::debug!("Save profile cancelled.");
-                        return;
-                    }
-                };
-
-                log::debug!("Profile save path selected: {:?}", profile_save_path);
-                let profile_name_osstr = match profile_save_path.file_stem() {
-                    Some(name) => name,
-                    None => {
-                        app_error!(
-                            self,
-                            "Could not extract profile name from save path. Profile not saved."
-                        );
-                        return;
-                    }
-                };
-
-                let profile_name_str = match profile_name_osstr.to_str().map(|s| s.to_string()) {
-                    Some(name_str) => name_str,
-                    None => {
-                        app_error!(
-                            self,
-                            "Profile save filename stem not valid UTF-8. Profile not saved."
-                        );
-                        return;
-                    }
-                };
-
-                if profile_name_str.trim().is_empty()
-                    || !profile_name_str
-                        .chars()
-                        .all(core::profiles::is_valid_profile_name_char)
-                {
-                    app_error!(
-                        self,
-                        "Invalid profile name extracted from path: '{}'. Profile not saved.",
-                        profile_name_str
-                    );
-                    return;
-                }
-
-                let mut profile_to_save = {
-                    let data = self.app_session_data_ops.lock().unwrap();
-                    data.create_profile_snapshot()
-                };
-
-                // Override the name.
-                profile_to_save.name = profile_name_str;
-
-                match self
-                    .profile_manager
-                    .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-                {
-                    Ok(()) => {
-                        log::debug!(
-                            "Successfully saved profile as '{}' via manager.",
-                            profile_to_save.name
-                        );
-                        {
-                            // TODO: The profile_to_save was created from the app_session_data, why would we need this?
-                            let mut data = self.app_session_data_ops.lock().unwrap();
-                            data.set_profile_name(Some(profile_to_save.name.clone()));
-                            data.set_root_path_for_scan(profile_to_save.root_folder.clone());
-                            data.set_archive_path(profile_to_save.archive_path.clone());
-                            data.set_cached_file_token_details(
-                                profile_to_save.file_details.clone(),
-                            );
-                        }
-
-                        self._update_window_title_with_profile_and_archive(window_id);
-
-                        if let Err(e) = self
-                            .config_manager
-                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile_to_save.name)
-                        {
-                            app_warn!(
-                                self,
-                                "Failed to save last profile name '{}': {:?}",
-                                profile_to_save.name,
-                                e
-                            );
-                        }
-                        self.update_current_archive_status();
-                        self._update_generate_archive_menu_item_state(window_id);
-                        app_info!(self, "Profile '{}' saved.", profile_to_save.name);
-                    }
-                    Err(e) => {
-                        app_error!(
-                            self,
-                            "Failed to save profile (via manager) as '{}': {}",
-                            profile_to_save.name,
-                            e
-                        );
-                    }
-                }
+            Some(PendingAction::SavingProfileAs) => {
+                self._handle_file_save_dialog_for_saving_profile_as(window_id, result);
             }
             Some(PendingAction::CreatingNewProfileGetName)
             | Some(PendingAction::CreatingNewProfileGetRoot) => {
+                // These pending actions expect an InputDialog or FolderPickerDialog, not a FileSaveDialog.
                 app_error!(
                     self,
-                    "Unexpected FileSaveDialogCompleted with pending action: {:?}",
-                    action
+                    "FileSaveDialogCompleted received, but was expecting dialog for {:?}. This is a logic error.",
+                    action // action is already Some(PendingAction) here.
                 );
             }
             None => {
+                // This implies a FileSaveDialog was completed but MyAppLogic wasn't expecting one.
                 app_warn!(
                     self,
-                    "FileSaveDialogCompleted received but no pending action was set."
+                    "FileSaveDialogCompleted received, but no pending action was set. Ignoring."
+                );
+            }
+        }
+    }
+
+    /*
+     * Handles the outcome of a file save dialog initiated for setting a profile's archive path.
+     * If a path is selected, it updates the current profile's archive path in the
+     * application session data, saves the profile modifications, and refreshes relevant UI elements
+     * like the window title and archive status indicators.
+     */
+    fn _handle_file_save_dialog_for_setting_archive_path(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) {
+        let path = match result {
+            Some(p) => p,
+            None => {
+                log::debug!("User cancelled the 'Set Archive Path' dialog.");
+                // Update UI elements that might depend on the archive path status being unchanged.
+                self._update_generate_archive_menu_item_state(window_id);
+                return;
+            }
+        };
+
+        log::debug!("User selected archive path: {:?}", path);
+
+        let profile_to_save_opt = {
+            let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
+            if profile_runtime_data.get_profile_name().is_none() {
+                app_error!(self, "No profile is active. Cannot set archive path.");
+                return; // No active profile, so nothing to set the path for.
+            }
+            profile_runtime_data.set_archive_path(Some(path.clone()));
+            Some(profile_runtime_data.create_profile_snapshot())
+        };
+
+        // This should always be Some if we didn't return early due to no active profile.
+        let profile_to_save = match profile_to_save_opt {
+            Some(p) => p,
+            None => {
+                // This case indicates an unexpected logic flow if reached.
+                log::error!(
+                    "_handle_file_save_dialog_for_setting_archive_path: profile_to_save was unexpectedly None despite an active profile check."
+                );
+                return;
+            }
+        };
+
+        match self
+            .profile_manager
+            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+        {
+            Ok(_) => {
+                app_info!(
+                    self,
+                    "Archive path set to '{}' for profile '{}' and profile saved.",
+                    path.display(),
+                    profile_to_save.name
+                );
+                self._update_window_title_with_profile_and_archive(window_id);
+                self.update_current_archive_status();
+                self._update_generate_archive_menu_item_state(window_id);
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Failed to save profile '{}' after setting archive path: {}",
+                    profile_to_save.name,
+                    e
+                );
+            }
+        }
+    }
+
+    /*
+     * Handles the outcome of a file save dialog initiated for saving the current profile under a new name or path.
+     * If a path is selected, it extracts the new profile name, updates the application session data
+     * to reflect this new profile (name, path, etc.), saves it through the profile manager,
+     * and refreshes relevant UI elements.
+     */
+    fn _handle_file_save_dialog_for_saving_profile_as(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) {
+        let profile_save_path = match result {
+            Some(psp) => psp,
+            None => {
+                log::debug!("User cancelled the 'Save Profile As' dialog.");
+                return;
+            }
+        };
+
+        log::debug!(
+            "User selected path for 'Save Profile As': {:?}",
+            profile_save_path
+        );
+
+        let profile_name_osstr = match profile_save_path.file_stem() {
+            Some(name) => name,
+            None => {
+                app_error!(
+                    self,
+                    "Could not extract profile name from save path. Profile not saved."
+                );
+                return;
+            }
+        };
+
+        let profile_name_str = match profile_name_osstr.to_str().map(|s| s.to_string()) {
+            Some(name_str) => name_str,
+            None => {
+                app_error!(
+                    self,
+                    "Profile save filename stem not valid UTF-8. Profile not saved."
+                );
+                return;
+            }
+        };
+
+        if profile_name_str.trim().is_empty()
+            || !profile_name_str
+                .chars()
+                .all(core::profiles::is_valid_profile_name_char)
+        {
+            app_error!(
+                self,
+                "Invalid profile name extracted from path: '{}'. Profile not saved.",
+                profile_name_str
+            );
+            return;
+        }
+
+        // Create a snapshot of the current profile data. This snapshot will form the basis of the new profile.
+        let mut profile_to_save = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            // 'Save As' implies an existing profile context, even if minimal.
+            if data.get_profile_name().is_none() && data.get_snapshot_nodes().is_empty() {
+                // If there's truly no context (e.g. fresh app, no profile loaded yet, no scan done)
+                log::warn!(
+                    "'Save Profile As' initiated without a fully active profile context. Creating a new profile shell."
+                );
+                // Fallback to a new Profile DTO if no meaningful data exists.
+                // This might happen if SaveProfileAs is enabled too early.
+                // The Profile::new would use a default root, which isn't ideal but better than panic.
+                // A more robust solution might be to disable SaveProfileAs if no profile loaded.
+                // For now, allow creating a "new" profile this way but log it.
+                Profile::new(profile_name_str.clone(), data.get_root_path_for_scan()) // Use current scan root if any
+            } else {
+                data.create_profile_snapshot()
+            }
+        };
+
+        // Crucially, update the profile's name to the one derived from the "Save As" path.
+        profile_to_save.name = profile_name_str; // profile_name_str is already cloned essentially from to_string()
+
+        match self
+            .profile_manager
+            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+        {
+            Ok(()) => {
+                log::debug!(
+                    "Successfully saved profile as '{}' using profile manager.",
+                    profile_to_save.name
+                );
+
+                // The current application session now becomes this newly saved profile.
+                // Update the session data accordingly.
+                {
+                    let mut data = self.app_session_data_ops.lock().unwrap();
+                    data.set_profile_name(Some(profile_to_save.name.clone()));
+                    data.set_root_path_for_scan(profile_to_save.root_folder.clone());
+                    data.set_archive_path(profile_to_save.archive_path.clone());
+                    data.set_cached_file_token_details(profile_to_save.file_details.clone());
+                    // Note: The selection states (selected/deselected paths) are part of the Profile DTO
+                    // and are implicitly handled by create_profile_snapshot.
+                    // If a full re-application of profile state to session is needed (like load_profile_into_session),
+                    // that would be a more extensive change here. For "Save As", updating these key fields
+                    // to reflect the new identity of the active profile is the primary goal.
+                }
+
+                self._update_window_title_with_profile_and_archive(window_id);
+
+                if let Err(e) = self
+                    .config_manager
+                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile_to_save.name)
+                {
+                    app_warn!(
+                        self,
+                        "Failed to save last profile name '{}' after 'Save As': {:?}",
+                        profile_to_save.name,
+                        e
+                    );
+                }
+                self.update_current_archive_status();
+                self._update_generate_archive_menu_item_state(window_id);
+                app_info!(
+                    self,
+                    "Profile '{}' saved successfully.",
+                    profile_to_save.name
+                );
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Failed to save profile (via manager) as '{}': {}",
+                    profile_to_save.name,
+                    e
                 );
             }
         }
