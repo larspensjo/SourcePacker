@@ -6,7 +6,7 @@
  * with the Win32 API.
  */
 use super::app::Win32ApiInternalState;
-use super::controls::treeview_handler;
+use super::controls::{label_handler, treeview_handler};
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
     AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, TreeItemId, WindowId,
@@ -337,7 +337,16 @@ impl Win32ApiInternalState {
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
             }
             WM_CTLCOLORSTATIC => {
-                lresult_override = self._handle_wm_ctlcolorstatic(window_id, wparam, lparam);
+                // Dispatch to the label_handler for WM_CTLCOLORSTATIC
+                // WPARAM is HDC, LPARAM is HWND of the static control
+                let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
+                let hwnd_static_ctrl = HWND(lparam.0 as *mut c_void);
+                lresult_override = label_handler::handle_wm_ctlcolorstatic(
+                    self, // self is Arc<Win32ApiInternalState>
+                    window_id,
+                    hdc_static_ctrl,
+                    hwnd_static_ctrl,
+                );
             }
 
             _ => {}
@@ -899,42 +908,6 @@ impl Win32ApiInternalState {
             rules,
             &window_data.controls,
         );
-    }
-
-    /*
-     * Handles the WM_CTLCOLORSTATIC message for a window.
-     * This is called when a static control (like a label) is about to be drawn.
-     * It sets the text color based on the severity stored in NativeWindowData.label_severities
-     * and makes the background transparent.
-     * Returns the LRESULT for the message, if it was handled.
-     */
-    fn _handle_wm_ctlcolorstatic(
-        self: &Arc<Self>,
-        window_id: WindowId,
-        wparam: WPARAM,
-        lparam: LPARAM,
-    ) -> Option<LRESULT> {
-        let hdc_static_ctrl = HDC(wparam.0 as *mut c_void);
-        let hwnd_static_ctrl_from_msg = HWND(lparam.0 as *mut c_void);
-
-        if let Some(windows_map_guard) = self.active_windows.read().ok() {
-            if let Some(window_data) = windows_map_guard.get(&window_id) {
-                let control_id_of_static = unsafe { GetDlgCtrlID(hwnd_static_ctrl_from_msg) };
-                if let Some(severity) = window_data.label_severities.get(&control_id_of_static) {
-                    unsafe {
-                        let color = match severity {
-                            MessageSeverity::Error => COLORREF(0x000000FF),
-                            MessageSeverity::Warning => COLORREF(0x0000A5FF),
-                            _ => COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
-                        };
-                        SetTextColor(hdc_static_ctrl, color);
-                        SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                        return Some(LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize));
-                    }
-                }
-            }
-        }
-        None
     }
 
     /*

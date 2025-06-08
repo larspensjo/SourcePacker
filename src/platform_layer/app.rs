@@ -1,5 +1,5 @@
 use super::command_executor;
-use super::controls::treeview_handler;
+use super::controls::{label_handler, treeview_handler};
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{PlatformCommand, PlatformEventHandler, TreeItemId, WindowConfig, WindowId};
@@ -384,7 +384,7 @@ impl Win32ApiInternalState {
                 label_id,
                 initial_text,
                 class,
-            } => command_executor::execute_create_label(
+            } => label_handler::handle_create_label_command(
                 self,
                 window_id,
                 parent_panel_id,
@@ -397,7 +397,7 @@ impl Win32ApiInternalState {
                 label_id,
                 text,
                 severity,
-            } => command_executor::execute_update_label_text(
+            } => label_handler::handle_update_label_text_command(
                 self, window_id, label_id, text, severity,
             ),
             PlatformCommand::RedrawTreeItem {
