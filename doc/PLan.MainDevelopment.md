@@ -100,3 +100,6 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 ## P4.5: Better Binary File Detection
 *   Implement robust check (e.g., percentage of non-printable chars). `[TextFileFocusUTF8V1]`
 *   Visually indicate/exclude binary files. `[FutureBinaryFileDetectionSophisticatedV1]`
+
+## P4.6: Graphical effect on status change
+*   When something in the status field changes, I want there to be a visual effect that gradually fades away.

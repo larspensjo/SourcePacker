@@ -35,10 +35,7 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
     *   Completed
 
 **Step A.II.6: Create `controls` Sub-Module and Handler Skeletons (Renumbered from A.II.5)**
-    *   **Action a:** Create `src/platform_layer/controls/` directory and `mod.rs`.
-    *   **Action b:** Create empty or skeleton `menu_handler.rs`, `button_handler.rs`, `label_handler.rs`, `panel_handler.rs` etc., in the new `controls` module.
-    *   **Action c:** Rename `platform_layer/control_treeview.rs` to `src/platform_layer/controls/treeview_handler.rs` and update all `use` statements and module references.
-    *   *Verification:* Compiles. App runs as before. Project structure for control handlers is in place.
+    *   Completed
 
 **Step A.II.7: Migrate Control-Specific Logic to Handlers (Iteratively) (Renumbered from A.II.6)**
     *   **For each control type (e.g., Label, TreeView, Menu, Button, Panel):**

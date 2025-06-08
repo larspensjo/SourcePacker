@@ -6,7 +6,7 @@
  */
 
 use super::app::Win32ApiInternalState;
-use super::control_treeview; // For control_treeview operations
+use super::controls::treeview_handler; // For control_treeview operations
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
     AppEvent, CheckState, LayoutRule, MenuItemConfig, MessageSeverity, TreeItemId, WindowId,
@@ -464,7 +464,7 @@ pub(crate) fn execute_create_treeview(
             }
 
             window_data.controls.insert(control_id, hwnd_tv);
-            window_data.treeview_state = Some(control_treeview::TreeViewInternalState::new());
+            window_data.treeview_state = Some(treeview_handler::TreeViewInternalState::new());
             log::debug!(
                 "CommandExecutor: Created TreeView (ID {}) for window {:?} with HWND {:?}",
                 control_id,
@@ -503,19 +503,19 @@ pub(crate) fn execute_populate_treeview(
         control_id
     );
     /*
-     * The actual call to control_treeview::populate_treeview will happen here.
+     * The actual call to treeview_handler::populate_treeview will happen here.
      * This function will first retrieve the HWND of the TreeView using window_id and control_id.
      * Then, it will pass this HWND (and other necessary state if TreeViewInternalState
-     * becomes mapped by control_id) to control_treeview::populate_treeview.
-     * For now, we assume control_treeview::populate_treeview will be updated
+     * becomes mapped by control_id) to treeview_handler::populate_treeview.
+     * For now, we assume treeview_handler::populate_treeview will be updated
      * to accept the HWND directly or the control_id to manage its own state.
      *
-     * The original `control_treeview::populate_treeview` took `internal_state` and `window_id`.
+     * The original `treeview_handler::populate_treeview` took `internal_state` and `window_id`.
      * It internally resolved the TreeView HWND and state.
      * The goal here is to make `control_treeview` more generic.
      * So, `command_executor` should resolve the HWND using `control_id` and pass that.
      */
-    control_treeview::populate_treeview(internal_state, window_id, control_id, items)
+    treeview_handler::populate_treeview(internal_state, window_id, control_id, items)
 }
 
 pub(crate) fn execute_update_tree_item_visual_state(
@@ -533,9 +533,9 @@ pub(crate) fn execute_update_tree_item_visual_state(
     );
     /*
      * Similar to populate_treeview, this will resolve the TreeView HWND using control_id
-     * and then call a (to-be-modified) control_treeview::update_treeview_item_visual_state.
+     * and then call a (to-be-modified) treeview_handler::update_treeview_item_visual_state.
      */
-    control_treeview::update_treeview_item_visual_state(
+    treeview_handler::update_treeview_item_visual_state(
         internal_state,
         window_id,
         control_id,

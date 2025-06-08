@@ -1,6 +1,6 @@
 pub mod app;
 pub(crate) mod command_executor;
-pub(crate) mod control_treeview;
+pub(crate) mod controls;
 pub(crate) mod dialog_handler;
 pub mod error;
 pub mod types;

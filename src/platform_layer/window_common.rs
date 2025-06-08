@@ -6,7 +6,7 @@
  * with the Win32 API.
  */
 use super::app::Win32ApiInternalState;
-use super::control_treeview;
+use super::controls::treeview_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{
     AppEvent, CheckState, DockStyle, LayoutRule, MenuAction, MessageSeverity, TreeItemId, WindowId,
@@ -76,7 +76,7 @@ pub(crate) struct NativeWindowData {
     pub(crate) hwnd: HWND,
     pub(crate) id: WindowId,
     // The specific internal state for the TreeView control if one exists.
-    pub(crate) treeview_state: Option<control_treeview::TreeViewInternalState>,
+    pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
     pub(crate) controls: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
@@ -1256,7 +1256,7 @@ impl Win32ApiInternalState {
                 // This notification is specific to TreeViews.
                 // Pass the control_id to the handler.
                 let control_id_from_notify = nmhdr.idFrom as i32;
-                return control_treeview::handle_treeview_itemchanged_notification(
+                return treeview_handler::handle_treeview_itemchanged_notification(
                     self,
                     window_id,
                     lparam,

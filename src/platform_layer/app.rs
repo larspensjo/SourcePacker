@@ -1,5 +1,5 @@
 use super::command_executor;
-use super::control_treeview;
+use super::controls::treeview_handler;
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{PlatformCommand, PlatformEventHandler, TreeItemId, WindowConfig, WindowId};

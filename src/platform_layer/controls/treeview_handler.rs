@@ -5,9 +5,11 @@
  * It also defines the internal state (`TreeViewInternalState`) required to manage
  * a TreeView control, such as its handle and item ID mappings.
  */
-use super::app::Win32ApiInternalState;
-use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId};
+use crate::platform_layer::app::Win32ApiInternalState;
+use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
+use crate::platform_layer::types::{
+    AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId,
+};
 
 use windows::{
     Win32::{
@@ -140,7 +142,7 @@ pub(crate) fn populate_treeview(
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "Platform: control_treeview::populate_treeview called for WinID {:?}, ControlID {}",
+        "Platform: treeview_handler::populate_treeview called for WinID {:?}, ControlID {}",
         window_id,
         control_id
     );
@@ -272,7 +274,7 @@ pub(crate) fn update_treeview_item_visual_state(
     new_check_state: CheckState,
 ) -> PlatformResult<()> {
     log::debug!(
-        "Platform: control_treeview::update_treeview_item_visual_state called for WinID {:?}, ControlID {}, ItemID {:?}",
+        "Platform: treeview_handler::update_treeview_item_visual_state called for WinID {:?}, ControlID {}, ItemID {:?}",
         window_id,
         control_id,
         item_id
