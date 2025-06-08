@@ -239,6 +239,7 @@ impl MyAppLogic {
                 items: descriptors,
             });
     }
+
     /*
      * Converts an `ArchiveStatus` enum to a user-friendly string.
      * This function provides plain English descriptions for each status variant.
@@ -803,8 +804,6 @@ impl MyAppLogic {
         let path = match result {
             Some(p) => p,
             None => {
-                log::debug!("User cancelled the 'Set Archive Path' dialog.");
-                self._update_generate_archive_menu_item_state(window_id);
                 return;
             }
         };
@@ -844,7 +843,6 @@ impl MyAppLogic {
                 );
                 self._update_window_title_with_profile_and_archive(window_id);
                 self.update_current_archive_status();
-                self._update_generate_archive_menu_item_state(window_id);
             }
             Err(e) => {
                 app_error!(
@@ -924,19 +922,24 @@ impl MyAppLogic {
                 profile.name,
                 e
             );
+            // If save fails, should we revert profile_name in app_session_data_ops?
+            // Current logic does not. For now, matching existing behavior.
+        } else {
+            // Only update config and UI if save was successful
+            if let Err(e) = self
+                .config_manager
+                .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
+            {
+                app_warn!(
+                    self,
+                    "Failed to save last profile name '{}': {:?}",
+                    profile.name,
+                    e
+                );
+            }
         }
+        // These UI updates happen regardless of save success in current logic.
         self._update_window_title_with_profile_and_archive(window_id);
-        if let Err(e) = self
-            .config_manager
-            .save_last_profile_name(APP_NAME_FOR_PROFILES, &profile.name)
-        {
-            app_warn!(
-                self,
-                "Failed to save last profile name '{}': {:?}",
-                profile.name,
-                e
-            );
-        }
         self.update_current_archive_status();
     }
 
@@ -1107,7 +1110,6 @@ impl MyAppLogic {
             app_error!(self, "{}", final_status_message);
         }
 
-        self._update_generate_archive_menu_item_state(window_id);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
     }
@@ -1272,6 +1274,66 @@ impl MyAppLogic {
             });
     }
 
+    fn _handle_input_dialog_for_new_profile_name(
+        &mut self,
+        window_id: WindowId,
+        profile_name_input_opt: Option<String>, // Renamed 'text' for clarity within this function
+    ) {
+        let profile_name_text = match profile_name_input_opt {
+            Some(t) => t,
+            None => {
+                log::debug!("New profile name input cancelled. Returning to profile selection.");
+                // Ensure ui_state exists, though it should from the calling function's check
+                let ui_state_mut = self.ui_state.as_mut().expect(
+                "ui_state should exist when _handle_input_dialog_for_new_profile_name is called",
+            );
+                ui_state_mut.pending_action = None;
+                ui_state_mut.pending_new_profile_name = None;
+                self.initiate_profile_selection_or_creation(window_id);
+                return;
+            }
+        };
+
+        if profile_name_text.trim().is_empty()
+            || !profile_name_text
+                .chars()
+                .all(core::profiles::is_valid_profile_name_char)
+        {
+            app_warn!(
+                self,
+                "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens."
+            );
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::ShowInputDialog {
+                    window_id,
+                    title: "New Profile (1/2): Name".to_string(),
+                    prompt: "Enter a name for the new profile (invalid previous attempt):"
+                        .to_string(),
+                    default_text: Some(profile_name_text),
+                    context_tag: Some("NewProfileName".to_string()),
+                });
+            return;
+        }
+
+        log::debug!(
+            "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
+            profile_name_text
+        );
+        // Ensure ui_state exists
+        let ui_state_mut = self.ui_state.as_mut().expect(
+            "ui_state should exist when _handle_input_dialog_for_new_profile_name is called (valid name case)",
+        );
+        ui_state_mut.pending_new_profile_name = Some(profile_name_text);
+        ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
+
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowFolderPickerDialog {
+                window_id,
+                title: "New Profile (2/2): Select Root Folder".to_string(),
+                initial_dir: None,
+            });
+    }
+
     fn handle_input_dialog_completed(
         &mut self,
         window_id: WindowId,
@@ -1298,55 +1360,8 @@ impl MyAppLogic {
 
         match context_tag.as_deref() {
             Some("NewProfileName") => {
-                let profile_name_text = match text {
-                    Some(t) => t,
-                    None => {
-                        log::debug!(
-                            "New profile name input cancelled. Returning to profile selection."
-                        );
-                        let ui_state_mut = self.ui_state.as_mut().unwrap();
-                        ui_state_mut.pending_action = None;
-                        ui_state_mut.pending_new_profile_name = None;
-                        self.initiate_profile_selection_or_creation(window_id);
-                        return;
-                    }
-                };
-
-                if profile_name_text.trim().is_empty()
-                    || !profile_name_text
-                        .chars()
-                        .all(core::profiles::is_valid_profile_name_char)
-                {
-                    app_warn!(
-                        self,
-                        "Invalid profile name. Please use only letters, numbers, spaces, underscores, or hyphens."
-                    );
-                    self.synchronous_command_queue
-                        .push_back(PlatformCommand::ShowInputDialog {
-                            window_id,
-                            title: "New Profile (1/2): Name".to_string(),
-                            prompt: "Enter a name for the new profile (invalid previous attempt):"
-                                .to_string(),
-                            default_text: Some(profile_name_text),
-                            context_tag: Some("NewProfileName".to_string()),
-                        });
-                    return;
-                }
-
-                log::debug!(
-                    "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
-                    profile_name_text
-                );
-                let ui_state_mut = self.ui_state.as_mut().unwrap();
-                ui_state_mut.pending_new_profile_name = Some(profile_name_text);
-                ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
-
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::ShowFolderPickerDialog {
-                        window_id,
-                        title: "New Profile (2/2): Select Root Folder".to_string(),
-                        initial_dir: None,
-                    });
+                // Call the new helper method
+                self._handle_input_dialog_for_new_profile_name(window_id, text);
             }
             _ => {
                 app_warn!(
@@ -1354,8 +1369,10 @@ impl MyAppLogic {
                     "InputDialogCompleted with unhandled context: {:?}",
                     context_tag
                 );
-                let ui_state_mut = self.ui_state.as_mut().unwrap();
-                ui_state_mut.pending_action = None;
+                // Ensure ui_state exists before modifying it, consistent with the guard at the start of the function
+                if let Some(ui_state_mut) = self.ui_state.as_mut() {
+                    ui_state_mut.pending_action = None;
+                }
             }
         }
     }
@@ -1460,34 +1477,6 @@ impl MyAppLogic {
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetWindowTitle { window_id, title });
-    }
-
-    fn _update_generate_archive_menu_item_state(&mut self, window_id: WindowId) {
-        assert!(
-            self.ui_state
-                .as_ref()
-                .map_or(false, |s| s.window_id == window_id),
-            "_update_generate_archive_menu_item_state called with mismatching window ID or no UI state."
-        );
-
-        let enabled = self
-            .app_session_data_ops
-            .lock()
-            .unwrap()
-            .get_archive_path()
-            .is_some();
-
-        if enabled {
-            log::debug!("'Generate Archive' menu item can now function (archive path is set).");
-        } else {
-            log::debug!(
-                "'Generate Archive' menu item functionality depends on archive path (currently not set)."
-            );
-        }
-        // TODO: The actual command to enable/disable the menu item seems to be missing from original logic too.
-        // This method currently only logs. If it's meant to send a command, that needs to be added.
-        // For MVP separation, MyAppLogic decides if it should be enabled, then queues a command.
-        // The actual PlatformCommand::SetMenuItemEnabled is not shown here.
     }
 
     fn handle_menu_set_archive_path_clicked(&mut self) {
@@ -1781,5 +1770,98 @@ impl MyAppLogic {
                 "ui_state not initialized in test_set_path_to_tree_item_id_mapping. Call test_set_main_window_id_and_init_ui_state first."
             );
         }
+    }
+
+    // --- NEW TEST ACCESSORS ---
+
+    // Accessor for refresh_tree_view_from_cache
+    pub(crate) fn test_refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
+        self.refresh_tree_view_from_cache(window_id);
+    }
+
+    // Accessor for _update_token_count_and_request_display
+    pub(crate) fn test_update_token_count_and_request_display(&mut self) {
+        self._update_token_count_and_request_display();
+    }
+
+    // Accessor for _handle_file_save_dialog_for_setting_archive_path
+    pub(crate) fn test_handle_file_save_dialog_for_setting_archive_path(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) {
+        self._handle_file_save_dialog_for_setting_archive_path(window_id, result);
+    }
+
+    // Accessor for _handle_file_save_dialog_for_saving_profile_as
+    pub(crate) fn test_handle_file_save_dialog_for_saving_profile_as(
+        &mut self,
+        window_id: WindowId,
+        result: Option<PathBuf>,
+    ) {
+        self._handle_file_save_dialog_for_saving_profile_as(window_id, result);
+    }
+
+    // Accessor for _activate_profile_and_show_window
+    pub(crate) fn test_activate_profile_and_show_window(
+        &mut self,
+        window_id: WindowId,
+        profile_to_activate: Profile,
+        initial_operation_status_message: String,
+    ) {
+        self._activate_profile_and_show_window(
+            window_id,
+            profile_to_activate,
+            initial_operation_status_message,
+        );
+    }
+
+    // Accessor for _handle_input_dialog_for_new_profile_name
+    pub(crate) fn test_handle_input_dialog_for_new_profile_name(
+        &mut self,
+        window_id: WindowId,
+        profile_name_input_opt: Option<String>,
+    ) {
+        self._handle_input_dialog_for_new_profile_name(window_id, profile_name_input_opt);
+    }
+
+    // Accessor for _update_window_title_with_profile_and_archive
+    pub(crate) fn test_update_window_title_with_profile_and_archive(
+        &mut self,
+        window_id: WindowId,
+    ) {
+        self._update_window_title_with_profile_and_archive(window_id);
+    }
+
+    // Helper to get pending_new_profile_name for testing
+    pub(crate) fn test_get_pending_new_profile_name(&self) -> Option<String> {
+        self.ui_state
+            .as_ref()
+            .and_then(|s| s.pending_new_profile_name.clone())
+    }
+
+    // Accessor for make_profile_name
+    pub(crate) fn test_make_profile_name(path: Option<PathBuf>) -> Result<String, String> {
+        Self::make_profile_name(path)
+    }
+
+    // Accessor for build_tree_item_descriptors_recursive_internal
+    pub(crate) fn test_build_tree_item_descriptors_recursive_internal(
+        nodes: &[FileNode],
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
+    ) -> Vec<TreeItemDescriptor> {
+        Self::build_tree_item_descriptors_recursive_internal(
+            nodes,
+            path_to_tree_item_id,
+            next_tree_item_id_counter,
+        )
+    }
+
+    pub(crate) fn test_get_path_to_tree_item_id(&self) -> Option<&PathToTreeItemIdMap> {
+        self.ui_state.as_ref().map(|s| &s.path_to_tree_item_id)
+    }
+    pub(crate) fn test_get_next_tree_item_id_counter(&self) -> Option<u64> {
+        self.ui_state.as_ref().map(|s| s.next_tree_item_id_counter)
     }
 }

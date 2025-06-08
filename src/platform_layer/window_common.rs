@@ -313,58 +313,20 @@ impl Win32ApiInternalState {
             WM_DESTROY => {
                 event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
             }
-            WM_NCDESTROY => {
-                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
-            }
+            WM_NCDESTROY => {}
             WM_PAINT => {
                 lresult_override = Some(self.handle_wm_paint(hwnd, wparam, lparam, window_id));
             }
             WM_NOTIFY => {
-                // TODO: Move this to a separate function
-                let nmhdr_ptr = lparam.0 as *const NMHDR;
-                if !nmhdr_ptr.is_null() {
-                    let nmhdr = unsafe { &*nmhdr_ptr };
-                    let control_id_from_notify = nmhdr.idFrom as i32;
-
-                    if nmhdr.code == NM_CUSTOMDRAW {
-                        // Check if this window HAS treeview_state. If so, assume this custom draw is for it.
-                        // This relies on CreateTreeView having set up treeview_state.
-                        let mut needs_custom_draw_handling = false;
-                        if let Ok(windows_guard) = self.active_windows.read() {
-                            if let Some(window_data) = windows_guard.get(&window_id) {
-                                // If treeview_state exists, we assume NM_CUSTOMDRAW from the control
-                                // that owns this state (identified by control_id_from_notify)
-                                // should be handled by our custom draw logic.
-                                if window_data.treeview_state.is_some() {
-                                    // A further check could be to verify that control_id_from_notify
-                                    // is indeed the ID of the control associated with treeview_state,
-                                    // if NativeWindowData stored that link. For now, this is implicit.
-                                    needs_custom_draw_handling = true;
-                                }
-                            }
-                        }
-
-                        if needs_custom_draw_handling {
-                            lresult_override = Some(self.handle_nm_customdraw_treeview(
-                                hwnd,
-                                window_id,
-                                lparam,
-                                event_handler_opt.as_ref(),
-                                control_id_from_notify, // Pass the actual control_id
-                            ));
-                        }
-                        // If not needs_custom_draw_handling, lresult_override remains None,
-                        // leading to DefWindowProcW for this NM_CUSTOMDRAW.
-                    } else {
-                        // Handle other notification codes like NM_CLICK, TVN_ITEMCHANGEDW
-                        event_to_send = self.handle_wm_notify_general(
-                            hwnd,   // Parent window HWND
-                            wparam, // Original WPARAM for WM_NOTIFY
-                            lparam, // Original LPARAM for WM_NOTIFY (which is NMHDR*)
-                            window_id, nmhdr, // The dereferenced NMHDR
-                        );
-                    }
-                }
+                // `hwnd` is the parent window's handle
+                // `wparam` and `lparam` are the original parameters for WM_NOTIFY
+                (event_to_send, lresult_override) = self._handle_wm_notify_dispatch(
+                    hwnd,
+                    wparam,
+                    lparam,
+                    window_id,
+                    event_handler_opt.as_ref(),
+                );
             }
             WM_APP_TREEVIEW_CHECKBOX_CLICKED => {
                 event_to_send =
@@ -401,6 +363,66 @@ impl Win32ApiInternalState {
         } else {
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
+    }
+
+    fn _handle_wm_notify_dispatch(
+        self: &Arc<Self>,
+        hwnd_parent_window: HWND, // HWND of the window that received WM_NOTIFY
+        wparam_original: WPARAM,  // Original WPARAM of WM_NOTIFY
+        lparam_original: LPARAM,  // Original LPARAM of WM_NOTIFY (NMHDR*)
+        window_id: WindowId,
+        event_handler_opt: Option<&Arc<Mutex<dyn super::types::PlatformEventHandler>>>,
+    ) -> (Option<AppEvent>, Option<LRESULT>) {
+        let mut event_to_send_local: Option<AppEvent> = None;
+        let mut lresult_override_local: Option<LRESULT> = None;
+
+        let nmhdr_ptr = lparam_original.0 as *const NMHDR;
+        if nmhdr_ptr.is_null() {
+            log::warn!("WM_NOTIFY received with null NMHDR pointer. Ignoring.");
+            return (None, None); // Default processing
+        }
+
+        let nmhdr = unsafe { &*nmhdr_ptr };
+        let control_id_from_notify = nmhdr.idFrom as i32;
+
+        if nmhdr.code == NM_CUSTOMDRAW {
+            // Check if this window HAS treeview_state.
+            let mut needs_custom_draw_handling = false;
+            if let Ok(windows_guard) = self.active_windows.read() {
+                if let Some(window_data) = windows_guard.get(&window_id) {
+                    if window_data.treeview_state.is_some() {
+                        // NM_CUSTOMDRAW for a control identified by control_id_from_notify.
+                        // The handle_nm_customdraw_treeview will internally use this control_id.
+                        needs_custom_draw_handling = true;
+                    }
+                }
+            }
+
+            if needs_custom_draw_handling {
+                // Pass hwnd_parent_window (main window) and lparam_original (for NMTVCUSTOMDRAW)
+                lresult_override_local = Some(self.handle_nm_customdraw_treeview(
+                    hwnd_parent_window,
+                    window_id,
+                    lparam_original, // This LPARAM is the pointer to NMTVCUSTOMDRAW
+                    event_handler_opt,
+                    control_id_from_notify,
+                ));
+            }
+            // If not needs_custom_draw_handling, lresult_override_local remains None,
+            // leading to DefWindowProcW for this NM_CUSTOMDRAW.
+        } else {
+            // Handle other notification codes like NM_CLICK, TVN_ITEMCHANGEDW
+            // Pass hwnd_parent_window (main window), original wparam/lparam, and the parsed nmhdr.
+            event_to_send_local = self.handle_wm_notify_general(
+                hwnd_parent_window,
+                wparam_original,
+                lparam_original,
+                window_id,
+                nmhdr, // Pass the dereferenced NMHDR
+            );
+        }
+
+        (event_to_send_local, lresult_override_local)
     }
 
     /*

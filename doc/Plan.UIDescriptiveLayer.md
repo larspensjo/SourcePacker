@@ -32,28 +32,7 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
     *   **(Completed)** `PlatformCommand::UpdateLabelText` is used by `MyAppLogic` and `WM_CTLCOLORSTATIC` in `window_common.rs` correctly uses `label_severities`.
 
 **Step A.II.4: Ensure All Control Operations Are Generically Targetable (Strengthens Original A.II.4)**
-    *   **Action (Platform Layer - Types):**
-        1.  Modify TreeView-related commands (`PopulateTreeView`, `UpdateTreeItemVisualState`, `RedrawTreeItem`) in `platform_layer/types.rs` to include the target `control_id: i32`.
-    *   **Action (Platform Layer - Implementation):**
-        1.  Update `platform_layer::command_executor` functions for these TreeView commands to accept and pass through the `control_id`.
-        2.  Modify all relevant functions in `platform_layer::control_treeview` (soon to be `treeview_handler.rs`) (e.g., `populate_treeview`, `update_treeview_item_visual_state`, `handle_nm_customdraw_treeview`, `get_tree_item_toggle_event`) to:
-            *   Accept `control_id` as a parameter.
-            *   Use this `control_id` to retrieve the correct TreeView `HWND` from `NativeWindowData::controls` and manage its associated `TreeViewInternalState` (consider how `TreeViewInternalState` is stored/accessed if multiple treeviews were possible, e.g., map `control_id` to state).
-    *   **Action (App Logic):**
-        1.  Modify `app_logic::handler::MyAppLogic` to pass the correct `control_id` (e.g., `app_logic::ui_constants::ID_TREEVIEW_CTRL`) when issuing these TreeView commands.
-    *   *Verification:* TreeView operations are correctly targeted using the logical ID. `platform_layer` does not assume a single TreeView or hardcoded IDs for operations.
-
-**Step A.II.5: Resolve `ID_BUTTON_GENERATE_ARCHIVE_LOGIC` Discrepancy (New Item)**
-    *   **Problem:** `MainWindowUiState::build_initial_profile_display_commands` references `super::handler::ID_BUTTON_GENERATE_ARCHIVE_LOGIC` to enable/disable a button. `ui_description_layer` creates "Generate Archive" as a menu item, not a button with this ID.
-    *   **Action:**
-        1.  **Investigate:** Determine if this `SetControlEnabled` command is a remnant or if it was intended to control the menu item's enabled state.
-        2.  **Rectify:**
-            *   If it's a remnant for a non-existent button: Remove the `PlatformCommand::SetControlEnabled` command for `ID_BUTTON_GENERATE_ARCHIVE_LOGIC` from `MainWindowUiState::build_initial_profile_display_commands` and the related `MyAppLogic::_update_generate_archive_menu_item_state` function or its call to `SetControlEnabled`.
-            *   If the intent is to enable/disable the *menu item*:
-                *   Define a new `PlatformCommand::SetMenuItemEnabled { window_id, action: MenuAction, enabled: bool }`.
-                *   Implement the executor for this command in `platform_layer` (likely `command_executor.rs` initially, then `menu_handler.rs`), which would use the Win32 `EnableMenuItem` API.
-                *   Modify `MyAppLogic::_update_generate_archive_menu_item_state` to enqueue this new command instead of `SetControlEnabled`.
-    *   *Verification:* No commands are issued for non-existent buttons. If menu item enabling is implemented, the "Generate Archive" menu item's enabled state is correctly controlled by `MyAppLogic`.
+    *   Completed
 
 **Step A.II.6: Create `controls` Sub-Module and Handler Skeletons (Renumbered from A.II.5)**
     *   **Action a:** Create `src/platform_layer/controls/` directory and `mod.rs`.
