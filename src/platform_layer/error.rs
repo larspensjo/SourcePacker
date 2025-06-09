@@ -1,9 +1,11 @@
 use windows::core::Error as WinError;
 
-/// Represents errors that can occur within the platform abstraction layer.
-///
-/// This enum centralizes error handling for operations related to the native UI toolkit,
-/// such as window creation failures, invalid operations, or underlying OS errors.
+// Represents errors that can occur within the platform abstraction layer.
+//
+// This enum centralizes error handling for operations related to the native UI toolkit,
+// such as window creation failures, invalid operations, or underlying OS errors.
+// TODO: Where are these taken care of?
+// TODO: Usually, these are created at the same time as a log::error!, etc. Maybe unnecessary duplication?
 #[derive(Debug, Clone)]
 pub enum PlatformError {
     /// An error originating from the Windows API.

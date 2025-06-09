@@ -10,8 +10,8 @@ mod handler_tests {
         TokenCounterOperations, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
-        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-        TreeItemDescriptor, TreeItemId, WindowId, types::MenuAction,
+        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
+        WindowId, types::MenuAction,
     };
 
     use std::collections::{HashMap, HashSet};
@@ -1201,7 +1201,6 @@ mod handler_tests {
             window_id: main_window_id,
             result: None, // User cancelled
         });
-        let cmds = logic.test_drain_commands();
 
         // Assert
         assert!(
@@ -1924,7 +1923,6 @@ mod handler_tests {
             .unwrap()
             .set_archive_path_for_mock(None); // Reset for this part
         logic.test_handle_file_save_dialog_for_setting_archive_path(window_id, None);
-        let cmds_cancel = logic.test_drain_commands();
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1); // Should not have increased
     }
 

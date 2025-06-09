@@ -13,7 +13,6 @@ use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::{LabelClass, MessageSeverity, WindowId};
 use crate::platform_layer::window_common::{SS_LEFT, WC_STATIC}; // Import common constants
 
-use std::ffi::c_void;
 use std::sync::Arc;
 use windows::{
     Win32::{
@@ -24,7 +23,7 @@ use windows::{
         },
         UI::WindowsAndMessaging::{
             CreateWindowExW, GetDlgCtrlID, SendMessageW, SetWindowTextW, WINDOW_EX_STYLE,
-            WINDOW_STYLE, WM_SETFONT, WS_CHILD, WS_VISIBLE,
+            WM_SETFONT, WS_CHILD, WS_VISIBLE,
         },
     },
     core::HSTRING,

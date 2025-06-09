@@ -201,6 +201,7 @@ pub enum AppEvent {
 // Defines the severity of a message to be displayed, e.g., in the status bar.
 // Ordered from least to most severe for comparison. `None` clears.
 // TODO: 'None' isn't used, is it needed?
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MessageSeverity {
     None,        // Clears the status, or lowest priority if not explicitly clearing
@@ -211,6 +212,7 @@ pub enum MessageSeverity {
 
 // --- Label Classification ---
 // TODO: Only 'StatusBar' is currently used, is it needed?
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelClass {
     Default,
@@ -221,6 +223,7 @@ pub enum LabelClass {
 //
 // These commands instruct the platform layer to perform specific actions on
 // native UI elements.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PlatformCommand {
     SetWindowTitle {

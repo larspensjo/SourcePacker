@@ -1,4 +1,4 @@
-#![allow(unused)]
+// #![allow(unused)]
 #![windows_subsystem = "windows"]
 
 mod app_logic;
@@ -42,14 +42,14 @@ use time::macros::format_description;
  *    application logic as the event handler.
  */
 fn main() -> PlatformResult<()> {
-    let log_level: LevelFilter = if std::env::var("LOG_TRACE").is_ok() {
+    let _log_level: LevelFilter = if std::env::var("LOG_TRACE").is_ok() {
         LevelFilter::Trace
     } else {
         LevelFilter::Debug
     };
 
     #[cfg(not(test))] // Use macro to shut up IDE warnings
-    initialize_logging(log_level);
+    initialize_logging(_log_level);
 
     log::debug!("Initialize Platform Layer");
 
