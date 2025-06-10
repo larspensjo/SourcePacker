@@ -196,6 +196,11 @@ pub enum AppEvent {
     MainWindowUISetupComplete {
         window_id: WindowId,
     },
+    // Signals that the user has submitted text in a filter input field. TODO: This should be generalized, for any input field.
+    FilterTextSubmitted {
+        window_id: WindowId,
+        text: String,
+    },
 }
 
 // Defines the severity of a message to be displayed, e.g., in the status bar.

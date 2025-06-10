@@ -1530,6 +1530,36 @@ impl MyAppLogic {
                 initial_dir: initial_dir_for_dialog,
             });
     }
+
+    /*
+     * Handles the submission of filter text from a UI input field.
+     * This function is typically called when the user presses Enter in a filter box.
+     * It updates the `filter_text` in the `MainWindowUiState`. The actual application
+     * of the filter to the TreeView is handled separately (e.g., in Action 1.3).
+     */
+    fn handle_filter_text_submitted(&mut self, window_id: WindowId, text: String) {
+        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+            Some(s) => s,
+            None => {
+                log::warn!(
+                    "FilterTextSubmitted received for an unknown or non-main window (ID: {:?}). Ignoring event.",
+                    window_id
+                );
+                return;
+            }
+        };
+
+        if text.is_empty() {
+            log::debug!("Filter text submitted is empty. Clearing active filter.");
+            ui_state_mut.filter_text = None;
+            // TODO P4.1.A.1.3: Trigger re-population of TreeView with unfiltered items
+        } else {
+            log::debug!("Filter text submitted: '{}'. Storing for filtering.", text);
+            ui_state_mut.filter_text = Some(text);
+            // TODO P4.1.A.1.3: Trigger re-population of TreeView with filtered items
+        }
+        // For Action 1.2, we only store the text. Action 1.3 will use this stored text.
+    }
 }
 
 impl PlatformEventHandler for MyAppLogic {
@@ -1604,6 +1634,9 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::MainWindowUISetupComplete { window_id } => {
                 self._on_ui_setup_complete(window_id);
+            }
+            AppEvent::FilterTextSubmitted { window_id, text } => {
+                self.handle_filter_text_submitted(window_id, text);
             }
         }
     }
@@ -1863,5 +1896,9 @@ impl MyAppLogic {
     }
     pub(crate) fn test_get_next_tree_item_id_counter(&self) -> Option<u64> {
         self.ui_state.as_ref().map(|s| s.next_tree_item_id_counter)
+    }
+
+    pub(crate) fn test_get_filter_text(&self) -> Option<String> {
+        self.ui_state.as_ref().and_then(|s| s.filter_text.clone())
     }
 }

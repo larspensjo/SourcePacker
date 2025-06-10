@@ -35,6 +35,8 @@ pub struct MainWindowUiState {
     pub pending_action: Option<PendingAction>,
     /* Stores a temporary profile name, typically used during a new profile creation flow. */
     pub pending_new_profile_name: Option<String>,
+    /* Stores the current text used for filtering the TreeView. */
+    pub filter_text: Option<String>,
 }
 
 impl MainWindowUiState {
@@ -55,6 +57,7 @@ impl MainWindowUiState {
             current_archive_status_for_ui: None,
             pending_action: None,
             pending_new_profile_name: None,
+            filter_text: None,
         }
     }
 
@@ -194,6 +197,7 @@ mod tests {
         assert!(ui_state.current_archive_status_for_ui.is_none());
         assert!(ui_state.pending_action.is_none());
         assert!(ui_state.pending_new_profile_name.is_none());
+        assert!(ui_state.filter_text.is_none());
     }
 
     #[test]

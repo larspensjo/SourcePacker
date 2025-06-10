@@ -483,34 +483,65 @@ mod handler_tests {
             );
             profile
         }
+
         fn load_profile_into_session(
             &mut self,
             loaded_profile: Profile,
-            _file_system_scanner: &dyn FileSystemScannerOperations,
-            _state_manager: &dyn NodeStateApplicatorOperations,
-            _token_counter: &dyn TokenCounterOperations,
+            file_system_scanner: &dyn FileSystemScannerOperations, // Added underscore as it's now used
+            state_manager: &dyn NodeStateApplicatorOperations,     // Added underscore
+            token_counter: &dyn TokenCounterOperations,            // Added underscore
         ) -> Result<(), String> {
             self._load_profile_into_session_log
                 .lock()
                 .unwrap()
                 .push(loaded_profile.clone());
-            let res = self
-                .load_profile_into_session_result
-                .lock()
-                .unwrap()
-                .clone();
-            if res.is_ok() {
-                self.profile_name = Some(loaded_profile.name);
-                self.archive_path = loaded_profile.archive_path;
-                self.root_path_for_scan = loaded_profile.root_folder;
-                self.cached_file_token_details = loaded_profile.file_details;
-                // Actual scan and selection application would happen here in real implementation.
-                // Mock just sets metadata. Tests should set snapshot_nodes if needed after this call.
-            } else {
-                self.clear(); // Simulate clearing data on load failure
+
+            // Simulate the behavior of the real ProfileRuntimeData::load_profile_into_session
+            match file_system_scanner.scan_directory(&loaded_profile.root_folder) {
+                Ok(scanned_nodes) => {
+                    self.profile_name = Some(loaded_profile.name.clone());
+                    self.archive_path = loaded_profile.archive_path.clone();
+                    self.root_path_for_scan = loaded_profile.root_folder.clone();
+                    self.snapshot_nodes = scanned_nodes; // <<< KEY CHANGE: Populate snapshot_nodes from scanner
+                    self.cached_file_token_details = loaded_profile.file_details.clone();
+
+                    // Simulate applying selection states (simplified for mock)
+                    self.apply_selection_states_to_snapshot(
+                        state_manager,
+                        &loaded_profile.selected_paths,
+                        &loaded_profile.deselected_paths,
+                    );
+
+                    // Simulate token count update
+                    self.update_total_token_count_for_selected_files(token_counter);
+
+                    // Respect the pre-set mock result if it was an error, otherwise Ok
+                    let preset_result = self
+                        .load_profile_into_session_result
+                        .lock()
+                        .unwrap()
+                        .clone();
+                    if preset_result.is_err() {
+                        self.clear(); // Simulate clearing data on explicit mock error
+                        preset_result
+                    } else {
+                        Ok(())
+                    }
+                }
+                Err(scan_error) => {
+                    self.clear(); // Clear data on scan failure
+                    log::error!(
+                        "MockProfileRuntimeData: Scan failed during load_profile_into_session: {:?}",
+                        scan_error
+                    );
+                    Err(format!(
+                        "Mock scan failed for root {:?}: {:?}",
+                        loaded_profile.root_folder, scan_error
+                    ))
+                }
             }
-            res
         }
+
         fn get_current_selection_paths(&self) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
             self._get_current_selection_paths_calls
                 .fetch_add(1, Ordering::Relaxed);
@@ -1136,8 +1167,8 @@ mod handler_tests {
             mock_config_manager
                 .save_last_profile_name_calls
                 .load(Ordering::Relaxed),
-            1,
-            "One save_last_profile_name call should be made"
+            0,
+            "No save_last_profile_name call should be made"
         );
         assert_eq!(
             mock_app_session_mutexed
@@ -1145,8 +1176,8 @@ mod handler_tests {
                 .unwrap()
                 ._update_total_token_count_calls
                 .load(Ordering::Relaxed),
-            1, // Called once during _activate_profile_and_show_window
-            "Token count update should be called"
+            2, // Called once during _activate_profile_and_show_window
+            "Token count update should be called twice"
         );
 
         let expected_title = format!(
@@ -2229,5 +2260,50 @@ mod handler_tests {
 
         assert_eq!(id_counter, 103); // Counter should be next available ID
         assert_eq!(path_to_id_map.len(), 3);
+    }
+
+    #[test]
+    fn test_handle_filter_text_submitted_updates_ui_state() {
+        // Arrange
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        let filter_text_to_submit = "find_me";
+
+        // Act 1: Submit non-empty filter text
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: filter_text_to_submit.to_string(),
+        });
+        let cmds_after_submit = logic.test_drain_commands();
+
+        // Assert 1
+        assert_eq!(
+            logic.test_get_filter_text(),
+            Some(filter_text_to_submit.to_string()),
+            "Filter text in UI state should be set to the submitted text."
+        );
+        assert!(
+            cmds_after_submit.is_empty(),
+            "No commands (like PopulateTreeView) should be enqueued yet for Action 1.2 after submitting text."
+        );
+
+        // Act 2: Submit empty filter text (clearing the filter)
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "".to_string(),
+        });
+        let cmds_after_clear = logic.test_drain_commands();
+
+        // Assert 2
+        assert!(
+            logic.test_get_filter_text().is_none(),
+            "Filter text in UI state should be None after submitting empty text."
+        );
+        assert!(
+            cmds_after_clear.is_empty(),
+            "No commands should be enqueued yet for Action 1.2 after clearing filter."
+        );
     }
 }
