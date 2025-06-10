@@ -223,6 +223,7 @@ pub enum LabelClass {
 //
 // These commands instruct the platform layer to perform specific actions on
 // native UI elements.
+// TODO: All commands that create controls should use the same name for this ID. E.g. "control_id".
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum PlatformCommand {
@@ -322,6 +323,12 @@ pub enum PlatformCommand {
         label_id: i32,
         initial_text: String,
         class: LabelClass, // Classify labels for potential specific styling
+    },
+    CreateInput {
+        window_id: WindowId,
+        parent_control_id: Option<i32>,
+        control_id: i32,
+        initial_text: String,
     },
     UpdateLabelText {
         window_id: WindowId,

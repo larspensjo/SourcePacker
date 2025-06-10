@@ -20,3 +20,12 @@ pub const STATUS_LABEL_TOKENS_ID: i32 = 1013;
 
 // Logical ID for the main TreeView control.
 pub const ID_TREEVIEW_CTRL: i32 = 1001; // Value from platform_layer::control_treeview
+
+// Logical ID for the panel that will contain filter input and buttons.
+pub const FILTER_PANEL_ID: i32 = 1020;
+
+// Logical ID for the text input field used for filtering the TreeView.
+pub const FILTER_INPUT_ID: i32 = 1021;
+
+// Logical ID for the button used to expand filtered or all items in the TreeView.
+pub const FILTER_EXPAND_BUTTON_ID: i32 = 1022;

@@ -14,10 +14,15 @@ use crate::platform_layer::{
     window_common::STATUS_BAR_HEIGHT,
 };
 
+// Height for the panel containing filter controls.
+pub const FILTER_BAR_HEIGHT: i32 = 30;
+// Fixed width for the "Expand Filtered/All" button.
+pub const FILTER_EXPAND_BUTTON_WIDTH: i32 = 120;
+
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
  * for the main application window. This includes creating the main menu, TreeView,
- * status bar, and other foundational UI elements. It also includes
+ * status bar, filter bar and other foundational UI elements. It also includes
  * `DefineLayout` commands to specify how these controls should be positioned and resized.
  * These commands are processed by the platform layer to construct the native UI.
  * Menu items use `MenuAction` for semantic identification.
@@ -71,21 +76,42 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     };
     commands.push(main_menu_command);
 
-    // 2. Create TreeView
+    // 2. Create Filter Bar Panel (child of main window)
+    commands.push(PlatformCommand::CreatePanel {
+        window_id,
+        parent_control_id: None, // Child of the main window's client area
+        panel_id: ui_constants::FILTER_PANEL_ID,
+    });
+
+    // 2.a Create Filter Input field within the Filter Panel
+    commands.push(PlatformCommand::CreateInput {
+        window_id,
+        parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
+        control_id: ui_constants::FILTER_INPUT_ID,
+        initial_text: "".to_string(), // Placeholder text can be set here if desired
+    });
+
+    // 2.b Create "Expand Filtered/All" Button within the Filter Panel
+    commands.push(PlatformCommand::CreateButton {
+        window_id,
+        control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
+        text: "Expand All".to_string(), // Initial text, might change based on filter state
+    });
+
+    // 3. Create TreeView
     commands.push(PlatformCommand::CreateTreeView {
         window_id,
         control_id: ui_constants::ID_TREEVIEW_CTRL,
     });
 
-    // --- New Status Bar Elements (Phase 5) ---
-    // 4.a Create the Status Bar Panel (child of main window)
+    // Create the Status Bar Panel (child of main window)
     commands.push(PlatformCommand::CreatePanel {
         window_id,
         parent_control_id: None, // Child of the main window's client area
         panel_id: ui_constants::STATUS_BAR_PANEL_ID,
     });
 
-    // 4.b Create Labels within the Status Bar Panel
+    // Create Labels within the Status Bar Panel
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
@@ -110,26 +136,51 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     // 5. Define Layout Rules for the controls
     let layout_rules = vec![
-        // Status Bar Panel: Docks to the bottom. Parent is main window.
+        // Filter Bar Panel: Docks to the top of the main window.
+        LayoutRule {
+            control_id: ui_constants::FILTER_PANEL_ID,
+            parent_control_id: None,
+            dock_style: DockStyle::Top,
+            order: 0, // Process first
+            fixed_size: Some(FILTER_BAR_HEIGHT),
+            margin: (2, 2, 2, 2), // Small margin around the panel
+        },
+        // Status Bar Panel: Docks to the bottom of the main window.
         LayoutRule {
             control_id: ui_constants::STATUS_BAR_PANEL_ID,
             parent_control_id: None,
             dock_style: DockStyle::Bottom,
-            order: 0,
+            order: 1, // Process after top-docked items
             fixed_size: Some(STATUS_BAR_HEIGHT),
             margin: (0, 0, 0, 0),
         },
-        // TreeView: Fills the remaining space. Parent is main window.
+        // TreeView: Fills the remaining space in the main window.
         LayoutRule {
             control_id: ui_constants::ID_TREEVIEW_CTRL,
             parent_control_id: None,
             dock_style: DockStyle::Fill,
-            order: 10,
+            order: 10, // Process after fixed-size items
             fixed_size: None,
             margin: (0, 0, 0, 0),
         },
+        // Layout Rules for controls WITHIN the Filter Panel (parent_control_id = FILTER_PANEL_ID)
+        LayoutRule {
+            control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
+            parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
+            dock_style: DockStyle::Right, // Button on the right
+            order: 0,                     // Process first within its parent
+            fixed_size: Some(FILTER_EXPAND_BUTTON_WIDTH),
+            margin: (2, 2, 2, 2), // Small margin for the button
+        },
+        LayoutRule {
+            control_id: ui_constants::FILTER_INPUT_ID,
+            parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
+            dock_style: DockStyle::Fill, // Input field takes remaining space
+            order: 1,                    // Process after the button
+            fixed_size: None,
+            margin: (2, 2, 2, 2), // Small margin for the input field
+        },
         // Layout Rules for labels WITHIN the status bar panel
-        // Their parent is STATUS_BAR_PANEL_ID.
         LayoutRule {
             control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
             parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
