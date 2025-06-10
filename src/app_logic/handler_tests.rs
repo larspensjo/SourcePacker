@@ -1110,14 +1110,11 @@ mod handler_tests {
             Ok(mock_loaded_profile_dto.clone()),
         );
 
-        let scanned_nodes = vec![FileNode {
-            path: mock_file_path.clone(),
-            name: "mock_startup_file.txt".into(),
-            is_dir: false,
-            state: SelectionState::New, // Assume scanner marks as New initially
-            children: vec![],
-            checksum: Some("checksum_for_startup_file".to_string()),
-        }];
+        let scanned_nodes = vec![FileNode::new(
+            mock_file_path.clone(),
+            "mock_startup_file.txt".into(),
+            false,
+        )];
         mock_file_system_scanner
             .set_scan_directory_result(&startup_profile_root, Ok(scanned_nodes.clone()));
 
@@ -1601,52 +1598,52 @@ mod handler_tests {
         {
             let mut app_data = mock_app_session_mutexed.lock().unwrap();
             app_data.set_snapshot_nodes_for_mock(vec![
-                FileNode {
-                    path: file_new_path.clone(),
-                    name: "new_file.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::New,
-                    children: vec![],
-                    checksum: None,
-                },
-                FileNode {
-                    path: file_sel_path.clone(),
-                    name: "sel_file.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Selected,
-                    children: vec![],
-                    checksum: None,
-                },
-                FileNode {
-                    path: folder_with_new_path.clone(),
-                    name: "folder_new_child".into(),
-                    is_dir: true,
-                    state: SelectionState::Selected, // Folder itself might be selected
-                    children: vec![FileNode {
-                        path: file_in_folder_new_path.clone(),
-                        name: "inner_new.txt".into(),
-                        is_dir: false,
-                        state: SelectionState::New,
-                        children: vec![],
-                        checksum: None,
-                    }],
-                    checksum: None,
-                },
-                FileNode {
-                    path: folder_no_new_path.clone(),
-                    name: "folder_no_new".into(),
-                    is_dir: true,
-                    state: SelectionState::Selected,
-                    children: vec![FileNode {
-                        path: file_in_folder_no_new_path.clone(),
-                        name: "inner_sel.txt".into(),
-                        is_dir: false,
-                        state: SelectionState::Selected,
-                        children: vec![],
-                        checksum: None,
-                    }],
-                    checksum: None,
-                },
+                FileNode::new_full(
+                    file_new_path.clone(),
+                    "new_file.txt".into(),
+                    false,
+                    SelectionState::New,
+                    vec![],
+                    None,
+                ),
+                FileNode::new_full(
+                    file_sel_path.clone(),
+                    "sel_file.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    vec![],
+                    None,
+                ),
+                FileNode::new_full(
+                    folder_with_new_path.clone(),
+                    "folder_new_child".into(),
+                    true,
+                    SelectionState::Selected, // Folder itself might be selected
+                    vec![FileNode::new_full(
+                        file_in_folder_new_path.clone(),
+                        "inner_new.txt".into(),
+                        false,
+                        SelectionState::New,
+                        vec![],
+                        None,
+                    )],
+                    None,
+                ),
+                FileNode::new_full(
+                    folder_no_new_path.clone(),
+                    "folder_no_new".into(),
+                    true,
+                    SelectionState::Selected,
+                    vec![FileNode::new_full(
+                        file_in_folder_no_new_path.clone(),
+                        "inner_sel.txt".into(),
+                        false,
+                        SelectionState::Selected,
+                        vec![],
+                        None,
+                    )],
+                    None,
+                ),
             ]);
             // Mock results for does_path_or_descendants_contain_new_file are derived from snapshot nodes by mock
         }
@@ -1716,21 +1713,21 @@ mod handler_tests {
         {
             let mut app_data = mock_app_session_mutexed.lock().unwrap();
             app_data.set_root_path_for_scan_for_mock(root.clone());
-            app_data.set_snapshot_nodes_for_mock(vec![FileNode {
-                path: dir1_path.clone(),
-                name: "dir1".into(),
-                is_dir: true,
-                state: SelectionState::New, // Initially folder might be New due to child
-                children: vec![FileNode {
-                    path: file_in_dir1_path.clone(),
-                    name: "file_in_dir1.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::New, // This file is New
-                    children: vec![],
-                    checksum: None,
-                }],
-                checksum: None,
-            }]);
+            app_data.set_snapshot_nodes_for_mock(vec![FileNode::new_full(
+                dir1_path.clone(),
+                "dir1".into(),
+                true,
+                SelectionState::New, // Initially folder might be New due to child
+                vec![FileNode::new_full(
+                    file_in_dir1_path.clone(),
+                    "file_in_dir1.txt".into(),
+                    false,
+                    SelectionState::New, // This file is New
+                    vec![],
+                    None,
+                )],
+                None,
+            )]);
             // Mock also needs to reflect that these are "new" before the toggle
             app_data.set_does_path_or_descendants_contain_new_file_result(&file_in_dir1_path, true); // File itself is new
             app_data.set_does_path_or_descendants_contain_new_file_result(&dir1_path, true); // Folder contains new
@@ -2197,29 +2194,29 @@ mod handler_tests {
     #[test]
     fn test_build_tree_item_descriptors_recursive_internal() {
         let nodes = vec![
-            FileNode {
-                path: PathBuf::from("/file1.txt"),
-                name: "file1.txt".into(),
-                is_dir: false,
-                state: SelectionState::Selected,
-                children: vec![],
-                checksum: None,
-            },
-            FileNode {
-                path: PathBuf::from("/dir1"),
-                name: "dir1".into(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![FileNode {
-                    path: PathBuf::from("/dir1/file2.txt"),
-                    name: "file2.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Deselected,
-                    children: vec![],
-                    checksum: None,
-                }],
-                checksum: None,
-            },
+            FileNode::new_full(
+                PathBuf::from("/file1.txt"),
+                "file1.txt".into(),
+                false,
+                SelectionState::Selected,
+                vec![],
+                None,
+            ),
+            FileNode::new_full(
+                PathBuf::from("/dir1"),
+                "dir1".into(),
+                true,
+                SelectionState::New,
+                vec![FileNode::new_full(
+                    PathBuf::from("/dir1/file2.txt"),
+                    "file2.txt".into(),
+                    false,
+                    SelectionState::Deselected,
+                    vec![],
+                    None,
+                )],
+                None,
+            ),
         ];
         let mut path_to_id_map = HashMap::new();
         let mut id_counter = 100; // Start from a non-zero value to make it distinct

@@ -47,9 +47,39 @@ impl FileNode {
             path,
             name,
             is_dir,
-            state: SelectionState::default(), // Initial state is Unknown
+            state: SelectionState::default(),
             children: Vec::new(),
             checksum: None,
+        }
+    }
+
+    pub fn checksum_match(&self, file: Option<&FileTokenDetails>) -> bool {
+        if let Some(details) = file {
+            self.checksum
+                .as_ref()
+                .map_or(false, |cs| cs == &details.checksum)
+        } else {
+            false
+        }
+    }
+
+    /// Creates a new FileNode with all fields specified.
+    #[cfg(test)]
+    pub fn new_full(
+        path: PathBuf,
+        name: String,
+        is_dir: bool,
+        state: SelectionState,
+        children: Vec<FileNode>,
+        checksum: Option<String>,
+    ) -> Self {
+        FileNode {
+            path,
+            name,
+            is_dir,
+            state,
+            children,
+            checksum,
         }
     }
 }
