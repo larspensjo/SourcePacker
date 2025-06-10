@@ -107,54 +107,54 @@ mod tests {
     // Helper to create a simple tree for testing
     fn create_test_tree() -> Vec<FileNode> {
         vec![
-            FileNode {
-                path: PathBuf::from("/root/file1.txt"),
-                name: "file1.txt".to_string(),
-                is_dir: false,
-                state: SelectionState::New,
-                children: vec![],
-                checksum: None,
-            },
-            FileNode {
-                path: PathBuf::from("/root/dir1"),
-                name: "dir1".to_string(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![
-                    FileNode {
-                        path: PathBuf::from("/root/dir1/file2.txt"),
-                        name: "file2.txt".to_string(),
-                        is_dir: false,
-                        state: SelectionState::New,
-                        children: vec![],
-                        checksum: None,
-                    },
-                    FileNode {
-                        path: PathBuf::from("/root/dir1/subdir"),
-                        name: "subdir".to_string(),
-                        is_dir: true,
-                        state: SelectionState::New,
-                        children: vec![FileNode {
-                            path: PathBuf::from("/root/dir1/subdir/file3.txt"),
-                            name: "file3.txt".to_string(),
-                            is_dir: false,
-                            state: SelectionState::New,
-                            children: vec![],
-                            checksum: None,
-                        }],
-                        checksum: None,
-                    },
+            FileNode::new_full(
+                PathBuf::from("/root/file1.txt"),
+                "file1.txt".to_string(),
+                false,
+                SelectionState::New,
+                vec![],
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                PathBuf::from("/root/dir1"),
+                "dir1".to_string(),
+                true,
+                SelectionState::New,
+                vec![
+                    FileNode::new_full(
+                        PathBuf::from("/root/dir1/file2.txt"),
+                        "file2.txt".to_string(),
+                        false,
+                        SelectionState::New,
+                        vec![],
+                        "".to_string(),
+                    ),
+                    FileNode::new_full(
+                        PathBuf::from("/root/dir1/subdir"),
+                        "subdir".to_string(),
+                        true,
+                        SelectionState::New,
+                        vec![FileNode::new_full(
+                            PathBuf::from("/root/dir1/subdir/file3.txt"),
+                            "file3.txt".to_string(),
+                            false,
+                            SelectionState::New,
+                            vec![],
+                            "".to_string(),
+                        )],
+                        "".to_string(),
+                    ),
                 ],
-                checksum: None,
-            },
-            FileNode {
-                path: PathBuf::from("/root/file4.ext"), // Different extension
-                name: "file4.ext".to_string(),
-                is_dir: false,
-                state: SelectionState::New,
-                children: vec![],
-                checksum: None,
-            },
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                PathBuf::from("/root/file4.ext"),
+                "file4.ext".to_string(),
+                false,
+                SelectionState::New,
+                vec![],
+                "".to_string(),
+            ),
         ]
     }
 

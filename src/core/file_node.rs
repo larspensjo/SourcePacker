@@ -33,7 +33,7 @@ pub struct FileNode {
     pub is_dir: bool,
     pub state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
-    pub checksum: Option<String>,
+    pub checksum: String,        // Will be empty striong for directories and some unit tests.
 }
 
 impl FileNode {
@@ -42,22 +42,32 @@ impl FileNode {
      * This constructor initializes a basic representation of a file or directory entry
      * before its state is determined by user interaction or profile application.
      */
-    pub fn new(path: PathBuf, name: String, is_dir: bool) -> Self {
+    pub fn new(path: PathBuf, name: String, is_dir: bool, checksum: String) -> Self {
         FileNode {
             path,
             name,
             is_dir,
             state: SelectionState::default(),
             children: Vec::new(),
-            checksum: None,
+            checksum: checksum,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_test(path: PathBuf, name: String, is_dir: bool) -> Self {
+        FileNode {
+            path,
+            name,
+            is_dir,
+            state: SelectionState::default(),
+            children: Vec::new(),
+            checksum: "".to_string(),
         }
     }
 
     pub fn checksum_match(&self, file: Option<&FileTokenDetails>) -> bool {
         if let Some(details) = file {
-            self.checksum
-                .as_ref()
-                .map_or(false, |cs| cs == &details.checksum)
+            self.checksum == details.checksum
         } else {
             false
         }
@@ -71,7 +81,7 @@ impl FileNode {
         is_dir: bool,
         state: SelectionState,
         children: Vec<FileNode>,
-        checksum: Option<String>,
+        checksum: String,
     ) -> Self {
         FileNode {
             path,
@@ -158,13 +168,12 @@ mod tests {
     #[test]
     fn test_filenode_new_defaults() {
         let p = PathBuf::from("/tmp/foo");
-        let n = FileNode::new(p.clone(), "foo".into(), false);
+        let n = FileNode::new_test(p.clone(), "foo".into(), false);
         assert_eq!(n.path, p);
         assert_eq!(n.name, "foo");
         assert_eq!(n.is_dir, false);
         assert_eq!(n.state, SelectionState::New);
         assert!(n.children.is_empty());
-        assert!(n.checksum.is_none());
     }
 
     #[test]

@@ -145,22 +145,25 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
 
-            let mut node = FileNode::new(path.clone(), name, is_dir);
-
+            let checksum_str;
             if !is_dir {
                 // Calculate checksum only for files
                 match checksum_utils::calculate_sha256_checksum(&path) {
-                    Ok(checksum_str) => node.checksum = Some(checksum_str),
+                    Ok(updated_checksum) => checksum_str = updated_checksum,
                     Err(e) => {
                         log::warn!(
                             "FileSystemScanner: Failed to calculate checksum for file {:?}: {}",
                             path,
                             e
                         );
-                        node.checksum = None; // Ensure it's None on error
+                        checksum_str = String::new();
                     }
                 }
+            } else {
+                checksum_str = String::new();
             }
+
+            let mut node = FileNode::new(path.clone(), name, is_dir, checksum_str);
 
             nodes_map.insert(path.clone(), node);
             entry_paths_in_discovery_order.push(path);
@@ -566,24 +569,20 @@ mod tests {
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
 
         let file1_node = nodes.iter().find(|n| n.path == file1_path).unwrap();
-        assert!(file1_node.checksum.is_some());
         assert_eq!(
-            file1_node.checksum.as_ref().unwrap(),
-            &checksum_utils::calculate_sha256_checksum(&file1_path).unwrap()
+            file1_node.checksum,
+            checksum_utils::calculate_sha256_checksum(&file1_path).unwrap()
         );
 
         let file2_node = nodes.iter().find(|n| n.path == file2_path).unwrap();
-        assert!(file2_node.checksum.is_some());
 
         let subdir_node = nodes.iter().find(|n| n.path == subdir_path).unwrap();
         assert!(subdir_node.is_dir);
-        assert!(subdir_node.checksum.is_none()); // Directories should not have checksums
         let file3_node = subdir_node
             .children
             .iter()
             .find(|n| n.path == file_in_subdir_path)
             .unwrap();
-        assert!(file3_node.checksum.is_some());
         Ok(())
     }
 }

@@ -1110,7 +1110,7 @@ mod handler_tests {
             Ok(mock_loaded_profile_dto.clone()),
         );
 
-        let scanned_nodes = vec![FileNode::new(
+        let scanned_nodes = vec![FileNode::new_test(
             mock_file_path.clone(),
             "mock_startup_file.txt".into(),
             false,
@@ -1349,7 +1349,7 @@ mod handler_tests {
         let profile_name = "ArchiveTestProfile";
         let archive_path = PathBuf::from("/test/archive.txt");
         let root_folder = PathBuf::from("/test/root");
-        let file_nodes = vec![FileNode::new(
+        let file_nodes = vec![FileNode::new_test(
             root_folder.join("file.txt"),
             "file.txt".into(),
             false,
@@ -1604,7 +1604,7 @@ mod handler_tests {
                     false,
                     SelectionState::New,
                     vec![],
-                    None,
+                    "".to_string(),
                 ),
                 FileNode::new_full(
                     file_sel_path.clone(),
@@ -1612,7 +1612,7 @@ mod handler_tests {
                     false,
                     SelectionState::Selected,
                     vec![],
-                    None,
+                    "".to_string(),
                 ),
                 FileNode::new_full(
                     folder_with_new_path.clone(),
@@ -1625,9 +1625,9 @@ mod handler_tests {
                         false,
                         SelectionState::New,
                         vec![],
-                        None,
+                        "".to_string(),
                     )],
-                    None,
+                    "".to_string(),
                 ),
                 FileNode::new_full(
                     folder_no_new_path.clone(),
@@ -1640,9 +1640,9 @@ mod handler_tests {
                         false,
                         SelectionState::Selected,
                         vec![],
-                        None,
+                        "".to_string(),
                     )],
-                    None,
+                    "".to_string(),
                 ),
             ]);
             // Mock results for does_path_or_descendants_contain_new_file are derived from snapshot nodes by mock
@@ -1724,9 +1724,9 @@ mod handler_tests {
                     false,
                     SelectionState::New, // This file is New
                     vec![],
-                    None,
+                    "".to_string(),
                 )],
-                None,
+                "".to_string(),
             )]);
             // Mock also needs to reflect that these are "new" before the toggle
             app_data.set_does_path_or_descendants_contain_new_file_result(&file_in_dir1_path, true); // File itself is new
@@ -1806,15 +1806,15 @@ mod handler_tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        let mut dir = FileNode::new(PathBuf::from("/root/dir1"), "dir1".into(), true);
-        dir.children = vec![FileNode::new(
+        let mut dir = FileNode::new_test(PathBuf::from("/root/dir1"), "dir1".into(), true);
+        dir.children = vec![FileNode::new_test(
             PathBuf::from("/root/dir1/file2.txt"),
             "file2.txt".into(),
             false,
         )];
 
         let nodes = vec![
-            FileNode::new(PathBuf::from("/root/file1.txt"), "file1.txt".into(), false),
+            FileNode::new_test(PathBuf::from("/root/file1.txt"), "file1.txt".into(), false),
             dir,
         ];
         mock_app_session
@@ -2057,7 +2057,7 @@ mod handler_tests {
         );
         fs_scanner.set_scan_directory_result(
             &profile.root_folder,
-            Ok(vec![FileNode::new(
+            Ok(vec![FileNode::new_test(
                 profile.root_folder.join("file.txt"),
                 "file.txt".into(),
                 false,
@@ -2200,7 +2200,7 @@ mod handler_tests {
                 false,
                 SelectionState::Selected,
                 vec![],
-                None,
+                "".to_string(),
             ),
             FileNode::new_full(
                 PathBuf::from("/dir1"),
@@ -2213,9 +2213,9 @@ mod handler_tests {
                     false,
                     SelectionState::Deselected,
                     vec![],
-                    None,
+                    "".to_string(),
                 )],
-                None,
+                "".to_string(),
             ),
         ];
         let mut path_to_id_map = HashMap::new();

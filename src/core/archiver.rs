@@ -273,7 +273,7 @@ mod archiver_tests {
             is_dir,
             state,
             children,
-            checksum: None,
+            checksum: "".to_string(),
         }
     }
 

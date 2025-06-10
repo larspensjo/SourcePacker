@@ -117,13 +117,8 @@ impl ProfileRuntimeData {
         node: &FileNode,
         cache: &mut HashMap<PathBuf, FileTokenDetails>,
     ) -> Option<usize> {
-        // PRECONDITION: The node MUST have a checksum to use this function.
-        // The checksum is essential for cache validity and identifying the file's state.
-        let node_checksum = node.checksum.as_ref()
-            .expect("get_token_count_with_cache called on a FileNode without a checksum. Contract violation.");
-
         if let Some(details) = cache.get(&node.path) {
-            if *node_checksum == details.checksum {
+            if node.checksum == details.checksum {
                 return Some(details.token_count);
             }
         }
@@ -142,7 +137,7 @@ impl ProfileRuntimeData {
         cache.insert(
             node.path.clone(),
             FileTokenDetails {
-                checksum: node_checksum.clone(),
+                checksum: node.checksum.clone(),
                 token_count: tokens_in_file,
             },
         );
@@ -385,24 +380,16 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     );
                 } else if node.state == SelectionState::Selected {
                     *processed_count += 1;
-                    if node.checksum.is_some() {
-                        if let Some(count) = ProfileRuntimeData::get_token_count_with_cache(
-                            token_counter_service,
-                            node,
-                            cache,
-                        ) {
-                            *current_total_tokens += count;
-                        } else {
-                            *failed_count += 1;
-                            log::warn!(
-                                "ProfileRuntimeData (sum_tokens_recursive): Failed to get token count for selected file {:?}",
-                                node.path
-                            );
-                        }
+                    if let Some(count) = ProfileRuntimeData::get_token_count_with_cache(
+                        token_counter_service,
+                        node,
+                        cache,
+                    ) {
+                        *current_total_tokens += count;
                     } else {
                         *failed_count += 1;
-                        log::error!(
-                            "ProfileRuntimeData (sum_tokens_recursive): Selected file {:?} has no checksum. Cannot count tokens.",
+                        log::warn!(
+                            "ProfileRuntimeData (sum_tokens_recursive): Failed to get token count for selected file {:?}",
                             node.path
                         );
                     }
@@ -853,7 +840,7 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::Selected,
                     children: Vec::new(),
-                    checksum: Some("cs1".to_string()),
+                    checksum: "cs1".to_string(),
                 },
                 FileNode {
                     path: file2_path.clone(),
@@ -861,7 +848,7 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::Deselected,
                     children: Vec::new(),
-                    checksum: Some("cs2".to_string()),
+                    checksum: "cs2".to_string(),
                 },
             ],
             cached_token_count: 0, // Not directly used by create_profile_snapshot itself
@@ -942,7 +929,7 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::Selected,
                     children: Vec::new(),
-                    checksum: Some(cs1.clone()),
+                    checksum: cs1.clone(),
                 },
                 FileNode {
                     path: file2_path.clone(),
@@ -950,7 +937,7 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::Selected,
                     children: Vec::new(),
-                    checksum: Some(cs2.clone()),
+                    checksum: cs2.clone(),
                 },
             ],
             cached_token_count: 0,
@@ -1026,7 +1013,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::New, // Will be updated by apply_selection_states_to_nodes
                 children: Vec::new(),
-                checksum: Some(file1_checksum_disk.clone()),
+                checksum: file1_checksum_disk.clone(),
             },
             FileNode {
                 path: file2_path.clone(),
@@ -1034,7 +1021,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::New, // Will be updated
                 children: Vec::new(),
-                checksum: Some(file2_checksum_disk.clone()), // New checksum on disk
+                checksum: file2_checksum_disk.clone(), // New checksum on disk
             },
         ];
         mock_scanner.set_scan_directory_result(&root_folder, Ok(nodes_from_scanner.clone()));
@@ -1099,7 +1086,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::New,
                 children: vec![],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 path: dir1_path.clone(),
@@ -1112,9 +1099,9 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::New,
                     children: vec![],
-                    checksum: None,
+                    checksum: "".to_string(),
                 }],
-                checksum: None,
+                checksum: "".to_string(),
             },
         ];
 
@@ -1197,7 +1184,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::Selected,
                 children: Vec::new(),
-                checksum: Some(checksum_v2.clone()), // Current checksum on disk
+                checksum: checksum_v2.clone(), // Current checksum on disk
             }],
             cached_token_count: 0,
         };
@@ -1257,7 +1244,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::Selected,
                 children: Vec::new(),
-                checksum: Some(checksum_v2.clone()), // Current checksum on disk is v2
+                checksum: checksum_v2.clone(), // Current checksum on disk is v2
             }],
             cached_token_count: 0,
         };
@@ -1323,7 +1310,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::New,
                 children: vec![],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 // /root/file2_selected.txt
@@ -1332,7 +1319,7 @@ mod tests {
                 is_dir: false,
                 state: SelectionState::Selected,
                 children: vec![],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 // /root/dir1
@@ -1347,9 +1334,9 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::New,
                     children: vec![],
-                    checksum: None,
+                    checksum: "".to_string(),
                 }],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 // /root/dir2
@@ -1364,9 +1351,9 @@ mod tests {
                     is_dir: false,
                     state: SelectionState::Selected,
                     children: vec![],
-                    checksum: None,
+                    checksum: "".to_string(),
                 }],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 // /root/dir3_empty
@@ -1375,7 +1362,7 @@ mod tests {
                 is_dir: true,
                 state: SelectionState::New,
                 children: vec![],
-                checksum: None,
+                checksum: "".to_string(),
             },
             FileNode {
                 // /root/dir4_deep_new
@@ -1402,13 +1389,13 @@ mod tests {
                             is_dir: false,
                             state: SelectionState::New,
                             children: vec![],
-                            checksum: None,
+                            checksum: "".to_string(),
                         }],
-                        checksum: None,
+                        checksum: "".to_string(),
                     }],
-                    checksum: None,
+                    checksum: "".to_string(),
                 }],
-                checksum: None,
+                checksum: "".to_string(),
             },
         ];
 
