@@ -172,11 +172,15 @@ impl MyAppLogic {
     }
 
     fn refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
+        self.repopulate_tree_view(window_id);
+    }
+
+    fn repopulate_tree_view(&mut self, window_id: WindowId) {
         let ui_state = match self.ui_state.as_mut() {
             Some(s) if s.window_id == window_id => s,
             _ => {
                 log::error!(
-                    "AppLogic: UI state for window_id {:?} must exist to refresh tree view. Current ui_state: {:?}",
+                    "AppLogic: UI state for window_id {:?} must exist to populate tree view. Current ui_state: {:?}",
                     window_id,
                     self.ui_state.as_ref().map(|s_ref| s_ref.window_id)
                 );
@@ -194,17 +198,26 @@ impl MyAppLogic {
             .get_snapshot_nodes()
             .to_vec();
 
-        let descriptors = FileNode::build_tree_item_descriptors_recursive(
-            &snapshot_nodes,
-            &mut ui_state.path_to_tree_item_id,
-            &mut ui_state.next_tree_item_id_counter,
-        );
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::PopulateTreeView {
-                window_id,
-                control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
-                items: descriptors,
-            });
+        let descriptors = if let Some(filter) = &ui_state.filter_text {
+            FileNode::build_tree_item_descriptors_filtered(
+                &snapshot_nodes,
+                filter,
+                &mut ui_state.path_to_tree_item_id,
+                &mut ui_state.next_tree_item_id_counter,
+            )
+        } else {
+            FileNode::build_tree_item_descriptors_recursive(
+                &snapshot_nodes,
+                &mut ui_state.path_to_tree_item_id,
+                &mut ui_state.next_tree_item_id_counter,
+            )
+        };
+
+        self.synchronous_command_queue.push_back(PlatformCommand::PopulateTreeView {
+            window_id,
+            control_id: ui_constants::ID_TREEVIEW_CTRL,
+            items: descriptors,
+        });
     }
 
     /*
@@ -1048,24 +1061,7 @@ impl MyAppLogic {
             ui_state_mut.next_tree_item_id_counter = 1;
             ui_state_mut.path_to_tree_item_id.clear();
 
-            let snapshot_nodes_clone = self
-                .app_session_data_ops
-                .lock()
-                .unwrap()
-                .get_snapshot_nodes()
-                .to_vec();
-
-            let descriptors = FileNode::build_tree_item_descriptors_recursive(
-                &snapshot_nodes_clone,
-                &mut ui_state_mut.path_to_tree_item_id,
-                &mut ui_state_mut.next_tree_item_id_counter,
-            );
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::PopulateTreeView {
-                    window_id,
-                    control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
-                    items: descriptors,
-                });
+            self.repopulate_tree_view(window_id);
         }
 
         self.update_current_archive_status();
@@ -1519,13 +1515,12 @@ impl MyAppLogic {
         if text.is_empty() {
             log::debug!("Filter text submitted is empty. Clearing active filter.");
             ui_state_mut.filter_text = None;
-            // TODO P4.1.A.1.3: Trigger re-population of TreeView with unfiltered items
         } else {
             log::debug!("Filter text submitted: '{}'. Storing for filtering.", text);
             ui_state_mut.filter_text = Some(text);
-            // TODO P4.1.A.1.3: Trigger re-population of TreeView with filtered items
         }
-        // For Action 1.2, we only store the text. Action 1.3 will use this stored text.
+
+        self.repopulate_tree_view(window_id);
     }
 }
 
@@ -1777,6 +1772,10 @@ impl MyAppLogic {
     // Accessor for refresh_tree_view_from_cache
     pub(crate) fn test_refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
         self.refresh_tree_view_from_cache(window_id);
+    }
+
+    pub(crate) fn test_repopulate_tree_view(&mut self, window_id: WindowId) {
+        self.repopulate_tree_view(window_id);
     }
 
     // Accessor for _update_token_count_and_request_display

@@ -2214,8 +2214,12 @@ mod handler_tests {
             "Filter text in UI state should be set to the submitted text."
         );
         assert!(
-            cmds_after_submit.is_empty(),
-            "No commands (like PopulateTreeView) should be enqueued yet for Action 1.2 after submitting text."
+            find_command(&cmds_after_submit, |cmd| matches!(
+                cmd,
+                PlatformCommand::PopulateTreeView { .. }
+            ))
+            .is_some(),
+            "PopulateTreeView command should be enqueued after submitting text."
         );
 
         // Act 2: Submit empty filter text (clearing the filter)
@@ -2231,8 +2235,64 @@ mod handler_tests {
             "Filter text in UI state should be None after submitting empty text."
         );
         assert!(
-            cmds_after_clear.is_empty(),
-            "No commands should be enqueued yet for Action 1.2 after clearing filter."
+            find_command(&cmds_after_clear, |cmd| matches!(
+                cmd,
+                PlatformCommand::PopulateTreeView { .. }
+            ))
+            .is_some(),
+            "PopulateTreeView command should be enqueued after clearing filter."
         );
+    }
+
+    #[test]
+    fn test_filter_text_submission_populates_filtered_tree() {
+        // Arrange
+        let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        let mut dir = FileNode::new_test(PathBuf::from("/root/dir1"), "dir1".into(), true);
+        dir.children = vec![
+            FileNode::new_test(
+                PathBuf::from("/root/dir1/match.txt"),
+                "match.txt".into(),
+                false,
+            ),
+            FileNode::new_test(
+                PathBuf::from("/root/dir1/other.txt"),
+                "other.txt".into(),
+                false,
+            ),
+        ];
+        let nodes = vec![
+            FileNode::new_test(PathBuf::from("/root/other.txt"), "other.txt".into(), false),
+            dir,
+        ];
+        mock_app_session
+            .lock()
+            .unwrap()
+            .set_snapshot_nodes_for_mock(nodes);
+
+        // Act
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "match.txt".to_string(),
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        let populate_cmd = find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::PopulateTreeView { .. })
+        });
+        assert!(
+            populate_cmd.is_some(),
+            "Expected PopulateTreeView command after filtering"
+        );
+        if let Some(PlatformCommand::PopulateTreeView { items, .. }) = populate_cmd {
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].text, "dir1");
+            assert_eq!(items[0].children.len(), 1);
+            assert_eq!(items[0].children[0].text, "match.txt");
+        }
     }
 }

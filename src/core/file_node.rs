@@ -146,6 +146,45 @@ impl FileNode {
         }
         descriptors
     }
+
+    /*
+     * Builds `TreeItemDescriptor`s for nodes matching the provided filter text.
+     * The filter is compared against file and folder names case-insensitively.
+     * Parent folders of matching nodes are included so the resulting structure
+     * still forms a valid tree that reveals where each match resides.
+     */
+    pub fn build_tree_item_descriptors_filtered(
+        nodes: &[FileNode],
+        filter_text: &str,
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
+    ) -> Vec<TreeItemDescriptor> {
+        let filter_lower = filter_text.to_lowercase();
+
+        fn recurse(
+            nodes: &[FileNode],
+            filter_lower: &str,
+            map: &mut PathToTreeItemIdMap,
+            counter: &mut u64,
+        ) -> Vec<TreeItemDescriptor> {
+            let mut descriptors = Vec::new();
+            for node in nodes {
+                let children = recurse(&node.children, filter_lower, map, counter);
+                let name_matches = node.name.to_lowercase() == *filter_lower;
+                if name_matches || !children.is_empty() {
+                    let id_val = *counter;
+                    *counter += 1;
+                    let item_id = TreeItemId(id_val);
+                    map.insert(node.path.clone(), item_id);
+                    let descriptor = node.new_tree_item_descriptor(item_id, children);
+                    descriptors.push(descriptor);
+                }
+            }
+            descriptors
+        }
+
+        recurse(nodes, &filter_lower, path_to_tree_item_id, next_tree_item_id_counter)
+    }
 }
 
 /*
@@ -329,5 +368,73 @@ mod tests {
 
         assert_eq!(id_counter, 103); // Counter should be next available ID
         assert_eq!(path_to_id_map.len(), 3);
+    }
+
+    #[test]
+    fn test_build_tree_item_descriptors_filtered() {
+        let mut dir = FileNode::new_full(
+            PathBuf::from("/dir1"),
+            "dir1".into(),
+            true,
+            SelectionState::New,
+            vec![
+                FileNode::new_full(
+                    PathBuf::from("/dir1/match.txt"),
+                    "match.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    vec![],
+                    "".to_string(),
+                ),
+                FileNode::new_full(
+                    PathBuf::from("/dir1/other.txt"),
+                    "other.txt".into(),
+                    false,
+                    SelectionState::Deselected,
+                    vec![],
+                    "".to_string(),
+                ),
+            ],
+            "".to_string(),
+        );
+        let nodes = vec![
+            FileNode::new_full(
+                PathBuf::from("/root.txt"),
+                "root.txt".into(),
+                false,
+                SelectionState::Deselected,
+                vec![],
+                "".to_string(),
+            ),
+            dir,
+        ];
+
+        let mut path_to_id_map = HashMap::new();
+        let mut id_counter = 1;
+
+        let descriptors = FileNode::build_tree_item_descriptors_filtered(
+            &nodes,
+            "match.txt",
+            &mut path_to_id_map,
+            &mut id_counter,
+        );
+
+        assert_eq!(descriptors.len(), 1); // Only dir1 should be top level
+        assert_eq!(descriptors[0].text, "dir1");
+        assert_eq!(descriptors[0].children.len(), 1);
+        assert_eq!(descriptors[0].children[0].text, "match.txt");
+        assert_eq!(path_to_id_map.len(), 2);
+
+        // Case-insensitive check
+        let mut map2 = HashMap::new();
+        let mut counter2 = 1;
+        let descriptors_ci = FileNode::build_tree_item_descriptors_filtered(
+            &nodes,
+            "MATCH.TXT",
+            &mut map2,
+            &mut counter2,
+        );
+        assert_eq!(descriptors_ci.len(), 1);
+        assert_eq!(descriptors_ci[0].children.len(), 1);
     }
 }
