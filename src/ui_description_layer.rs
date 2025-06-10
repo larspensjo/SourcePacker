@@ -80,7 +80,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     commands.push(PlatformCommand::CreatePanel {
         window_id,
         parent_control_id: None, // Child of the main window's client area
-        panel_id: ui_constants::FILTER_PANEL_ID,
+        control_id: ui_constants::FILTER_PANEL_ID,
     });
 
     // 2.a Create Filter Input field within the Filter Panel
@@ -108,28 +108,28 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     commands.push(PlatformCommand::CreatePanel {
         window_id,
         parent_control_id: None, // Child of the main window's client area
-        panel_id: ui_constants::STATUS_BAR_PANEL_ID,
+        control_id: ui_constants::STATUS_BAR_PANEL_ID,
     });
 
     // Create Labels within the Status Bar Panel
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
-        label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+        control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
         initial_text: "Status: Initial".to_string(),
         class: LabelClass::StatusBar,
     });
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
-        label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+        control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
         initial_text: "Archive: Initial".to_string(),
         class: LabelClass::StatusBar,
     });
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
-        label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+        control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
         initial_text: "Tokens: Initial".to_string(),
         class: LabelClass::StatusBar,
     });

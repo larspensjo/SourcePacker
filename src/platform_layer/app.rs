@@ -244,14 +244,14 @@ impl Win32ApiInternalState {
             PlatformCommand::CreatePanel {
                 window_id,
                 parent_control_id,
-                panel_id,
+                control_id: panel_id,
             } => {
                 command_executor::execute_create_panel(self, window_id, parent_control_id, panel_id)
             }
             PlatformCommand::CreateLabel {
                 window_id,
                 parent_panel_id,
-                label_id,
+                control_id: label_id,
                 initial_text,
                 class,
             } => super::controls::label_handler::handle_create_label_command(
@@ -264,7 +264,7 @@ impl Win32ApiInternalState {
             ),
             PlatformCommand::UpdateLabelText {
                 window_id,
-                label_id,
+                control_id: label_id,
                 text,
                 severity,
             } => super::controls::label_handler::handle_update_label_text_command(
@@ -277,6 +277,11 @@ impl Win32ApiInternalState {
             } => treeview_handler::handle_redraw_tree_item_command(
                 self, window_id, control_id, item_id,
             ),
+            PlatformCommand::CreateInput { .. } => {
+                // TODO: Implement CreateInput command handling
+                log::warn!("Platform: CreateInput command not implemented yet.");
+                Ok(())
+            }
         }
     }
 }

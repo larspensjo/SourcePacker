@@ -40,7 +40,7 @@ macro_rules! status_message {
             $self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
-                    label_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+                    control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
                     text: text,
                     severity: $severity,
                 });
@@ -288,7 +288,7 @@ impl MyAppLogic {
             self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: main_window_id,
-                    label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                    control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
                     text: archive_label_text,
                     severity: MessageSeverity::Information,
                 });
@@ -318,7 +318,7 @@ impl MyAppLogic {
         self.synchronous_command_queue
             .push_back(PlatformCommand::UpdateLabelText {
                 window_id: main_window_id,
-                label_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+                control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
                 text: archive_label_text,
                 severity: severity_for_archive_msg,
             });
@@ -351,7 +351,7 @@ impl MyAppLogic {
             self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
-                    label_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+                    control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
                     text: format!("Tokens: {}", token_count),
                     severity: MessageSeverity::Information,
                 });

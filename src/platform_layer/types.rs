@@ -315,12 +315,12 @@ pub enum PlatformCommand {
     CreatePanel {
         window_id: WindowId,
         parent_control_id: Option<i32>, // None means child of main window's client area
-        panel_id: i32,                  // Logical ID for this new panel
+        control_id: i32,                // Logical ID for this new panel
     },
     CreateLabel {
         window_id: WindowId,
         parent_panel_id: i32,
-        label_id: i32,
+        control_id: i32,
         initial_text: String,
         class: LabelClass, // Classify labels for potential specific styling
     },
@@ -332,7 +332,7 @@ pub enum PlatformCommand {
     },
     UpdateLabelText {
         window_id: WindowId,
-        label_id: i32,
+        control_id: i32,
         text: String,
         severity: MessageSeverity,
     },
