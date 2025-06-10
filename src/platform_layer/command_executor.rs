@@ -91,17 +91,10 @@ pub(crate) fn execute_define_layout(
  * Posts a `WM_QUIT` message to the application's message queue, which will
  * eventually cause the main event loop in `PlatformInterface::run` to terminate.
  */
-pub(crate) fn execute_quit_application(
-    _internal_state: &Arc<Win32ApiInternalState>,
-) -> PlatformResult<()> {
+pub(crate) fn execute_quit_application() -> PlatformResult<()> {
     log::debug!(
         "CommandExecutor: execute_quit_application. Setting quit flag and Posting WM_QUIT."
     );
-    // Set an atomic flag indicating that a quit has been requested.
-    // This helps the message loop make a final decision if GetMessageW itself errors out
-    // but there are no windows left and a quit was intended.
-    // TODO: private, and it doesn't seem to be used anway?
-    // internal_state.is_quitting.store(1, Ordering::Relaxed);
     unsafe { PostQuitMessage(0) };
     Ok(())
 }
@@ -192,8 +185,8 @@ pub(crate) fn execute_create_main_menu(
             ))
         })?;
 
-        hwnd_owner_opt = Some(window_data.hwnd);
-        if window_data.hwnd.is_invalid() {
+        hwnd_owner_opt = Some(window_data.this_window_hwnd);
+        if window_data.this_window_hwnd.is_invalid() {
             unsafe {
                 DestroyMenu(h_main_menu).unwrap_or_default();
             }
@@ -283,7 +276,7 @@ pub(crate) unsafe fn add_menu_item_recursive_impl(
                 "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
                 action,
                 generated_id,
-                window_data.id
+                window_data.logical_window_id
             );
             unsafe {
                 AppendMenuW(
@@ -412,7 +405,7 @@ pub(crate) fn execute_create_button(
         ))
     })?;
 
-    if window_data.controls.contains_key(&control_id) {
+    if window_data.control_hwnd_map.contains_key(&control_id) {
         log::warn!(
             "CommandExecutor: Button with ID {} already exists for window {:?}.",
             control_id,
@@ -424,7 +417,7 @@ pub(crate) fn execute_create_button(
         )));
     }
 
-    if window_data.hwnd.is_invalid() {
+    if window_data.this_window_hwnd.is_invalid() {
         log::error!(
             "CommandExecutor: Parent HWND for CreateButton is invalid (WinID: {:?})",
             window_id
@@ -445,13 +438,13 @@ pub(crate) fn execute_create_button(
             0,
             10,
             10, // Dummies, WM_SIZE/LayoutRules will adjust
-            Some(window_data.hwnd),
+            Some(window_data.this_window_hwnd),
             Some(HMENU(control_id as *mut _)), // Use logical ID for HMENU
             Some(internal_state.h_instance),
             None,
         )?
     };
-    window_data.controls.insert(control_id, hwnd_button);
+    window_data.control_hwnd_map.insert(control_id, hwnd_button);
     log::debug!(
         "CommandExecutor: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
         text,
@@ -569,7 +562,7 @@ pub(crate) fn execute_create_panel(
         ))
     })?;
 
-    if window_data.controls.contains_key(&panel_id) {
+    if window_data.control_hwnd_map.contains_key(&panel_id) {
         log::warn!(
             "CommandExecutor: Panel with logical ID {} already exists for window {:?}.",
             panel_id,
@@ -589,7 +582,7 @@ pub(crate) fn execute_create_panel(
                 id, window_id
             ))
         })?,
-        None => window_data.hwnd, // Parent is the main window
+        None => window_data.this_window_hwnd, // Parent is the main window
     };
 
     if hwnd_parent.is_invalid() {
@@ -620,7 +613,7 @@ pub(crate) fn execute_create_panel(
             None,
         )?
     };
-    window_data.controls.insert(panel_id, hwnd_panel);
+    window_data.control_hwnd_map.insert(panel_id, hwnd_panel);
     log::debug!(
         "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
         panel_id,

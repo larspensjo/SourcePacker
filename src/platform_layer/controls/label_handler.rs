@@ -83,7 +83,7 @@ pub(crate) fn handle_create_label_command(
         ))
     })?;
 
-    if window_data.controls.contains_key(&label_id) {
+    if window_data.control_hwnd_map.contains_key(&label_id) {
         log::warn!(
             "LabelHandler: Label with logical ID {} already exists for window {:?}.",
             label_id,
@@ -147,7 +147,7 @@ pub(crate) fn handle_create_label_command(
         }
     }
 
-    window_data.controls.insert(label_id, hwnd_label);
+    window_data.control_hwnd_map.insert(label_id, hwnd_label);
     window_data
         .label_severities
         .insert(label_id, MessageSeverity::Information); // Default to Information

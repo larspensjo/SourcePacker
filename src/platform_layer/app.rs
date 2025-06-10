@@ -29,6 +29,7 @@ use std::sync::{
  * the application's lifecycle and UI elements. It is managed by `PlatformInterface`
  * and accessed by the `WndProc` and command handlers.
  * It is passed as user data to some functions.
+ * TOOD: I think all member should be made private here. Instead, accessor functions should be provided.
  */
 pub(crate) struct Win32ApiInternalState {
     pub(crate) h_instance: HINSTANCE,
@@ -38,7 +39,6 @@ pub(crate) struct Win32ApiInternalState {
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
     pub(crate) app_name_for_class: String,
-    // TODO: This isn't used?
     is_quitting: AtomicUsize, // 0 = false, 1 = true
 }
 
@@ -215,7 +215,13 @@ impl Win32ApiInternalState {
             } => {
                 command_executor::execute_set_control_enabled(self, window_id, control_id, enabled)
             }
-            PlatformCommand::QuitApplication => command_executor::execute_quit_application(self),
+            PlatformCommand::QuitApplication => {
+                // Set an atomic flag indicating that a quit has been requested.
+                // This helps the message loop make a final decision if GetMessageW itself errors out
+                // but there are no windows left and a quit was intended.
+                self.is_quitting.store(1, Ordering::Relaxed);
+                command_executor::execute_quit_application()
+            }
             PlatformCommand::CreateMainMenu {
                 window_id,
                 menu_items,
@@ -314,10 +320,10 @@ impl PlatformInterface {
 
         // Create a preliminary NativeWindowData. It will be fully populated after HWND creation.
         let preliminary_native_data = window_common::NativeWindowData {
-            hwnd: window_common::HWND_INVALID, // HWND is not yet known
-            id: window_id,
+            this_window_hwnd: window_common::HWND_INVALID, // HWND is not yet known
+            logical_window_id: window_id,
             treeview_state: None, // TreeView specific state
-            controls: HashMap::new(),
+            control_hwnd_map: HashMap::new(),
             // status_bar_current_text: String::new(), // Removed as per previous phase
             // status_bar_current_severity: MessageSeverity::None, // Removed
             menu_action_map: HashMap::new(),
@@ -385,7 +391,7 @@ impl PlatformInterface {
         match self.internal_state.active_windows.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    window_data.hwnd = hwnd; // Set the actual HWND
+                    window_data.this_window_hwnd = hwnd; // Set the actual HWND
                     log::debug!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}.",
                         window_id,

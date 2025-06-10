@@ -71,16 +71,15 @@ const SUCCESS_CODE: LRESULT = LRESULT(0);
  * a counter for generating unique menu item IDs (`next_menu_item_id_counter`),
  * a list of layout rules (`layout_rules`) for positioning controls, and
  * severity information for new labels.
- * TODO: Change some names here so that the comments are not needed.
  */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
-    pub(crate) hwnd: HWND,
-    pub(crate) id: WindowId,
+    pub(crate) this_window_hwnd: HWND,
+    pub(crate) logical_window_id: WindowId,
     // The specific internal state for the TreeView control if one exists.
     pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
-    pub(crate) controls: HashMap<i32, HWND>,
+    pub(crate) control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     pub(crate) menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
@@ -94,7 +93,7 @@ pub(crate) struct NativeWindowData {
 
 impl NativeWindowData {
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
-        self.controls.get(&control_id).copied()
+        self.control_hwnd_map.get(&control_id).copied()
     }
 
     pub(crate) fn generate_menu_item_id(&mut self) -> i32 {
@@ -789,7 +788,7 @@ impl Win32ApiInternalState {
                 return;
             }
         };
-        if window_data.hwnd.is_invalid() {
+        if window_data.this_window_hwnd.is_invalid() {
             log::warn!("HWND invalid for layout: {:?}", window_id);
             return;
         }
@@ -805,7 +804,7 @@ impl Win32ApiInternalState {
             return;
         }
         let mut client_rect = RECT::default();
-        if unsafe { GetClientRect(window_data.hwnd, &mut client_rect) }.is_err() {
+        if unsafe { GetClientRect(window_data.this_window_hwnd, &mut client_rect) }.is_err() {
             log::error!("GetClientRect failed for layout: {:?}", unsafe {
                 GetLastError()
             });
@@ -821,7 +820,7 @@ impl Win32ApiInternalState {
             None,
             client_rect,
             rules,
-            &window_data.controls,
+            &window_data.control_hwnd_map,
         );
     }
 
@@ -1023,13 +1022,13 @@ pub(crate) fn set_window_title(
             window_id
         ))
     })?;
-    if window_data.hwnd.is_invalid() {
+    if window_data.this_window_hwnd.is_invalid() {
         return Err(PlatformError::InvalidHandle(format!(
             "HWND for WinID {:?} invalid in set_window_title",
             window_id
         )));
     }
-    unsafe { SetWindowTextW(window_data.hwnd, &HSTRING::from(title))? };
+    unsafe { SetWindowTextW(window_data.this_window_hwnd, &HSTRING::from(title))? };
     Ok(())
 }
 
@@ -1049,14 +1048,14 @@ pub(crate) fn show_window(
             window_id
         ))
     })?;
-    if window_data.hwnd.is_invalid() {
+    if window_data.this_window_hwnd.is_invalid() {
         return Err(PlatformError::InvalidHandle(format!(
             "HWND for WinID {:?} invalid in show_window",
             window_id
         )));
     }
     let cmd = if show { SW_SHOW } else { SW_HIDE };
-    unsafe { _ = ShowWindow(window_data.hwnd, cmd) };
+    unsafe { _ = ShowWindow(window_data.this_window_hwnd, cmd) };
     Ok(())
 }
 
@@ -1098,7 +1097,9 @@ pub(crate) fn destroy_native_window(
                 e
             ))
         })?;
-        hwnd_to_destroy = windows_read_guard.get(&window_id).map(|data| data.hwnd);
+        hwnd_to_destroy = windows_read_guard
+            .get(&window_id)
+            .map(|data| data.this_window_hwnd);
     }
 
     if let Some(hwnd) = hwnd_to_destroy {

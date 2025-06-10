@@ -199,7 +199,9 @@ pub(crate) fn handle_create_treeview_command(
             ))
         })?;
 
-        if window_data.controls.contains_key(&control_id) || window_data.treeview_state.is_some() {
+        if window_data.control_hwnd_map.contains_key(&control_id)
+            || window_data.treeview_state.is_some()
+        {
             log::warn!(
                 "TreeViewHandler: TreeView with ID {} or existing TreeView state already present for window {:?}.",
                 control_id,
@@ -210,7 +212,7 @@ pub(crate) fn handle_create_treeview_command(
                 control_id, window_id
             )));
         }
-        hwnd_parent_for_creation = window_data.hwnd;
+        hwnd_parent_for_creation = window_data.this_window_hwnd;
         h_instance_for_creation = internal_state.h_instance;
 
         if hwnd_parent_for_creation.is_invalid() {
@@ -273,7 +275,9 @@ pub(crate) fn handle_create_treeview_command(
         })?;
 
         // Check again in case the window was destroyed or control created by another thread
-        if window_data.controls.contains_key(&control_id) || window_data.treeview_state.is_some() {
+        if window_data.control_hwnd_map.contains_key(&control_id)
+            || window_data.treeview_state.is_some()
+        {
             log::warn!(
                 "TreeViewHandler: TreeView (ID {}) or state for window {:?} was created concurrently or window was altered. Destroying newly created one.",
                 control_id,
@@ -288,7 +292,7 @@ pub(crate) fn handle_create_treeview_command(
             )));
         }
 
-        window_data.controls.insert(control_id, hwnd_tv);
+        window_data.control_hwnd_map.insert(control_id, hwnd_tv);
         window_data.treeview_state = Some(TreeViewInternalState::new());
         log::debug!(
             "TreeViewHandler: Created TreeView (ID {}) for window {:?} with HWND {:?}",
