@@ -8,6 +8,11 @@ This project emphasizes modularity, with each module aimed at a specific respons
 
 SourcePacker's UI architecture is structured around the Model-View-Presenter (MVP) pattern. This pattern enhances testability, maintainability, and separates concerns effectively.
 
+Whenever new features or functionality is added to the UI system, they should preferably be added as addons.
+That is, don't expand the control mechanisms making them very big with lots of values that need to be
+configured. The basic function should be as simple as possible. Instead, use addon mechanisms that attaches
+functionality as a separate feature.
+
 ### 1. Model
 
 *   **Purpose:** Manages the application's data, core business logic, and rules. It is the source of truth for the application's state and is entirely UI-agnostic.

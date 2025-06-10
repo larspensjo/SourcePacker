@@ -6,6 +6,11 @@ This plan outlines the steps to refactor SourcePacker so that the main UI struct
 
 Whenever you want to change how your window looks like or population of controls, you should never need to change the platform_layer.
 
+Whenever new features or functionality is added to the UI system, they should preferably be added as addons.
+That is, don't expand the control mechanisms making them very big with lots of values that need to be
+configured. The basic function should be as simple as possible. Instead, use addon mechanisms that attaches
+functionality as a separate feature.
+
 ---
 
 ## Phase A: MVP Refinements, Platform Layer Restructuring, and Generic Layout
@@ -27,15 +32,18 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
 
 **Step A.II.2: Generic Control Creation (e.g., Static Text/Labels)**
     *   **(Mostly Completed)** `PlatformCommand::CreateLabel` and `PlatformCommand::CreatePanel` are used. Layout of labels *within* the status panel needs to be driven by their own generic `LayoutRule`s (addressed in A.II.1).
+        *   **Note for P4.1 (Quick Filter):** If a dedicated input text field control is needed (beyond what `CreateLabel` or a modified version can provide), a new `PlatformCommand::CreateInputField` (or similar) might be required. Its creation logic would follow the pattern of `CreateLabel`.
 
 **Step A.II.3: Generic Control Update Mechanism (e.g., UpdateLabelText)**
     *   **(Completed)** `PlatformCommand::UpdateLabelText` is used by `MyAppLogic` and `WM_CTLCOLORSTATIC` in `window_common.rs` correctly uses `label_severities`.
+        *   **Note for P4.1 (Quick Filter):** Updating filter input field text (e.g., on clear) could use `UpdateLabelText` if it's a simple static/edit control, or a more specific `UpdateInputText` command. Changing background color for visual cues might require a new `PlatformCommand::SetControlAppearance` if existing mechanisms are insufficient.
 
 **Step A.II.4: Ensure All Control Operations Are Generically Targetable (Strengthens Original A.II.4)**
     *   Completed
 
 **Step A.II.6: Create `controls` Sub-Module and Handler Skeletons (Renumbered from A.II.5)**
     *   Completed
+        *   **Note for P4.1 (Quick Filter):** If a new `InputField` control type is introduced, a corresponding `input_field_handler.rs` would be added to the `controls` sub-module.
 
 **Step A.II.7: Migrate Control-Specific Logic to Handlers (Iteratively) (Renumbered from A.II.6)**
     *   **For each control type (e.g., Label, TreeView, Menu, Button, Panel):**
@@ -55,6 +63,7 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
         3.  Menu (`menu_handler.rs`)
         4.  Panel (`panel_handler.rs`)
         5.  Button (`button_handler.rs`) (if any generic buttons are added later)
+        6.  **(If new for P4.1)** InputField (`input_field_handler.rs`)
 
 ---
 
@@ -68,4 +77,3 @@ The `ui_description_layer` must fully define the UI structure and layout via `Pl
 **Step A.III.2: Future Exploration: Advanced Layout and Deeper Decomposition (Original A.III.2, formerly A.6)**
     *   **(Future)** This remains a longer-term goal. Consider advanced layout managers (e.g., grid, stack panels) as generic offerings within `platform_layer`, configurable by `ui_description_layer` via `PlatformCommand`s.
     *   **(Future)** Evaluate if `NativeWindowData` itself can be made more generic or if control-specific state can be fully encapsulated within their respective handlers (e.g., `TreeViewInternalState` map mentioned in A.II.4).
-
