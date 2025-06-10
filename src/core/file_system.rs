@@ -163,7 +163,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                 checksum_str = String::new();
             }
 
-            let mut node = FileNode::new(path.clone(), name, is_dir, checksum_str);
+            let node = FileNode::new(path.clone(), name, is_dir, checksum_str);
 
             nodes_map.insert(path.clone(), node);
             entry_paths_in_discovery_order.push(path);

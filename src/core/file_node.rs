@@ -3,6 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 
+use crate::app_logic::handler::PathToTreeItemIdMap;
+use crate::platform_layer::{CheckState, TreeItemDescriptor, TreeItemId};
 /*
  * Represents the selection state of a file or folder.
  * Derives Serialize and Deserialize for potential future use if this enum is directly part of a complex state
@@ -53,10 +55,31 @@ impl FileNode {
         }
     }
 
+    pub fn is_selected(&self) -> bool {
+        self.state == SelectionState::Selected
+    }
+
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
         FileTokenDetails {
             checksum: self.checksum.clone(),
             token_count: token_count,
+        }
+    }
+
+    fn new_tree_item_descriptor(
+        &self,
+        id: TreeItemId,
+        children: Vec<TreeItemDescriptor>,
+    ) -> TreeItemDescriptor {
+        TreeItemDescriptor {
+            id: id,
+            is_folder: self.is_dir,
+            children: children,
+            text: self.name.clone(),
+            state: match self.is_selected() {
+                true => CheckState::Checked,
+                false => CheckState::Unchecked,
+            },
         }
     }
 
@@ -98,6 +121,30 @@ impl FileNode {
             children,
             checksum,
         }
+    }
+
+    pub fn build_tree_item_descriptors_recursive(
+        nodes: &[FileNode],
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
+    ) -> Vec<TreeItemDescriptor> {
+        let mut descriptors = Vec::new();
+        for node in nodes {
+            let id_val = *next_tree_item_id_counter;
+            *next_tree_item_id_counter += 1;
+            let item_id = TreeItemId(id_val);
+
+            path_to_tree_item_id.insert(node.path.clone(), item_id);
+
+            let children = Self::build_tree_item_descriptors_recursive(
+                &node.children,
+                path_to_tree_item_id,
+                next_tree_item_id_counter,
+            );
+            let descriptor = node.new_tree_item_descriptor(item_id, children);
+            descriptors.push(descriptor);
+        }
+        descriptors
     }
 }
 
@@ -170,6 +217,8 @@ pub enum ArchiveStatus {
 #[cfg(test)]
 mod tests {
     use super::{FileNode, FileTokenDetails, Profile, SelectionState};
+    use crate::platform_layer::{CheckState, TreeItemId};
+    use std::collections::HashMap;
     use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
 
     #[test]
@@ -212,5 +261,73 @@ mod tests {
         assert!(serialized.contains("cs1"));
         let deserialized: Profile = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.file_details.len(), 1);
+    }
+
+    #[test]
+    fn test_build_tree_item_descriptors_recursive_internal() {
+        let nodes = vec![
+            FileNode::new_full(
+                PathBuf::from("/file1.txt"),
+                "file1.txt".into(),
+                false,
+                SelectionState::Selected,
+                vec![],
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                PathBuf::from("/dir1"),
+                "dir1".into(),
+                true,
+                SelectionState::New,
+                vec![FileNode::new_full(
+                    PathBuf::from("/dir1/file2.txt"),
+                    "file2.txt".into(),
+                    false,
+                    SelectionState::Deselected,
+                    vec![],
+                    "".to_string(),
+                )],
+                "".to_string(),
+            ),
+        ];
+        let mut path_to_id_map = HashMap::new();
+        let mut id_counter = 100; // Start from a non-zero value to make it distinct
+
+        let descriptors = FileNode::build_tree_item_descriptors_recursive(
+            &nodes,
+            &mut path_to_id_map,
+            &mut id_counter,
+        );
+
+        assert_eq!(descriptors.len(), 2);
+        // File 1
+        assert_eq!(descriptors[0].text, "file1.txt");
+        assert_eq!(descriptors[0].id, TreeItemId(100));
+        assert_eq!(descriptors[0].state, CheckState::Checked);
+        assert_eq!(
+            path_to_id_map.get(&PathBuf::from("/file1.txt")),
+            Some(&TreeItemId(100))
+        );
+        // Dir 1
+        assert_eq!(descriptors[1].text, "dir1");
+        assert_eq!(descriptors[1].id, TreeItemId(101));
+        assert_eq!(descriptors[1].is_folder, true);
+        assert_eq!(descriptors[1].state, CheckState::Unchecked); // New/Deselected map to Unchecked
+        assert_eq!(
+            path_to_id_map.get(&PathBuf::from("/dir1")),
+            Some(&TreeItemId(101))
+        );
+        // File 2 (in Dir1)
+        assert_eq!(descriptors[1].children.len(), 1);
+        assert_eq!(descriptors[1].children[0].text, "file2.txt");
+        assert_eq!(descriptors[1].children[0].id, TreeItemId(102));
+        assert_eq!(descriptors[1].children[0].state, CheckState::Unchecked);
+        assert_eq!(
+            path_to_id_map.get(&PathBuf::from("/dir1/file2.txt")),
+            Some(&TreeItemId(102))
+        );
+
+        assert_eq!(id_counter, 103); // Counter should be next available ID
+        assert_eq!(path_to_id_map.len(), 3);
     }
 }

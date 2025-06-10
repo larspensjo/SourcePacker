@@ -104,39 +104,6 @@ impl MyAppLogic {
         }
     }
 
-    fn build_tree_item_descriptors_recursive_internal(
-        nodes: &[FileNode],
-        path_to_tree_item_id: &mut PathToTreeItemIdMap,
-        next_tree_item_id_counter: &mut u64,
-    ) -> Vec<TreeItemDescriptor> {
-        // TODO: Phase 3: This method could be moved to MainWindowUiState?
-        let mut descriptors = Vec::new();
-        for node in nodes {
-            let id_val = *next_tree_item_id_counter;
-            *next_tree_item_id_counter += 1;
-            let item_id = TreeItemId(id_val);
-
-            path_to_tree_item_id.insert(node.path.clone(), item_id);
-
-            let descriptor = TreeItemDescriptor {
-                id: item_id,
-                text: node.name.clone(),
-                is_folder: node.is_dir,
-                state: match node.state {
-                    SelectionState::Selected => CheckState::Checked,
-                    _ => CheckState::Unchecked,
-                },
-                children: Self::build_tree_item_descriptors_recursive_internal(
-                    &node.children,
-                    path_to_tree_item_id,
-                    next_tree_item_id_counter,
-                ),
-            };
-            descriptors.push(descriptor);
-        }
-        descriptors
-    }
-
     /*
      * Handles the completion of the initial static UI setup for the main window.
      * It instantiates `MainWindowUiState`, then attempts to load the last used profile.
@@ -227,7 +194,7 @@ impl MyAppLogic {
             .get_snapshot_nodes()
             .to_vec();
 
-        let descriptors = Self::build_tree_item_descriptors_recursive_internal(
+        let descriptors = FileNode::build_tree_item_descriptors_recursive(
             &snapshot_nodes,
             &mut ui_state.path_to_tree_item_id,
             &mut ui_state.next_tree_item_id_counter,
@@ -1088,7 +1055,7 @@ impl MyAppLogic {
                 .get_snapshot_nodes()
                 .to_vec();
 
-            let descriptors = Self::build_tree_item_descriptors_recursive_internal(
+            let descriptors = FileNode::build_tree_item_descriptors_recursive(
                 &snapshot_nodes_clone,
                 &mut ui_state_mut.path_to_tree_item_id,
                 &mut ui_state_mut.next_tree_item_id_counter,
@@ -1876,19 +1843,6 @@ impl MyAppLogic {
     // Accessor for make_profile_name
     pub(crate) fn test_make_profile_name(path: Option<PathBuf>) -> Result<String, String> {
         Self::make_profile_name(path)
-    }
-
-    // Accessor for build_tree_item_descriptors_recursive_internal
-    pub(crate) fn test_build_tree_item_descriptors_recursive_internal(
-        nodes: &[FileNode],
-        path_to_tree_item_id: &mut PathToTreeItemIdMap,
-        next_tree_item_id_counter: &mut u64,
-    ) -> Vec<TreeItemDescriptor> {
-        Self::build_tree_item_descriptors_recursive_internal(
-            nodes,
-            path_to_tree_item_id,
-            next_tree_item_id_counter,
-        )
     }
 
     pub(crate) fn test_get_path_to_tree_item_id(&self) -> Option<&PathToTreeItemIdMap> {

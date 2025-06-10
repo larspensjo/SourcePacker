@@ -1,4 +1,4 @@
-use super::file_node::{ArchiveStatus, FileNode, SelectionState};
+use super::file_node::{ArchiveStatus, FileNode};
 use std::fs;
 use std::io;
 use std::path::Path;
@@ -102,7 +102,7 @@ impl ArchiverOperations for CoreArchiver {
                 for child in node.children.iter().rev() {
                     buffer.push(child);
                 }
-            } else if node.state == SelectionState::Selected {
+            } else if node.is_selected() {
                 let display_path = node
                     .path
                     .strip_prefix(root_path_for_display)
@@ -184,7 +184,7 @@ impl ArchiverOperations for CoreArchiver {
                         current_newest,
                         has_any_selected,
                     )?;
-                } else if node.state == SelectionState::Selected {
+                } else if node.is_selected() {
                     *has_any_selected = true;
                     let file_ts = archiver.get_file_timestamp(&node.path)?;
                     if let Some(newest) = current_newest {
