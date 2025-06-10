@@ -118,7 +118,7 @@ impl ProfileRuntimeData {
         cache: &mut HashMap<PathBuf, FileTokenDetails>,
     ) -> Option<usize> {
         if let Some(details) = cache.get(&node.path) {
-            if node.checksum == details.checksum {
+            if node.checksum_match(Some(details)) {
                 return Some(details.token_count);
             }
         }
@@ -136,10 +136,7 @@ impl ProfileRuntimeData {
 
         cache.insert(
             node.path.clone(),
-            FileTokenDetails {
-                checksum: node.checksum.clone(),
-                token_count: tokens_in_file,
-            },
+            node.new_file_token_details(tokens_in_file),
         );
 
         Some(tokens_in_file)
@@ -834,22 +831,22 @@ mod tests {
             root_path_for_scan: temp_dir.path().join("new_root"),
             archive_path: Some(temp_dir.path().join("old_archive.zip")),
             file_system_snapshot_nodes: vec![
-                FileNode {
-                    path: file1_path.clone(),
-                    name: "file1.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Selected,
-                    children: Vec::new(),
-                    checksum: "cs1".to_string(),
-                },
-                FileNode {
-                    path: file2_path.clone(),
-                    name: "file2.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Deselected,
-                    children: Vec::new(),
-                    checksum: "cs2".to_string(),
-                },
+                FileNode::new_full(
+                    file1_path.clone(),
+                    "file1.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    Vec::new(),
+                    "cs1".to_string(),
+                ),
+                FileNode::new_full(
+                    file2_path.clone(),
+                    "file2.txt".into(),
+                    false,
+                    SelectionState::Deselected,
+                    Vec::new(),
+                    "cs2".to_string(),
+                ),
             ],
             cached_token_count: 0, // Not directly used by create_profile_snapshot itself
             cached_file_token_details: HashMap::new(),
@@ -923,22 +920,22 @@ mod tests {
             archive_path: None,
             cached_file_token_details: file_details_cache_for_session,
             file_system_snapshot_nodes: vec![
-                FileNode {
-                    path: file1_path.clone(),
-                    name: "f1.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Selected,
-                    children: Vec::new(),
-                    checksum: cs1.clone(),
-                },
-                FileNode {
-                    path: file2_path.clone(),
-                    name: "f2.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Selected,
-                    children: Vec::new(),
-                    checksum: cs2.clone(),
-                },
+                FileNode::new_full(
+                    file1_path.clone(),
+                    "f1.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    Vec::new(),
+                    cs1.clone(),
+                ),
+                FileNode::new_full(
+                    file2_path.clone(),
+                    "f2.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    Vec::new(),
+                    cs2.clone(),
+                ),
             ],
             cached_token_count: 0,
         };
@@ -1007,22 +1004,22 @@ mod tests {
         loaded_profile.selected_paths.insert(file2_path.clone());
 
         let nodes_from_scanner = vec![
-            FileNode {
-                path: file1_path.clone(),
-                name: "f1.txt".into(),
-                is_dir: false,
-                state: SelectionState::New, // Will be updated by apply_selection_states_to_nodes
-                children: Vec::new(),
-                checksum: file1_checksum_disk.clone(),
-            },
-            FileNode {
-                path: file2_path.clone(),
-                name: "f2.txt".into(),
-                is_dir: false,
-                state: SelectionState::New, // Will be updated
-                children: Vec::new(),
-                checksum: file2_checksum_disk.clone(), // New checksum on disk
-            },
+            FileNode::new_full(
+                file1_path.clone(),
+                "f1.txt".into(),
+                false,
+                SelectionState::New, // Will be updated by apply_selection_states_to_nodes
+                Vec::new(),
+                file1_checksum_disk.clone(),
+            ),
+            FileNode::new_full(
+                file2_path.clone(),
+                "f2.txt".into(),
+                false,
+                SelectionState::New, // Will be updated
+                Vec::new(),
+                file2_checksum_disk.clone(), // New checksum on disk
+            ),
         ];
         mock_scanner.set_scan_directory_result(&root_folder, Ok(nodes_from_scanner.clone()));
         mock_token_counter.clear_call_log();
@@ -1080,29 +1077,29 @@ mod tests {
         let file2_path = dir1_path.join("file2.txt");
 
         session_data.file_system_snapshot_nodes = vec![
-            FileNode {
-                path: file1_path.clone(),
-                name: "file1.txt".into(),
-                is_dir: false,
-                state: SelectionState::New,
-                children: vec![],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                path: dir1_path.clone(),
-                name: "dir1".into(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![FileNode {
-                    path: file2_path.clone(),
-                    name: "file2.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::New,
-                    children: vec![],
-                    checksum: "".to_string(),
-                }],
-                checksum: "".to_string(),
-            },
+            FileNode::new_full(
+                file1_path.clone(),
+                "file1.txt".into(),
+                false,
+                SelectionState::New,
+                Vec::new(),
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                dir1_path.clone(),
+                "dir1".into(),
+                true,
+                SelectionState::New,
+                vec![FileNode::new_full(
+                    file2_path.clone(),
+                    "file2.txt".into(),
+                    false,
+                    SelectionState::New,
+                    Vec::new(),
+                    "".to_string(),
+                )],
+                "".to_string(),
+            ),
         ];
 
         // Act: Select dir1 and its children
@@ -1178,14 +1175,14 @@ mod tests {
             root_path_for_scan: temp_dir.path().to_path_buf(),
             archive_path: None,
             cached_file_token_details: HashMap::new(), // Empty cache -> miss
-            file_system_snapshot_nodes: vec![FileNode {
-                path: file_path.clone(),
-                name: "f_cache_test.txt".into(),
-                is_dir: false,
-                state: SelectionState::Selected,
-                children: Vec::new(),
-                checksum: checksum_v2.clone(), // Current checksum on disk
-            }],
+            file_system_snapshot_nodes: vec![FileNode::new_full(
+                file_path.clone(),
+                "f_cache_test.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                checksum_v2.clone(), // Current checksum on disk
+            )],
             cached_token_count: 0,
         };
         mock_token_counter.clear_call_log();
@@ -1238,14 +1235,14 @@ mod tests {
             root_path_for_scan: temp_dir.path().to_path_buf(),
             archive_path: None,
             cached_file_token_details: initial_stale_cache, // Cache has stale entry
-            file_system_snapshot_nodes: vec![FileNode {
-                path: file_path.clone(),
-                name: "f_cache_test.txt".into(),
-                is_dir: false,
-                state: SelectionState::Selected,
-                children: Vec::new(),
-                checksum: checksum_v2.clone(), // Current checksum on disk is v2
-            }],
+            file_system_snapshot_nodes: vec![FileNode::new_full(
+                file_path.clone(),
+                "f_cache_test.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                checksum_v2.clone(), // Current checksum on disk is v2
+            )],
             cached_token_count: 0,
         };
         mock_token_counter.clear_call_log();
@@ -1303,100 +1300,89 @@ mod tests {
 
         let mut data = ProfileRuntimeData::new();
         data.file_system_snapshot_nodes = vec![
-            FileNode {
-                // /root/file1_new.txt
-                path: file1_new_path.clone(),
-                name: "file1_new.txt".into(),
-                is_dir: false,
-                state: SelectionState::New,
-                children: vec![],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                // /root/file2_selected.txt
-                path: file2_selected_path.clone(),
-                name: "file2_selected.txt".into(),
-                is_dir: false,
-                state: SelectionState::Selected,
-                children: vec![],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                // /root/dir1
-                path: dir1_path.clone(),
-                name: "dir1".into(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![FileNode {
-                    // /root/dir1/file3_new.txt
-                    path: file3_in_dir1_new_path.clone(),
-                    name: "file3_new.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::New,
-                    children: vec![],
-                    checksum: "".to_string(),
-                }],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                // /root/dir2
-                path: dir2_path.clone(),
-                name: "dir2".into(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![FileNode {
-                    // /root/dir2/file4_selected.txt
-                    path: file4_in_dir2_selected_path.clone(),
-                    name: "file4_selected.txt".into(),
-                    is_dir: false,
-                    state: SelectionState::Selected,
-                    children: vec![],
-                    checksum: "".to_string(),
-                }],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                // /root/dir3_empty
-                path: dir3_empty_path.clone(),
-                name: "dir3_empty".into(),
-                is_dir: true,
-                state: SelectionState::New,
-                children: vec![],
-                checksum: "".to_string(),
-            },
-            FileNode {
-                // /root/dir4_deep_new
-                path: dir4_deep_new_path.clone(),
-                name: "dir4_deep_new".into(),
-                is_dir: true,
-                state: SelectionState::Selected,
-                children: vec![FileNode {
-                    // /root/dir4_deep_new/subdir1
-                    path: dir4_1_path.clone(),
-                    name: "subdir1".into(),
-                    is_dir: true,
-                    state: SelectionState::Selected,
-                    children: vec![FileNode {
-                        // /root/dir4_deep_new/subdir1/subdir2
-                        path: dir4_2_path.clone(),
-                        name: "subdir2".into(),
-                        is_dir: true,
-                        state: SelectionState::New,
-                        children: vec![FileNode {
-                            // /root/dir4_deep_new/subdir1/subdir2/file5_deep_new.txt
-                            path: file5_deep_new_path.clone(),
-                            name: "file5_deep_new.txt".into(),
-                            is_dir: false,
-                            state: SelectionState::New,
-                            children: vec![],
-                            checksum: "".to_string(),
-                        }],
-                        checksum: "".to_string(),
-                    }],
-                    checksum: "".to_string(),
-                }],
-                checksum: "".to_string(),
-            },
+            FileNode::new_full(
+                file1_new_path.clone(),
+                "file1_new.txt".into(),
+                false,
+                SelectionState::New,
+                Vec::new(),
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                file2_selected_path.clone(),
+                "file2_selected.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                dir1_path.clone(),
+                "dir1".into(),
+                true,
+                SelectionState::New,
+                vec![FileNode::new_full(
+                    file3_in_dir1_new_path.clone(),
+                    "file3_new.txt".into(),
+                    false,
+                    SelectionState::New,
+                    Vec::new(),
+                    "".to_string(),
+                )],
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                dir2_path.clone(),
+                "dir2".into(),
+                true,
+                SelectionState::New,
+                vec![FileNode::new_full(
+                    file4_in_dir2_selected_path.clone(),
+                    "file4_selected.txt".into(),
+                    false,
+                    SelectionState::Selected,
+                    Vec::new(),
+                    "".to_string(),
+                )],
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                dir3_empty_path.clone(),
+                "dir3_empty".into(),
+                true,
+                SelectionState::New,
+                Vec::new(),
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                dir4_deep_new_path.clone(),
+                "dir4_deep_new".into(),
+                true,
+                SelectionState::Selected,
+                vec![FileNode::new_full(
+                    dir4_1_path.clone(),
+                    "subdir1".into(),
+                    true,
+                    SelectionState::Selected,
+                    vec![FileNode::new_full(
+                        dir4_2_path.clone(),
+                        "subdir2".into(),
+                        true,
+                        SelectionState::New,
+                        vec![FileNode::new_full(
+                            file5_deep_new_path.clone(),
+                            "file5_deep_new.txt".into(),
+                            false,
+                            SelectionState::New,
+                            Vec::new(),
+                            "".to_string(),
+                        )],
+                        "".to_string(),
+                    )],
+                    "".to_string(),
+                )],
+                "".to_string(),
+            ),
         ];
 
         // Act & Assert

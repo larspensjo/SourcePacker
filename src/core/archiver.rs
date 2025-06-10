@@ -267,14 +267,14 @@ mod archiver_tests {
         state: SelectionState,
         children: Vec<FileNode>,
     ) -> FileNode {
-        FileNode {
-            path: base_path.join(name),
-            name: name.to_string(),
+        FileNode::new_full(
+            base_path.join(name),
+            name.to_string(),
             is_dir,
             state,
             children,
-            checksum: "".to_string(),
-        }
+            "".to_string(),
+        )
     }
 
     // Test helper for ArchiverOperations using CoreArchiver

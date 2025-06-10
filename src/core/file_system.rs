@@ -231,6 +231,8 @@ fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
 
 #[cfg(test)]
 mod tests {
+    use crate::core::file_node::FileTokenDetails;
+
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
@@ -569,10 +571,11 @@ mod tests {
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
 
         let file1_node = nodes.iter().find(|n| n.path == file1_path).unwrap();
-        assert_eq!(
-            file1_node.checksum,
-            checksum_utils::calculate_sha256_checksum(&file1_path).unwrap()
-        );
+        let ftd = FileTokenDetails {
+            checksum: checksum_utils::calculate_sha256_checksum(&file1_path).unwrap(),
+            token_count: 0,
+        };
+        assert!(file1_node.checksum_match(Some(&ftd)));
 
         let file2_node = nodes.iter().find(|n| n.path == file2_path).unwrap();
 

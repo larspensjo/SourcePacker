@@ -33,7 +33,7 @@ pub struct FileNode {
     pub is_dir: bool,
     pub state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
-    pub checksum: String,        // Will be empty striong for directories and some unit tests.
+    checksum: String,            // Will be empty striong for directories and some unit tests.
 }
 
 impl FileNode {
@@ -50,6 +50,13 @@ impl FileNode {
             state: SelectionState::default(),
             children: Vec::new(),
             checksum: checksum,
+        }
+    }
+
+    pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
+        FileTokenDetails {
+            checksum: self.checksum.clone(),
+            token_count: token_count,
         }
     }
 
