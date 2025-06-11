@@ -13,21 +13,14 @@ use super::app::Win32ApiInternalState;
 use super::controls::treeview_handler; // Ensure treeview_handler is used for its functions
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
+use super::window_common::{GWLP_USERDATA, GWLP_WNDPROC};
 
 use crate::platform_layer::window_common::WC_BUTTON;
 use std::sync::Arc;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND},
-        UI::{
-            Controls::WC_EDITW,
-            Input::KeyboardAndMouse::EnableWindow,
-            WindowsAndMessaging::{
-                AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, ES_AUTOHSCROLL, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu,
-                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CHILD, WS_VISIBLE,
-            },
-        },
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        UI::{Controls::WC_EDITW, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*},
     },
     core::HSTRING,
 };
@@ -705,6 +698,33 @@ pub(crate) fn execute_close_window(
 }
 
 /*
+ * Custom window procedure for panel controls.
+ * It forwards WM_COMMAND messages to the panel's parent so that
+ * controls embedded within the panel generate events at the main
+ * window level.
+ */
+unsafe extern "system" fn forwarding_panel_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_COMMAND {
+        let parent = GetParent(hwnd);
+        if parent.0 != 0 {
+            SendMessageW(parent, WM_COMMAND, wparam, lparam);
+        }
+        return LRESULT(0);
+    }
+    let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    if prev != 0 {
+        let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
+        return CallWindowProcW(Some(prev_proc), hwnd, msg, wparam, lparam);
+    }
+    DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/*
  * Executes the `CreatePanel` command.
  * Creates a generic STATIC control to act as a panel. The panel can be a child
  * of the main window or another control (identified by `parent_control_id`).
@@ -793,6 +813,10 @@ pub(crate) fn execute_create_panel(
             None,
         )?
     };
+    unsafe {
+        let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
+        SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
+    }
     window_data.control_hwnd_map.insert(panel_id, hwnd_panel);
     log::debug!(
         "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
