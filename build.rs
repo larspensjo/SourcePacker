@@ -1,11 +1,24 @@
-fn main() {
-    // Tell Cargo to rerun this build script if app.rc or app.manifest changes.
-    println!("cargo:rerun-if-changed=app.rc");
-    println!("cargo:rerun-if-changed=app.manifest");
+use embed_resource::CompilationResult;
 
-    // Compile app.rc and link it.
-    // Pass an empty slice for options if no specific flags are needed.
-    let _ = embed_resource::compile("app.rc", &[] as &[&str]);
-    // Or, if embed_resource::NONE is indeed a valid constant for your version:
-    // embed_resource::compile("app.rc", embed_resource::NONE);
+fn main() {
+    // Check if the target OS is Windows
+    if std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default() == "windows" {
+        println!("cargo:rerun-if-changed=app.rc");
+        println!("cargo:rerun-if-changed=app.manifest");
+        let result = embed_resource::compile("app.rc", &[] as &[&str]);
+        match result {
+            CompilationResult::NotWindows => {
+                eprintln!("Windows only resource file found. Skipping...")
+            }
+            CompilationResult::Ok => {
+                println!("Resource file compiled successfully.")
+            }
+            CompilationResult::Failed(e) => {
+                eprintln!("Failed to compile resource file: {}", e);
+            }
+            CompilationResult::NotAttempted(e) => {
+                eprintln!("Failed to compile resource file: {}", e);
+            }
+        }
+    }
 }

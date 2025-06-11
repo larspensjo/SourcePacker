@@ -3,18 +3,24 @@
 
 mod app_logic;
 mod core;
+
+#[cfg(target_os = "windows")]
 mod platform_layer;
+
+#[cfg(target_os = "windows")]
 mod ui_description_layer;
 
-use app_logic::handler::MyAppLogic;
-use core::{
-    CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
-    CoreTikTokenCounter, NodeStateApplicator, ProfileRuntimeData, ProfileRuntimeDataOperations,
+#[cfg(target_os = "windows")]
+use {
+    app_logic::handler::MyAppLogic,
+    core::{
+        CoreArchiver, CoreConfigManagerForConfig, CoreFileSystemScanner, CoreProfileManager,
+        CoreTikTokenCounter, NodeStateApplicator, ProfileRuntimeData, ProfileRuntimeDataOperations,
+    },
+    platform_layer::{PlatformInterface, PlatformResult, WindowConfig},
+    simplelog::{ConfigBuilder, LevelFilter},
+    std::sync::{Arc, Mutex},
 };
-use platform_layer::{PlatformInterface, PlatformResult, WindowConfig};
-use std::sync::{Arc, Mutex};
-
-use simplelog::{ConfigBuilder, LevelFilter};
 
 #[cfg(not(test))]
 use time::macros::format_description;
@@ -41,6 +47,7 @@ use time::macros::format_description;
  *  - Start the platform's event loop (`PlatformInterface::run`), passing in the
  *    application logic as the event handler.
  */
+#[cfg(target_os = "windows")]
 fn main() -> PlatformResult<()> {
     let _log_level: LevelFilter = if std::env::var("LOG_TRACE").is_ok() {
         LevelFilter::Trace
@@ -135,6 +142,13 @@ fn main() -> PlatformResult<()> {
     }
 
     Ok(())
+}
+
+// This allows you to check that the non-UI code compiles, but it won't produce a runnable application.
+#[cfg(not(target_os = "windows"))]
+fn main() {
+    println!("This application is only available for Windows.");
+    println!("To run unit tests for the core logic, use 'cargo test'.");
 }
 
 #[cfg(not(test))]
