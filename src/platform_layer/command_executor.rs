@@ -20,12 +20,12 @@ use windows::{
     Win32::{
         Foundation::{GetLastError, HWND},
         UI::{
+            Controls::WC_EDITW,
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::{
                 AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu, SetWindowTextW,
-                WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_VISIBLE, WS_BORDER, ES_AUTOHSCROLL,
-                WC_EDITW,
+                DestroyMenu, ES_AUTOHSCROLL, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu,
+                SetWindowTextW, WINDOW_EX_STYLE, WINDOW_STYLE, WS_BORDER, WS_CHILD, WS_VISIBLE,
             },
         },
     },
@@ -540,7 +540,8 @@ pub(crate) fn execute_create_input(
 ) -> PlatformResult<()> {
     log::debug!(
         "CommandExecutor: execute_create_input for WinID {:?}, ControlID {}",
-        window_id, control_id
+        window_id,
+        control_id
     );
 
     let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
@@ -552,14 +553,21 @@ pub(crate) fn execute_create_input(
     })?;
 
     let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
-        log::warn!("CommandExecutor: WindowId {:?} not found for CreateInput", window_id);
-        PlatformError::InvalidHandle(format!("WindowId {:?} not found for CreateInput", window_id))
+        log::warn!(
+            "CommandExecutor: WindowId {:?} not found for CreateInput",
+            window_id
+        );
+        PlatformError::InvalidHandle(format!(
+            "WindowId {:?} not found for CreateInput",
+            window_id
+        ))
     })?;
 
     if window_data.control_hwnd_map.contains_key(&control_id) {
         log::warn!(
             "CommandExecutor: Input with logical ID {} already exists for window {:?}",
-            control_id, window_id
+            control_id,
+            window_id
         );
         return Err(PlatformError::OperationFailed(format!(
             "Input with logical ID {} already exists for window {:?}",
@@ -582,7 +590,10 @@ pub(crate) fn execute_create_input(
     };
 
     if hwnd_parent.is_invalid() {
-        log::error!("CommandExecutor: Parent HWND invalid for CreateInput (WinID {:?})", window_id);
+        log::error!(
+            "CommandExecutor: Parent HWND invalid for CreateInput (WinID {:?})",
+            window_id
+        );
         return Err(PlatformError::InvalidHandle(format!(
             "Parent HWND invalid for CreateInput (WinID {:?})",
             window_id
@@ -594,13 +605,13 @@ pub(crate) fn execute_create_input(
             WINDOW_EX_STYLE(0),
             WC_EDITW,
             &HSTRING::from(initial_text.as_str()),
-            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
             0,
             0,
             10,
             10,
             Some(hwnd_parent),
-            Some(HMENU(control_id as isize)),
+            Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
             Some(internal_state.h_instance),
             None,
         )?
@@ -609,7 +620,9 @@ pub(crate) fn execute_create_input(
     window_data.control_hwnd_map.insert(control_id, hwnd_edit);
     log::debug!(
         "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
-        control_id, window_id, hwnd_edit
+        control_id,
+        window_id,
+        hwnd_edit
     );
     Ok(())
 }
@@ -644,7 +657,8 @@ pub(crate) fn execute_set_input_text(
         window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
                 "CommandExecutor: Control ID {} not found for SetInputText in WinID {:?}",
-                control_id, window_id
+                control_id,
+                window_id
             );
             PlatformError::InvalidHandle(format!(
                 "Control ID {} not found for SetInputText in WinID {:?}",
@@ -657,7 +671,8 @@ pub(crate) fn execute_set_input_text(
         SetWindowTextW(hwnd_edit, &HSTRING::from(text.as_str())).map_err(|e| {
             log::error!(
                 "CommandExecutor: SetWindowTextW failed for input ID {}: {:?}",
-                control_id, e
+                control_id,
+                e
             );
             PlatformError::OperationFailed(format!("SetWindowText failed: {:?}", e))
         })?;

@@ -31,14 +31,8 @@ use windows::{
             PAINTSTRUCT, ReleaseDC,
         },
         System::WindowsProgramming::MulDiv,
-        UI::Controls::{NM_CLICK, NM_CUSTOMDRAW, NMHDR, TVN_ITEMCHANGEDW, EN_CHANGE},
-        UI::WindowsAndMessaging::{
-            CallWindowProcW, DefWindowProcW, GetDlgCtrlID, GetWindowLongPtrW,
-            SetWindowLongPtrW, CreateWindowExW, DestroyWindow, DispatchMessageW,
-            GetClientRect, GetMessageW, GetParent, GetWindowTextW, KillTimer,
-            PostQuitMessage, SetTimer, TranslateMessage, WINDOW_EX_STYLE,
-            WINDOW_STYLE, WNDPROC, WS_CHILD, WS_VISIBLE,
-        },
+        UI::Controls::{NM_CLICK, NM_CUSTOMDRAW, NMHDR, TVN_ITEMCHANGEDW},
+        UI::WindowsAndMessaging::*, // This list is massive, just import all of them.
     },
     core::{HSTRING, PCWSTR},
 };
@@ -922,7 +916,12 @@ impl Win32ApiInternalState {
                     command_id
                 );
                 unsafe {
-                    SetTimer(_hwnd_parent, command_id as usize, FILTER_DEBOUNCE_MS, None);
+                    SetTimer(
+                        Some(_hwnd_parent),
+                        command_id as usize,
+                        FILTER_DEBOUNCE_MS,
+                        None,
+                    );
                 }
             } else {
                 log::trace!(
@@ -945,14 +944,13 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> Option<AppEvent> {
         unsafe {
-            KillTimer(hwnd, timer_id.0 as usize);
+            _ = KillTimer(Some(hwnd), timer_id.0 as usize);
         }
         let control_id = timer_id.0 as i32;
-        let hwnd_edit_opt = self
-            .active_windows
-            .read()
-            .ok()
-            .and_then(|g| g.get(&window_id).and_then(|wd| wd.get_control_hwnd(control_id)));
+        let hwnd_edit_opt = self.active_windows.read().ok().and_then(|g| {
+            g.get(&window_id)
+                .and_then(|wd| wd.get_control_hwnd(control_id))
+        });
         if let Some(hwnd_edit) = hwnd_edit_opt {
             let mut buf: [u16; 256] = [0; 256];
             let len = unsafe { GetWindowTextW(hwnd_edit, &mut buf) } as usize;
