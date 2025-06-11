@@ -18,6 +18,7 @@ use crate::platform_layer::{
 pub const FILTER_BAR_HEIGHT: i32 = 30;
 // Fixed width for the "Expand Filtered/All" button.
 pub const FILTER_EXPAND_BUTTON_WIDTH: i32 = 120;
+pub const FILTER_CLEAR_BUTTON_WIDTH: i32 = 30;
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout
@@ -89,6 +90,13 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::FILTER_INPUT_ID,
         initial_text: "".to_string(), // Placeholder text can be set here if desired
+    });
+
+    // 2.a.1 Create Clear Filter button
+    commands.push(PlatformCommand::CreateButton {
+        window_id,
+        control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
+        text: "X".to_string(),
     });
 
     // 2.b Create "Expand Filtered/All" Button within the Filter Panel
@@ -171,6 +179,14 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
             order: 0,                     // Process first within its parent
             fixed_size: Some(FILTER_EXPAND_BUTTON_WIDTH),
             margin: (2, 2, 2, 2), // Small margin for the button
+        },
+        LayoutRule {
+            control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
+            parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
+            dock_style: DockStyle::Right,
+            order: 0,
+            fixed_size: Some(FILTER_CLEAR_BUTTON_WIDTH),
+            margin: (2, 2, 2, 2),
         },
         LayoutRule {
             control_id: ui_constants::FILTER_INPUT_ID,

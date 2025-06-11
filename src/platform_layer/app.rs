@@ -291,11 +291,23 @@ impl Win32ApiInternalState {
                     control_id,
                 )
             }
-            PlatformCommand::CreateInput { .. } => {
-                // TODO: Implement CreateInput command handling
-                log::warn!("Platform: CreateInput command not implemented yet.");
-                Ok(())
-            }
+            PlatformCommand::CreateInput {
+                window_id,
+                parent_control_id,
+                control_id,
+                initial_text,
+            } => command_executor::execute_create_input(
+                self,
+                window_id,
+                parent_control_id,
+                control_id,
+                initial_text,
+            ),
+            PlatformCommand::SetInputText {
+                window_id,
+                control_id,
+                text,
+            } => command_executor::execute_set_input_text(self, window_id, control_id, text),
         }
     }
 }

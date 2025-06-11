@@ -2335,4 +2335,23 @@ mod handler_tests {
             PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
         )).is_some(), "Expected ExpandAllTreeItems command when no filter is set");
     }
+
+    #[test]
+    fn test_clear_button_clears_filter_and_updates_ui() {
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "abc".into() });
+        logic.test_drain_commands();
+
+        logic.handle_event(AppEvent::ButtonClicked { window_id, control_id: ui_constants::FILTER_CLEAR_BUTTON_ID });
+        let cmds = logic.test_drain_commands();
+
+        assert!(logic.test_get_filter_text().is_none());
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::SetInputText { window_id: wid, control_id, text } if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && text.is_empty()
+        )).is_some(), "Expected SetInputText to clear filter input");
+    }
 }

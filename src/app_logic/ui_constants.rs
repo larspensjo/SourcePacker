@@ -29,3 +29,6 @@ pub const FILTER_INPUT_ID: i32 = 1021;
 
 // Logical ID for the button used to expand filtered or all items in the TreeView.
 pub const FILTER_EXPAND_BUTTON_ID: i32 = 1022;
+
+// Logical ID for the button used to clear the filter input field.
+pub const FILTER_CLEAR_BUTTON_ID: i32 = 1023;

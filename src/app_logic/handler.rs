@@ -602,6 +602,9 @@ impl MyAppLogic {
             ui_constants::FILTER_EXPAND_BUTTON_ID => {
                 self.handle_expand_filtered_all_click(window_id);
             }
+            ui_constants::FILTER_CLEAR_BUTTON_ID => {
+                self.handle_filter_clear_requested(window_id);
+            }
             _ => {
                 log::debug!(
                     "ButtonClicked for unhandled control_id {} on window {:?}",
@@ -1557,6 +1560,23 @@ impl MyAppLogic {
             ui_state_mut.filter_text = Some(text);
         }
 
+        self.repopulate_tree_view(window_id);
+    }
+
+    fn handle_filter_clear_requested(&mut self, window_id: WindowId) {
+        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+            Some(s) => s,
+            None => {
+                log::warn!("FilterClearRequested for unknown window {:?}", window_id);
+                return;
+            }
+        };
+        ui_state_mut.filter_text = None;
+        self.synchronous_command_queue.push_back(PlatformCommand::SetInputText {
+            window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
+            text: String::new(),
+        });
         self.repopulate_tree_view(window_id);
     }
 }
