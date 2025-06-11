@@ -13,7 +13,6 @@ use super::app::Win32ApiInternalState;
 use super::controls::treeview_handler; // Ensure treeview_handler is used for its functions
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{AppEvent, CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
-use super::window_common::{GWLP_USERDATA, GWLP_WNDPROC};
 
 use crate::platform_layer::window_common::WC_BUTTON;
 use std::sync::Arc;
@@ -709,19 +708,22 @@ unsafe extern "system" fn forwarding_panel_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if msg == WM_COMMAND {
-        let parent = GetParent(hwnd);
-        if parent.0 != 0 {
-            SendMessageW(parent, WM_COMMAND, wparam, lparam);
+    unsafe {
+        if msg == WM_COMMAND {
+            if let Ok(parent) = GetParent(hwnd) {
+                if !parent.is_invalid() {
+                    SendMessageW(parent, WM_COMMAND, Some(wparam), Some(lparam));
+                }
+            }
+            return LRESULT(0);
         }
-        return LRESULT(0);
+        let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if prev != 0 {
+            let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
+            return CallWindowProcW(prev_proc, hwnd, msg, wparam, lparam);
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
     }
-    let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-    if prev != 0 {
-        let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
-        return CallWindowProcW(Some(prev_proc), hwnd, msg, wparam, lparam);
-    }
-    DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
 /*
