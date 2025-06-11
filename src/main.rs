@@ -7,8 +7,22 @@ mod core;
 #[cfg(target_os = "windows")]
 mod platform_layer;
 
+#[cfg(not(target_os = "windows"))]
+mod platform_layer {
+    #[path = "types.rs"]
+    pub mod types;
+
+    pub use types::{
+        AppEvent, CheckState, DockStyle, LabelClass, LayoutRule, MenuAction,
+        MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemDescriptor,
+        TreeItemId, WindowConfig, WindowId,
+    };
+}
+
 #[cfg(target_os = "windows")]
 mod ui_description_layer;
+
+use simplelog::{ConfigBuilder, LevelFilter};
 
 #[cfg(target_os = "windows")]
 use {
@@ -18,7 +32,6 @@ use {
         CoreTikTokenCounter, NodeStateApplicator, ProfileRuntimeData, ProfileRuntimeDataOperations,
     },
     platform_layer::{PlatformInterface, PlatformResult, WindowConfig},
-    simplelog::{ConfigBuilder, LevelFilter},
     std::sync::{Arc, Mutex},
 };
 

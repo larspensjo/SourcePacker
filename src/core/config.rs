@@ -258,7 +258,8 @@ mod tests {
             assert!(
                 config_local_dir
                     .to_string_lossy()
-                    .contains(&unique_app_name)
+                    .to_lowercase()
+                    .contains(&unique_app_name.to_lowercase())
             );
             // Cleanup the test app's config directory
             if config_local_dir.exists() {

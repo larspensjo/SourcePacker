@@ -409,7 +409,9 @@ mod profile_tests {
         if let Some(parent_of_profiles) = dir_path.parent() {
             let parent_of_profiles_str = parent_of_profiles.to_string_lossy();
             assert!(
-                parent_of_profiles_str.contains(&temp_app_name),
+                parent_of_profiles_str
+                    .to_lowercase()
+                    .contains(&temp_app_name.to_lowercase()),
                 "The parent directory of '{}' ({:?}) should contain the app name '{}'",
                 PROFILES_SUBFOLDER_NAME,
                 parent_of_profiles,
