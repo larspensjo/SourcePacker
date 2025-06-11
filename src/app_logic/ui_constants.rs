@@ -32,3 +32,8 @@ pub const FILTER_EXPAND_BUTTON_ID: i32 = 1022;
 
 // Logical ID for the button used to clear the filter input field.
 pub const FILTER_CLEAR_BUTTON_ID: i32 = 1023;
+
+// Background color for filter input when active (BGR format).
+pub const FILTER_COLOR_ACTIVE: u32 = 0x00FFFFE0; // light yellow
+// Background color when no matches are found.
+pub const FILTER_COLOR_NO_MATCH: u32 = 0x00E0E0FF; // light red/orange

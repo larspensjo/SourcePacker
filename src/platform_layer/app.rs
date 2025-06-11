@@ -308,6 +308,11 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
+            PlatformCommand::SetInputBackgroundColor {
+                window_id,
+                control_id,
+                color,
+            } => command_executor::execute_set_input_background_color(self, window_id, control_id, color),
         }
     }
 }

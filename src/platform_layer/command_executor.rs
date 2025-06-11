@@ -19,7 +19,11 @@ use std::sync::Arc;
 use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
-        UI::{Controls::WC_EDITW, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*},
+        UI::{
+            Controls::{WC_EDITW, EM_SETBKGNDCOLOR},
+            Input::KeyboardAndMouse::EnableWindow,
+            WindowsAndMessaging::*,
+        },
     },
     core::HSTRING,
 };
@@ -668,6 +672,59 @@ pub(crate) fn execute_set_input_text(
             );
             PlatformError::OperationFailed(format!("SetWindowText failed: {:?}", e))
         })?;
+    }
+    Ok(())
+}
+
+/*
+ * Executes the `SetInputBackgroundColor` command for an EDIT control.
+ * Uses the EM_SETBKGNDCOLOR message to apply a custom background color.
+ * Passing `None` resets the control to the system default color.
+ */
+pub(crate) fn execute_set_input_background_color(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+    color: Option<u32>,
+) -> PlatformResult<()> {
+    let hwnd_edit = {
+        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "CommandExecutor: Failed to lock windows map for SetInputBackgroundColor: {:?}",
+                e
+            );
+            PlatformError::OperationFailed("Failed to lock windows map".into())
+        })?;
+        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: WindowId {:?} not found for SetInputBackgroundColor",
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for SetInputBackgroundColor",
+                window_id
+            ))
+        })?;
+        window_data.get_control_hwnd(control_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
+                control_id,
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
+                control_id, window_id
+            ))
+        })?
+    };
+
+    unsafe {
+        SendMessageW(
+            hwnd_edit,
+            EM_SETBKGNDCOLOR,
+            WPARAM(0),
+            LPARAM(color.unwrap_or(0) as isize),
+        );
     }
     Ok(())
 }

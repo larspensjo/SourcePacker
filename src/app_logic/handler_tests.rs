@@ -2370,4 +2370,31 @@ mod handler_tests {
                 if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
         )).is_some(), "Expected ExpandAllTreeItems command after clearing filter");
     }
+
+    #[test]
+    fn test_no_match_filter_uses_cached_results_and_sets_color() {
+        // Arrange
+        let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        let nodes = vec![FileNode::new_test(PathBuf::from("/root/match.txt"), "match.txt".into(), false)];
+        mock_app_session.lock().unwrap().set_snapshot_nodes_for_mock(nodes);
+
+        // Act 1: apply matching filter
+        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "match".into() });
+        let _ = logic.test_drain_commands();
+
+        // Act 2: apply non-matching filter
+        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "none".into() });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert!(logic.test_get_filter_text().is_some());
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::SetInputBackgroundColor { window_id: wid, control_id, color }
+                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && matches!(color, Some(_))
+        )).is_some(), "Expected color change for no match");
+    }
 }
