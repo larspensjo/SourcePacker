@@ -32,7 +32,7 @@ use windows::{
         },
         System::WindowsProgramming::MulDiv,
         UI::Controls::{NM_CLICK, NM_CUSTOMDRAW, NMHDR, TVN_ITEMCHANGEDW},
-        UI::WindowsAndMessaging::*,
+        UI::WindowsAndMessaging::*, // This list is massive, just import all of them.
     },
     core::{HSTRING, PCWSTR},
 };
@@ -58,6 +58,7 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 
 // General UI constants
 pub const STATUS_BAR_HEIGHT: i32 = 25; // Example height for status bar
+pub const FILTER_DEBOUNCE_MS: u32 = 300;
 
 // Represents an invalid HWND, useful for initialization or checks.
 pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
@@ -300,6 +301,9 @@ impl Win32ApiInternalState {
             }
             WM_COMMAND => {
                 event_to_send = self.handle_wm_command(hwnd, wparam, lparam, window_id);
+            }
+            WM_TIMER => {
+                event_to_send = self.handle_wm_timer(hwnd, wparam, lparam, window_id);
             }
             WM_CLOSE => {
                 log::debug!(
@@ -905,6 +909,19 @@ impl Win32ApiInternalState {
                     window_id,
                     control_id: command_id,
                 });
+            } else if notification_code == EN_CHANGE as i32 {
+                log::trace!(
+                    "Edit control ID {} changed, starting debounce timer",
+                    command_id
+                );
+                unsafe {
+                    SetTimer(
+                        Some(_hwnd_parent),
+                        command_id as usize,
+                        FILTER_DEBOUNCE_MS,
+                        None,
+                    );
+                }
             } else {
                 log::trace!(
                     "Unhandled WM_COMMAND from control: ID {}, NotifyCode {}, HWND {:?}, WinID {:?}",
@@ -914,6 +931,30 @@ impl Win32ApiInternalState {
                     window_id
                 );
             }
+        }
+        None
+    }
+
+    fn handle_wm_timer(
+        self: &Arc<Self>,
+        hwnd: HWND,
+        timer_id: WPARAM,
+        _lparam: LPARAM,
+        window_id: WindowId,
+    ) -> Option<AppEvent> {
+        unsafe {
+            _ = KillTimer(Some(hwnd), timer_id.0 as usize);
+        }
+        let control_id = timer_id.0 as i32;
+        let hwnd_edit_opt = self.active_windows.read().ok().and_then(|g| {
+            g.get(&window_id)
+                .and_then(|wd| wd.get_control_hwnd(control_id))
+        });
+        if let Some(hwnd_edit) = hwnd_edit_opt {
+            let mut buf: [u16; 256] = [0; 256];
+            let len = unsafe { GetWindowTextW(hwnd_edit, &mut buf) } as usize;
+            let text = String::from_utf16_lossy(&buf[..len]);
+            return Some(AppEvent::FilterTextSubmitted { window_id, text });
         }
         None
     }

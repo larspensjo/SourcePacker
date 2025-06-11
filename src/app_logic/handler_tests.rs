@@ -2221,6 +2221,10 @@ mod handler_tests {
             .is_some(),
             "PopulateTreeView command should be enqueued after submitting text."
         );
+        assert!(find_command(&cmds_after_submit, |cmd| matches!(cmd,
+            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandAllTreeItems after submitting filter text");
 
         // Act 2: Submit empty filter text (clearing the filter)
         logic.handle_event(AppEvent::FilterTextSubmitted {
@@ -2242,6 +2246,10 @@ mod handler_tests {
             .is_some(),
             "PopulateTreeView command should be enqueued after clearing filter."
         );
+        assert!(find_command(&cmds_after_clear, |cmd| matches!(cmd,
+            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandAllTreeItems after clearing filter text");
     }
 
     #[test]
@@ -2276,7 +2284,7 @@ mod handler_tests {
         // Act
         logic.handle_event(AppEvent::FilterTextSubmitted {
             window_id,
-            text: "match.txt".to_string(),
+            text: "match".to_string(),
         });
         let cmds = logic.test_drain_commands();
 
@@ -2288,6 +2296,10 @@ mod handler_tests {
             populate_cmd.is_some(),
             "Expected PopulateTreeView command after filtering"
         );
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandAllTreeItems after filtering");
         if let Some(PlatformCommand::PopulateTreeView { items, .. }) = populate_cmd {
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].text, "dir1");
@@ -2334,5 +2346,28 @@ mod handler_tests {
         assert!(find_command(&cmds, |cmd| matches!(cmd,
             PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
         )).is_some(), "Expected ExpandAllTreeItems command when no filter is set");
+    }
+
+    #[test]
+    fn test_clear_button_clears_filter_and_updates_ui() {
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "abc".into() });
+        logic.test_drain_commands();
+
+        logic.handle_event(AppEvent::ButtonClicked { window_id, control_id: ui_constants::FILTER_CLEAR_BUTTON_ID });
+        let cmds = logic.test_drain_commands();
+
+        assert!(logic.test_get_filter_text().is_none());
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::SetInputText { window_id: wid, control_id, text } if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && text.is_empty()
+        )).is_some(), "Expected SetInputText to clear filter input");
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandAllTreeItems command after clearing filter");
     }
 }

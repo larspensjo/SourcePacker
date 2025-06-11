@@ -335,6 +335,11 @@ pub enum PlatformCommand {
         control_id: i32,
         initial_text: String,
     },
+    SetInputText {
+        window_id: WindowId,
+        control_id: i32,
+        text: String,
+    },
     UpdateLabelText {
         window_id: WindowId,
         control_id: i32,

@@ -18,15 +18,8 @@ use crate::platform_layer::window_common::WC_BUTTON;
 use std::sync::Arc;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND},
-        UI::{
-            Input::KeyboardAndMouse::EnableWindow,
-            WindowsAndMessaging::{
-                AppendMenuW, BS_PUSHBUTTON, CreateMenu, CreatePopupMenu, CreateWindowExW,
-                DestroyMenu, HMENU, MF_POPUP, MF_STRING, PostQuitMessage, SetMenu, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WS_CHILD, WS_VISIBLE,
-            },
-        },
+        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        UI::{Controls::WC_EDITW, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*},
     },
     core::HSTRING,
 };
@@ -526,6 +519,159 @@ pub(crate) fn execute_expand_all_tree_items(
     treeview_handler::expand_all_tree_items(internal_state, window_id, control_id)
 }
 
+/*
+ * Executes the `CreateInput` command.
+ * Creates a Win32 EDIT control to be used as a text input field.
+ */
+pub(crate) fn execute_create_input(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    parent_control_id: Option<i32>,
+    control_id: i32,
+    initial_text: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_create_input for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+
+    let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
+        log::error!(
+            "CommandExecutor: Failed to lock windows map for CreateInput: {:?}",
+            e
+        );
+        PlatformError::OperationFailed("Failed to lock windows map for CreateInput".into())
+    })?;
+
+    let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
+        log::warn!(
+            "CommandExecutor: WindowId {:?} not found for CreateInput",
+            window_id
+        );
+        PlatformError::InvalidHandle(format!(
+            "WindowId {:?} not found for CreateInput",
+            window_id
+        ))
+    })?;
+
+    if window_data.control_hwnd_map.contains_key(&control_id) {
+        log::warn!(
+            "CommandExecutor: Input with logical ID {} already exists for window {:?}",
+            control_id,
+            window_id
+        );
+        return Err(PlatformError::OperationFailed(format!(
+            "Input with logical ID {} already exists for window {:?}",
+            control_id, window_id
+        )));
+    }
+
+    let hwnd_parent = match parent_control_id {
+        Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: Parent control with ID {} not found for CreateInput in WinID {:?}",
+                id, window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Parent control with ID {} not found for CreateInput in WinID {:?}",
+                id, window_id
+            ))
+        })?,
+        None => window_data.this_window_hwnd,
+    };
+
+    if hwnd_parent.is_invalid() {
+        log::error!(
+            "CommandExecutor: Parent HWND invalid for CreateInput (WinID {:?})",
+            window_id
+        );
+        return Err(PlatformError::InvalidHandle(format!(
+            "Parent HWND invalid for CreateInput (WinID {:?})",
+            window_id
+        )));
+    }
+
+    let hwnd_edit = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            WC_EDITW,
+            &HSTRING::from(initial_text.as_str()),
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+            0,
+            0,
+            10,
+            10,
+            Some(hwnd_parent),
+            Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
+            Some(internal_state.h_instance),
+            None,
+        )?
+    };
+
+    window_data.control_hwnd_map.insert(control_id, hwnd_edit);
+    log::debug!(
+        "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
+        control_id,
+        window_id,
+        hwnd_edit
+    );
+    Ok(())
+}
+
+/*
+ * Executes the `SetInputText` command to update an EDIT control's content.
+ */
+pub(crate) fn execute_set_input_text(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+    text: String,
+) -> PlatformResult<()> {
+    let hwnd_edit = {
+        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "CommandExecutor: Failed to lock windows map for SetInputText: {:?}",
+                e
+            );
+            PlatformError::OperationFailed("Failed to lock windows map".into())
+        })?;
+        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: WindowId {:?} not found for SetInputText",
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for SetInputText",
+                window_id
+            ))
+        })?;
+        window_data.get_control_hwnd(control_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: Control ID {} not found for SetInputText in WinID {:?}",
+                control_id,
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Control ID {} not found for SetInputText in WinID {:?}",
+                control_id, window_id
+            ))
+        })?
+    };
+
+    unsafe {
+        SetWindowTextW(hwnd_edit, &HSTRING::from(text.as_str())).map_err(|e| {
+            log::error!(
+                "CommandExecutor: SetWindowTextW failed for input ID {}: {:?}",
+                control_id,
+                e
+            );
+            PlatformError::OperationFailed(format!("SetWindowText failed: {:?}", e))
+        })?;
+    }
+    Ok(())
+}
+
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)
 pub(crate) fn execute_set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -548,6 +694,36 @@ pub(crate) fn execute_close_window(
     window_id: WindowId,
 ) -> PlatformResult<()> {
     super::window_common::send_close_message(internal_state, window_id)
+}
+
+/*
+ * Custom window procedure for panel controls.
+ * It forwards WM_COMMAND messages to the panel's parent so that
+ * controls embedded within the panel generate events at the main
+ * window level.
+ */
+unsafe extern "system" fn forwarding_panel_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    unsafe {
+        if msg == WM_COMMAND {
+            if let Ok(parent) = GetParent(hwnd) {
+                if !parent.is_invalid() {
+                    SendMessageW(parent, WM_COMMAND, Some(wparam), Some(lparam));
+                }
+            }
+            return LRESULT(0);
+        }
+        let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if prev != 0 {
+            let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
+            return CallWindowProcW(prev_proc, hwnd, msg, wparam, lparam);
+        }
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }
 }
 
 /*
@@ -639,6 +815,10 @@ pub(crate) fn execute_create_panel(
             None,
         )?
     };
+    unsafe {
+        let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
+        SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
+    }
     window_data.control_hwnd_map.insert(panel_id, hwnd_panel);
     log::debug!(
         "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
