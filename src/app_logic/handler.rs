@@ -1561,6 +1561,11 @@ impl MyAppLogic {
         }
 
         self.repopulate_tree_view(window_id);
+
+        self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
+            window_id,
+            control_id: ui_constants::ID_TREEVIEW_CTRL,
+        });
     }
 
     fn handle_filter_clear_requested(&mut self, window_id: WindowId) {
@@ -1578,6 +1583,11 @@ impl MyAppLogic {
             text: String::new(),
         });
         self.repopulate_tree_view(window_id);
+
+        self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
+            window_id,
+            control_id: ui_constants::ID_TREEVIEW_CTRL,
+        });
     }
 }
 
