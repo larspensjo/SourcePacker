@@ -2276,7 +2276,7 @@ mod handler_tests {
         // Act
         logic.handle_event(AppEvent::FilterTextSubmitted {
             window_id,
-            text: "match.txt".to_string(),
+            text: "match".to_string(),
         });
         let cmds = logic.test_drain_commands();
 

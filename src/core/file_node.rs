@@ -159,18 +159,23 @@ impl FileNode {
         path_to_tree_item_id: &mut PathToTreeItemIdMap,
         next_tree_item_id_counter: &mut u64,
     ) -> Vec<TreeItemDescriptor> {
-        let filter_lower = filter_text.to_lowercase();
+        let mut pattern = filter_text.to_lowercase();
+        if !pattern.contains('*') && !pattern.contains('?') {
+            pattern = format!("*{}*", pattern);
+        }
+        let glob = glob::Pattern::new(&pattern).unwrap_or_else(|_| glob::Pattern::new("*").unwrap());
 
         fn recurse(
             nodes: &[FileNode],
-            filter_lower: &str,
+            glob: &glob::Pattern,
             map: &mut PathToTreeItemIdMap,
             counter: &mut u64,
         ) -> Vec<TreeItemDescriptor> {
             let mut descriptors = Vec::new();
             for node in nodes {
-                let children = recurse(&node.children, filter_lower, map, counter);
-                let name_matches = node.name.to_lowercase() == *filter_lower;
+                let children = recurse(&node.children, glob, map, counter);
+                let name_lower = node.name.to_lowercase();
+                let name_matches = glob.matches(&name_lower);
                 if name_matches || !children.is_empty() {
                     let id_val = *counter;
                     *counter += 1;
@@ -183,12 +188,7 @@ impl FileNode {
             descriptors
         }
 
-        recurse(
-            nodes,
-            &filter_lower,
-            path_to_tree_item_id,
-            next_tree_item_id_counter,
-        )
+        recurse(nodes, &glob, path_to_tree_item_id, next_tree_item_id_counter)
     }
 }
 
@@ -417,9 +417,10 @@ mod tests {
         let mut path_to_id_map = HashMap::new();
         let mut id_counter = 1;
 
+        // Substring filter should match "match.txt"
         let descriptors = FileNode::build_tree_item_descriptors_filtered(
             &nodes,
-            "match.txt",
+            "match",
             &mut path_to_id_map,
             &mut id_counter,
         );
@@ -435,11 +436,24 @@ mod tests {
         let mut counter2 = 1;
         let descriptors_ci = FileNode::build_tree_item_descriptors_filtered(
             &nodes,
-            "MATCH.TXT",
+            "MATCH",
             &mut map2,
             &mut counter2,
         );
         assert_eq!(descriptors_ci.len(), 1);
         assert_eq!(descriptors_ci[0].children.len(), 1);
+
+        // Wildcard pattern should match "other.txt"
+        let mut map3 = HashMap::new();
+        let mut counter3 = 1;
+        let descriptors_wc = FileNode::build_tree_item_descriptors_filtered(
+            &nodes,
+            "*other*",
+            &mut map3,
+            &mut counter3,
+        );
+        assert_eq!(descriptors_wc.len(), 1);
+        assert_eq!(descriptors_wc[0].children.len(), 1);
+        assert_eq!(descriptors_wc[0].children[0].text, "other.txt");
     }
 }
