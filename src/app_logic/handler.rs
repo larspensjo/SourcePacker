@@ -4,8 +4,8 @@ use crate::core::{
     ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
 };
 use crate::platform_layer::{
-    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-    TreeItemDescriptor, TreeItemId, WindowId, types::MenuAction,
+    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
+    WindowId, types::MenuAction,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -213,11 +213,12 @@ impl MyAppLogic {
             )
         };
 
-        self.synchronous_command_queue.push_back(PlatformCommand::PopulateTreeView {
-            window_id,
-            control_id: ui_constants::ID_TREEVIEW_CTRL,
-            items: descriptors,
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::PopulateTreeView {
+                window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL,
+                items: descriptors,
+            });
     }
 
     /*
@@ -604,7 +605,8 @@ impl MyAppLogic {
             _ => {
                 log::debug!(
                     "ButtonClicked for unhandled control_id {} on window {:?}",
-                    control_id, window_id
+                    control_id,
+                    window_id
                 );
             }
         }
@@ -1802,15 +1804,9 @@ impl MyAppLogic {
         }
     }
 
-    // --- NEW TEST ACCESSORS ---
-
     // Accessor for refresh_tree_view_from_cache
     pub(crate) fn test_refresh_tree_view_from_cache(&mut self, window_id: WindowId) {
         self.refresh_tree_view_from_cache(window_id);
-    }
-
-    pub(crate) fn test_repopulate_tree_view(&mut self, window_id: WindowId) {
-        self.repopulate_tree_view(window_id);
     }
 
     // Accessor for _update_token_count_and_request_display

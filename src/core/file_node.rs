@@ -183,7 +183,12 @@ impl FileNode {
             descriptors
         }
 
-        recurse(nodes, &filter_lower, path_to_tree_item_id, next_tree_item_id_counter)
+        recurse(
+            nodes,
+            &filter_lower,
+            path_to_tree_item_id,
+            next_tree_item_id_counter,
+        )
     }
 }
 
@@ -372,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_build_tree_item_descriptors_filtered() {
-        let mut dir = FileNode::new_full(
+        let dir = FileNode::new_full(
             PathBuf::from("/dir1"),
             "dir1".into(),
             true,
