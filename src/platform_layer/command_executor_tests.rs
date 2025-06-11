@@ -31,15 +31,15 @@ fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) 
     let window_id = internal_state_arc.generate_window_id();
 
     let native_window_data = NativeWindowData {
-        hwnd: window_common::HWND_INVALID, // Using a defined invalid HWND constant
-        id: window_id,
+        this_window_hwnd: window_common::HWND_INVALID,
+        logical_window_id: window_id,
         treeview_state: None,
-        controls: HashMap::new(),
-        status_bar_current_text: String::new(),
-        status_bar_current_severity: MessageSeverity::None,
+        control_hwnd_map: HashMap::new(),
         menu_action_map: HashMap::new(),
         next_menu_item_id_counter: 30000,
         layout_rules: None,
+        label_severities: HashMap::new(),
+        status_bar_font: None,
     };
     (internal_state_arc, window_id, native_window_data)
 }
@@ -119,5 +119,37 @@ mod tests {
             found_refresh,
             "MenuAction::RefreshFileList not found in map"
         );
+    }
+
+    #[test]
+    fn test_expand_visible_tree_items_returns_error() {
+        let (internal_state, window_id, native_window_data) = setup_test_env();
+        {
+            let mut guard = internal_state.active_windows.write().unwrap();
+            guard.insert(window_id, native_window_data);
+        }
+
+        let result = command_executor::execute_expand_visible_tree_items(
+            &internal_state,
+            window_id,
+            999,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_expand_all_tree_items_returns_error() {
+        let (internal_state, window_id, native_window_data) = setup_test_env();
+        {
+            let mut guard = internal_state.active_windows.write().unwrap();
+            guard.insert(window_id, native_window_data);
+        }
+
+        let result = command_executor::execute_expand_all_tree_items(
+            &internal_state,
+            window_id,
+            999,
+        );
+        assert!(result.is_err());
     }
 }

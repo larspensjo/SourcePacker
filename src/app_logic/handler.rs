@@ -597,11 +597,46 @@ impl MyAppLogic {
     }
 
     fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
-        unimplemented!(
-            "ButtonClicked handler not implemented for window_id {:?} control_id: {}",
-            window_id,
-            control_id,
-        );
+        match control_id {
+            ui_constants::FILTER_EXPAND_BUTTON_ID => {
+                self.handle_expand_filtered_all_click(window_id);
+            }
+            _ => {
+                log::debug!(
+                    "ButtonClicked for unhandled control_id {} on window {:?}",
+                    control_id, window_id
+                );
+            }
+        }
+    }
+
+    fn handle_expand_filtered_all_click(&mut self, window_id: WindowId) {
+        let ui_state_ref = match self.ui_state.as_ref() {
+            Some(s) if s.window_id == window_id => s,
+            _ => {
+                log::warn!(
+                    "ExpandFilteredAllClick received but no matching UI state for window {:?}",
+                    window_id
+                );
+                return;
+            }
+        };
+
+        if ui_state_ref.filter_text.is_some() {
+            log::debug!("Expanding visible tree items (filtered view)");
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::ExpandVisibleTreeItems {
+                    window_id,
+                    control_id: ui_constants::ID_TREEVIEW_CTRL,
+                });
+        } else {
+            log::debug!("Expanding all tree items");
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::ExpandAllTreeItems {
+                    window_id,
+                    control_id: ui_constants::ID_TREEVIEW_CTRL,
+                });
+        }
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {

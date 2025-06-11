@@ -341,6 +341,16 @@ pub enum PlatformCommand {
         text: String,
         severity: MessageSeverity,
     },
+    /// Expands only the currently visible items in a TreeView. Used when a filter is active.
+    ExpandVisibleTreeItems {
+        window_id: WindowId,
+        control_id: i32,
+    },
+    /// Expands all items in a TreeView regardless of visibility.
+    ExpandAllTreeItems {
+        window_id: WindowId,
+        control_id: i32,
+    },
     RedrawTreeItem {
         window_id: WindowId,
         control_id: i32, /* New: Logical ID of the TreeView containing the item */

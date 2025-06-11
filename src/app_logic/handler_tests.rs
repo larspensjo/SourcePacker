@@ -2295,4 +2295,44 @@ mod handler_tests {
             assert_eq!(items[0].children[0].text, "match.txt");
         }
     }
+
+    #[test]
+    fn test_expand_button_with_filter_expands_visible() {
+        let (mut logic, _mock_app_session, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "filter".to_string(),
+        });
+        logic.test_drain_commands();
+
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
+        });
+        let cmds = logic.test_drain_commands();
+
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::ExpandVisibleTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandVisibleTreeItems command when filter is active");
+    }
+
+    #[test]
+    fn test_expand_button_without_filter_expands_all() {
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
+        });
+        let cmds = logic.test_drain_commands();
+
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+        )).is_some(), "Expected ExpandAllTreeItems command when no filter is set");
+    }
 }

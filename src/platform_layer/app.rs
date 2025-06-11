@@ -277,6 +277,20 @@ impl Win32ApiInternalState {
             } => treeview_handler::handle_redraw_tree_item_command(
                 self, window_id, control_id, item_id,
             ),
+            PlatformCommand::ExpandVisibleTreeItems { window_id, control_id } => {
+                command_executor::execute_expand_visible_tree_items(
+                    self,
+                    window_id,
+                    control_id,
+                )
+            }
+            PlatformCommand::ExpandAllTreeItems { window_id, control_id } => {
+                command_executor::execute_expand_all_tree_items(
+                    self,
+                    window_id,
+                    control_id,
+                )
+            }
             PlatformCommand::CreateInput { .. } => {
                 // TODO: Implement CreateInput command handling
                 log::warn!("Platform: CreateInput command not implemented yet.");

@@ -755,6 +755,212 @@ pub(crate) fn handle_redraw_tree_item_command(
     Ok(())
 }
 
+pub(crate) fn expand_visible_tree_items(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+) -> PlatformResult<()> {
+    log::debug!(
+        "TreeViewHandler: expand_visible_tree_items for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+
+    let hwnd_treeview = {
+        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "TreeViewHandler: Failed to lock windows map (expand_visible_tree_items): {:?}",
+                e
+            );
+            PlatformError::OperationFailed(
+                "Failed to lock windows map for expand_visible_tree_items".into(),
+            )
+        })?;
+
+        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+            log::warn!(
+                "TreeViewHandler: WindowId {:?} not found for expand_visible_tree_items",
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for expand_visible_tree_items",
+                window_id
+            ))
+        })?;
+
+        let hwnd = window_data
+            .get_control_hwnd(control_id)
+            .ok_or_else(|| {
+                log::warn!(
+                    "TreeViewHandler: Control ID {} not found for expand_visible_tree_items in WinID {:?}",
+                    control_id,
+                    window_id
+                );
+                PlatformError::InvalidHandle(format!(
+                    "Control ID {} not found for expand_visible_tree_items in WinID {:?}",
+                    control_id, window_id
+                ))
+            })?;
+        hwnd
+    };
+
+    if hwnd_treeview.is_invalid() {
+        log::warn!(
+            "TreeViewHandler: HWND invalid for expand_visible_tree_items in ControlID {}",
+            control_id
+        );
+        return Err(PlatformError::InvalidHandle(
+            "Invalid TreeView HWND for expand_visible_tree_items".to_string(),
+        ));
+    }
+
+    use windows::Win32::UI::Controls::{
+        TVE_EXPAND, TVGN_FIRSTVISIBLE, TVGN_NEXTVISIBLE, TVM_EXPAND, TVM_GETNEXTITEM,
+    };
+
+    unsafe {
+        let mut item = SendMessageW(
+            hwnd_treeview,
+            TVM_GETNEXTITEM,
+            Some(WPARAM(TVGN_FIRSTVISIBLE as usize)),
+            Some(LPARAM(0)),
+        );
+
+        while item.0 != 0 {
+            _ = SendMessageW(
+                hwnd_treeview,
+                TVM_EXPAND,
+                Some(WPARAM(TVE_EXPAND.0 as usize)),
+                Some(LPARAM(item.0)),
+            );
+
+            item = SendMessageW(
+                hwnd_treeview,
+                TVM_GETNEXTITEM,
+                Some(WPARAM(TVGN_NEXTVISIBLE as usize)),
+                Some(LPARAM(item.0)),
+            );
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn expand_all_tree_items(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+) -> PlatformResult<()> {
+    log::debug!(
+        "TreeViewHandler: expand_all_tree_items for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+
+    let hwnd_treeview = {
+        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "TreeViewHandler: Failed to lock windows map (expand_all_tree_items): {:?}",
+                e
+            );
+            PlatformError::OperationFailed(
+                "Failed to lock windows map for expand_all_tree_items".into(),
+            )
+        })?;
+
+        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+            log::warn!(
+                "TreeViewHandler: WindowId {:?} not found for expand_all_tree_items",
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for expand_all_tree_items",
+                window_id
+            ))
+        })?;
+
+        let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+            log::warn!(
+                "TreeViewHandler: Control ID {} not found for expand_all_tree_items in WinID {:?}",
+                control_id,
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Control ID {} not found for expand_all_tree_items in WinID {:?}",
+                control_id, window_id
+            ))
+        })?;
+        hwnd
+    };
+
+    if hwnd_treeview.is_invalid() {
+        log::warn!(
+            "TreeViewHandler: HWND invalid for expand_all_tree_items in ControlID {}",
+            control_id
+        );
+        return Err(PlatformError::InvalidHandle(
+            "Invalid TreeView HWND for expand_all_tree_items".to_string(),
+        ));
+    }
+
+    use windows::Win32::UI::Controls::{
+        TVE_EXPAND, TVGN_CHILD, TVGN_NEXT, TVGN_ROOT, TVM_EXPAND, TVM_GETNEXTITEM,
+    };
+
+    unsafe fn recurse(hwnd: HWND, item: HTREEITEM) {
+        if item.0 == 0 {
+            return;
+        }
+        unsafe {
+            let _ = SendMessageW(
+                hwnd,
+                TVM_EXPAND,
+                Some(WPARAM(TVE_EXPAND.0 as usize)),
+                Some(LPARAM(item.0)),
+            );
+        }
+        let mut child = unsafe {
+            SendMessageW(
+                hwnd,
+                TVM_GETNEXTITEM,
+                Some(WPARAM(TVGN_CHILD as usize)),
+                Some(LPARAM(item.0)),
+            )
+        };
+        unsafe {
+            while child.0 != 0 {
+                recurse(hwnd, HTREEITEM(child.0));
+                child = SendMessageW(
+                    hwnd,
+                    TVM_GETNEXTITEM,
+                    Some(WPARAM(TVGN_NEXT as usize)),
+                    Some(LPARAM(child.0)),
+                );
+            }
+        }
+    }
+
+    unsafe {
+        let mut root = SendMessageW(
+            hwnd_treeview,
+            TVM_GETNEXTITEM,
+            Some(WPARAM(TVGN_ROOT as usize)),
+            Some(LPARAM(0)),
+        );
+        while root.0 != 0 {
+            recurse(hwnd_treeview, HTREEITEM(root.0));
+            root = SendMessageW(
+                hwnd_treeview,
+                TVM_GETNEXTITEM,
+                Some(WPARAM(TVGN_NEXT as usize)),
+                Some(LPARAM(root.0)),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /*
  * Handles the NM_CUSTOMDRAW notification for a TreeView control.
  * This function orchestrates the custom drawing stages necessary to render a "New"

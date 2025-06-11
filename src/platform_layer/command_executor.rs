@@ -500,6 +500,32 @@ pub(crate) fn execute_update_tree_item_visual_state(
     )
 }
 
+pub(crate) fn execute_expand_visible_tree_items(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_expand_visible_tree_items for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+    treeview_handler::expand_visible_tree_items(internal_state, window_id, control_id)
+}
+
+pub(crate) fn execute_expand_all_tree_items(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_expand_all_tree_items for WinID {:?}, ControlID {}",
+        window_id,
+        control_id
+    );
+    treeview_handler::expand_all_tree_items(internal_state, window_id, control_id)
+}
+
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)
 pub(crate) fn execute_set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,
