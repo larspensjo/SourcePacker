@@ -4,3 +4,4 @@ pub(crate) mod label_handler;
 pub(crate) mod menu_handler;
 pub(crate) mod panel_handler;
 pub(crate) mod treeview_handler; // Renamed from control_treeview
+pub(crate) mod input_handler;

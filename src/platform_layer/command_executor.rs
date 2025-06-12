@@ -20,7 +20,7 @@ use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
         UI::{
-            Controls::{RichEdit::EM_SETBKGNDCOLOR, WC_EDITW},
+            Controls::WC_EDITW,
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::*,
         },
@@ -677,9 +677,10 @@ pub(crate) fn execute_set_input_text(
 }
 
 /*
- * Executes the `SetInputBackgroundColor` command for an EDIT control.
- * Uses the EM_SETBKGNDCOLOR message to apply a custom background color.
- * Passing `None` resets the control to the system default color.
+ * Executes the `SetInputBackgroundColor` command. The desired color is stored
+ * in `NativeWindowData` and applied during WM_CTLCOLOREDIT handling. This
+ * avoids reliance on EM_SETBKGNDCOLOR which is not supported for plain EDIT
+ * controls on all Windows versions.
  */
 pub(crate) fn execute_set_input_background_color(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -687,15 +688,16 @@ pub(crate) fn execute_set_input_background_color(
     control_id: i32,
     color: Option<u32>,
 ) -> PlatformResult<()> {
-    let hwnd_edit = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+    let hwnd_edit;
+    {
+        let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
             log::error!(
                 "CommandExecutor: Failed to lock windows map for SetInputBackgroundColor: {:?}",
                 e
             );
             PlatformError::OperationFailed("Failed to lock windows map".into())
         })?;
-        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
+        let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
             log::warn!(
                 "CommandExecutor: WindowId {:?} not found for SetInputBackgroundColor",
                 window_id
@@ -705,7 +707,7 @@ pub(crate) fn execute_set_input_background_color(
                 window_id
             ))
         })?;
-        window_data.get_control_hwnd(control_id).ok_or_else(|| {
+        hwnd_edit = window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
                 "CommandExecutor: Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
                 control_id,
@@ -715,16 +717,12 @@ pub(crate) fn execute_set_input_background_color(
                 "Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
                 control_id, window_id
             ))
-        })?
-    };
+        })?;
+        super::controls::input_handler::set_input_background_color(window_data, control_id, color)?;
+    }
 
     unsafe {
-        SendMessageW(
-            hwnd_edit,
-            EM_SETBKGNDCOLOR,
-            Some(WPARAM(0)),
-            Some(LPARAM(color.unwrap_or(0) as isize)),
-        );
+        InvalidateRect(Some(hwnd_edit), None, true);
     }
     Ok(())
 }

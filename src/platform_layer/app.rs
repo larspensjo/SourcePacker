@@ -366,6 +366,7 @@ impl PlatformInterface {
             next_menu_item_id_counter: 30000, // Initial value for menu item IDs
             layout_rules: None,
             label_severities: HashMap::new(), // For new status labels
+            input_bg_colors: HashMap::new(),
             status_bar_font: None,            // Font for status bar labels
         };
 
