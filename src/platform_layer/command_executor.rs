@@ -12,7 +12,7 @@
 use super::app::Win32ApiInternalState;
 use super::controls::treeview_handler; // Ensure treeview_handler is used for its functions
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
+use super::types::{CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
 
 use crate::platform_layer::window_common::WC_BUTTON;
 use std::sync::Arc;
@@ -95,9 +95,10 @@ pub(crate) fn execute_quit_application() -> PlatformResult<()> {
 
 /*
  * Executes the `SignalMainWindowUISetupComplete` command.
- * Retrieves the application's event handler and sends it an
- * `AppEvent::MainWindowUISetupComplete` to signal that `MyAppLogic` can proceed
- * with its data-dependent UI initialization.
+ * Instead of invoking the application logic immediately, this function posts a
+ * custom window message. The event is then delivered once the Win32 message
+ * loop is running, ensuring that controls like the TreeView have completed
+ * their internal setup before the application populates them.
  */
 pub(crate) fn execute_signal_main_window_ui_setup_complete(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -108,37 +109,67 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
         window_id
     );
 
-    let handler_arc_opt = {
-        let event_handler_guard = internal_state
-            .application_event_handler
-            .lock()
-            .map_err(|e| {
-                log::error!(
-                    "CommandExecutor: Failed to lock internal event_handler field: {:?}",
-                    e
+    // Defer the event until the Win32 message loop is running by posting a
+    // custom message to the window. The window procedure will translate it into
+    // `AppEvent::MainWindowUISetupComplete`.
+    let hwnd_target = {
+        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+            log::error!(
+                "CommandExecutor: Failed to lock windows map to post UI setup complete: {:?}",
+                e
+            );
+            PlatformError::OperationFailed(
+                "Failed to lock windows map to post UI setup complete".into(),
+            )
+        })?;
+        windows_guard
+            .get(&window_id)
+            .ok_or_else(|| {
+                log::warn!(
+                    "CommandExecutor: WindowId {:?} not found to post UI setup complete.",
+                    window_id
                 );
-                PlatformError::OperationFailed("Failed to lock internal event_handler field".into())
-            })?;
-        event_handler_guard
-            .as_ref()
-            .and_then(|weak_handler| weak_handler.upgrade())
+                PlatformError::InvalidHandle(format!(
+                    "WindowId {:?} not found to post UI setup complete",
+                    window_id
+                ))
+            })?
+            .this_window_hwnd
     };
 
-    if let Some(handler_arc) = handler_arc_opt {
-        let mut handler_guard = handler_arc.lock().map_err(|e| {
-            log::error!("CommandExecutor: Failed to lock app event handler for MainWindowUISetupComplete: {:?}", e);
-            PlatformError::OperationFailed("Failed to lock app event handler for MainWindowUISetupComplete".into())
-        })?;
-        handler_guard.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
-        Ok(())
-    } else {
-        log::error!(
-            "CommandExecutor: Event handler not available to send MainWindowUISetupComplete event."
+    if hwnd_target.is_invalid() {
+        log::warn!(
+            "CommandExecutor: Invalid HWND when posting UI setup complete for WindowId {:?}",
+            window_id
         );
-        Err(PlatformError::OperationFailed(
-            "Event handler (MyAppLogic) not available for MainWindowUISetupComplete.".into(),
-        ))
+        return Err(PlatformError::InvalidHandle(format!(
+            "Invalid HWND for WindowId {:?} when posting UI setup complete",
+            window_id
+        )));
     }
+
+    unsafe {
+        if PostMessageW(
+            hwnd_target,
+            crate::platform_layer::window_common::WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE,
+            WPARAM(0),
+            LPARAM(0),
+        )
+        .is_err()
+        {
+            let err = GetLastError();
+            log::error!(
+                "CommandExecutor: Failed to post WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE: {:?}",
+                err
+            );
+            return Err(PlatformError::OperationFailed(format!(
+                "Failed to post WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE: {:?}",
+                err
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 /*

@@ -55,6 +55,11 @@ pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);
 // Custom application message for TreeView checkbox clicks.
 // Defined here as it's part of the window message protocol that window_common handles.
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
+// Custom application message used to defer the MainWindowUISetupComplete event
+// until after the Win32 message loop has started. This ensures controls like the
+// TreeView have completed their creation and are ready for commands such as
+// populating items with checkboxes.
+pub(crate) const WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE: u32 = WM_APP + 0x101;
 
 // General UI constants
 pub const STATUS_BAR_HEIGHT: i32 = 25; // Example height for status bar
@@ -335,6 +340,9 @@ impl Win32ApiInternalState {
                 event_to_send = treeview_handler::handle_wm_app_treeview_checkbox_clicked(
                     self, hwnd, window_id, wparam, lparam,
                 );
+            }
+            WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE => {
+                event_to_send = Some(AppEvent::MainWindowUISetupComplete { window_id });
             }
             WM_GETMINMAXINFO => {
                 lresult_override =
