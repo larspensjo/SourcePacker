@@ -108,14 +108,12 @@ impl TreeViewInternalState {
         };
 
         let tv_item = TVITEMEXW {
-            mask: TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN | TVIF_STATE,
+            mask: TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN,
             hItem: HTREEITEM::default(), // Will be filled by the system if successful
             pszText: PWSTR(text_buffer.as_mut_ptr()),
             cchTextMax: text_buffer.len() as i32,
             lParam: LPARAM(item_desc.id.0 as isize), // Store app-specific TreeItemId
             cChildren: TVITEMEXW_CHILDREN(if item_desc.is_folder { 1 } else { 0 }), // Hint if it has children
-            state: (image_index as u32) << 12, // Set state image index (shifted by 12 bits)
-            stateMask: TVIS_STATEIMAGEMASK.0,  // Mask to indicate we are setting state image
             ..Default::default()
         };
 
@@ -150,6 +148,26 @@ impl TreeViewInternalState {
             .insert(item_desc.id, h_current_item_native);
         self.htreeitem_to_item_id
             .insert(h_current_item_native.0, item_desc.id);
+
+        // Explicitly set the state after insertion. This ensures the built-in
+        // state image list for checkboxes is attached before we request a
+        // particular check state.
+        let mut tv_item_update = TVITEMEXW {
+            mask: TVIF_STATE,
+            hItem: h_current_item_native,
+            state: (image_index as u32) << 12,
+            stateMask: TVIS_STATEIMAGEMASK.0,
+            ..Default::default()
+        };
+
+        unsafe {
+            SendMessageW(
+                hwnd_treeview,
+                TVM_SETITEMW,
+                Some(WPARAM(0)),
+                Some(LPARAM(&mut tv_item_update as *mut _ as isize)),
+            );
+        }
 
         // Recursively add children if this item is a folder and has children
         if item_desc.is_folder && !item_desc.children.is_empty() {

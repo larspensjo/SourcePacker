@@ -1106,6 +1106,14 @@ impl MyAppLogic {
 
         self._update_window_title_with_profile_and_archive(window_id);
 
+        // Show the main window before populating the TreeView. This ensures that
+        // child controls like the TreeView have completed their visual setup
+        // (including attaching the state image list used for checkboxes) before
+        // we insert items with a checked state.
+        self
+            .synchronous_command_queue
+            .push_back(PlatformCommand::ShowWindow { window_id });
+
         {
             let ui_state_mut = self
                 .ui_state
@@ -1126,8 +1134,7 @@ impl MyAppLogic {
             app_error!(self, "{}", final_status_message);
         }
 
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::ShowWindow { window_id });
+
     }
 
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {

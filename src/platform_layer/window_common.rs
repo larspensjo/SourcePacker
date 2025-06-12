@@ -55,6 +55,11 @@ pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);
 // Custom application message for TreeView checkbox clicks.
 // Defined here as it's part of the window message protocol that window_common handles.
 pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
+// Custom application message used to defer the MainWindowUISetupComplete event
+// until after the Win32 message loop has started. This ensures controls like the
+// TreeView have completed their creation and are ready for commands such as
+// populating items with checkboxes.
+pub(crate) const WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE: u32 = WM_APP + 0x101;
 
 // General UI constants
 pub const STATUS_BAR_HEIGHT: i32 = 25; // Example height for status bar
@@ -90,7 +95,8 @@ pub(crate) struct NativeWindowData {
     /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
-    pub(crate) input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
+    pub(crate) input_bg_colors:
+        HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     pub(crate) status_bar_font: Option<HFONT>,
 }
 
@@ -336,6 +342,12 @@ impl Win32ApiInternalState {
                     self, hwnd, window_id, wparam, lparam,
                 );
             }
+            WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE => {
+                log::debug!(
+                    "handle_window_message: Received message WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE"
+                );
+                event_to_send = Some(AppEvent::MainWindowUISetupComplete { window_id });
+            }
             WM_GETMINMAXINFO => {
                 lresult_override =
                     Some(self.handle_wm_getminmaxinfo(hwnd, wparam, lparam, window_id));
@@ -353,12 +365,8 @@ impl Win32ApiInternalState {
             WM_CTLCOLOREDIT => {
                 let hdc_edit = HDC(wparam.0 as *mut c_void);
                 let hwnd_edit = HWND(lparam.0 as *mut c_void);
-                lresult_override = input_handler::handle_wm_ctlcoloredit(
-                    self,
-                    window_id,
-                    hdc_edit,
-                    hwnd_edit,
-                );
+                lresult_override =
+                    input_handler::handle_wm_ctlcoloredit(self, window_id, hdc_edit, hwnd_edit);
             }
             _ => {}
         }
