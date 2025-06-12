@@ -116,10 +116,6 @@ impl NativeWindowData {
         }
     }
 
-    pub(crate) fn get_window_id(&self) -> WindowId {
-        self.logical_window_id
-    }
-
     pub(crate) fn get_hwnd(&self) -> HWND {
         self.this_window_hwnd
     }
