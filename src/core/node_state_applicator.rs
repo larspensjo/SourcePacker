@@ -68,9 +68,9 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
         deselected_paths: &HashSet<PathBuf>,
     ) {
         for node in tree.iter_mut() {
-            if selected_paths.contains(&node.path) {
+            if selected_paths.contains(node.path()) {
                 node.state = SelectionState::Selected;
-            } else if deselected_paths.contains(&node.path) {
+            } else if deselected_paths.contains(node.path()) {
                 node.state = SelectionState::Deselected;
             } else {
                 node.state = SelectionState::New;

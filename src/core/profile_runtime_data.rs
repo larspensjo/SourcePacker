@@ -117,17 +117,17 @@ impl ProfileRuntimeData {
         node: &FileNode,
         cache: &mut HashMap<PathBuf, FileTokenDetails>,
     ) -> Option<usize> {
-        if let Some(details) = cache.get(&node.path) {
+        if let Some(details) = cache.get(node.path()) {
             if node.checksum_match(Some(details)) {
                 return Some(details.token_count);
             }
         }
 
-        let content = match fs::read_to_string(&node.path) {
+        let content = match fs::read_to_string(node.path()) {
             Ok(c) => c,
             Err(_e) => {
                 // Remove any stale checksum from the cache
-                cache.remove(&node.path);
+                cache.remove(node.path());
                 return None;
             }
         };
@@ -135,7 +135,7 @@ impl ProfileRuntimeData {
         let tokens_in_file = token_counter_service.count_tokens(&content);
 
         cache.insert(
-            node.path.clone(),
+            node.path().to_path_buf(),
             node.new_file_token_details(tokens_in_file),
         );
 
@@ -148,7 +148,7 @@ impl ProfileRuntimeData {
         path_to_find: &Path,
     ) -> Option<&'a FileNode> {
         for node in nodes.iter() {
-            if node.path == path_to_find {
+            if node.path() == path_to_find {
                 return Some(node);
             }
             if node.is_dir && !node.children.is_empty() {
@@ -168,7 +168,7 @@ impl ProfileRuntimeData {
         path_to_find: &Path,
     ) -> Option<&'a mut FileNode> {
         for node in nodes.iter_mut() {
-            if node.path == path_to_find {
+            if node.path() == path_to_find {
                 return Some(node);
             }
             if node.is_dir && !node.children.is_empty() {
@@ -191,10 +191,10 @@ impl ProfileRuntimeData {
         for node in nodes {
             match node.state {
                 SelectionState::Selected => {
-                    selected.insert(node.path.clone());
+                    selected.insert(node.path().to_path_buf());
                 }
                 SelectionState::Deselected => {
-                    deselected.insert(node.path.clone());
+                    deselected.insert(node.path().to_path_buf());
                 }
                 SelectionState::New => {}
             }
@@ -213,7 +213,7 @@ impl ProfileRuntimeData {
         node: &FileNode,
         updates: &mut Vec<(PathBuf, SelectionState)>,
     ) {
-        updates.push((node.path.clone(), node.state));
+        updates.push((node.path().to_path_buf(), node.state));
         if node.is_dir {
             for child in &node.children {
                 Self::collect_node_states_recursive(child, updates);
@@ -387,7 +387,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                         *failed_count += 1;
                         log::warn!(
                             "ProfileRuntimeData (sum_tokens_recursive): Failed to get token count for selected file {:?}",
-                            node.path
+                            node.path()
                         );
                     }
                 }
@@ -454,10 +454,10 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     // Children's states will be handled individually.
                     match node.state {
                         SelectionState::Selected => {
-                            selected_paths_out.insert(node.path.clone());
+                            selected_paths_out.insert(node.path().to_path_buf());
                         }
                         SelectionState::Deselected => {
-                            deselected_paths_out.insert(node.path.clone());
+                            deselected_paths_out.insert(node.path().to_path_buf());
                         }
                         SelectionState::New => {}
                     }
@@ -474,15 +474,15 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     // It's a file
                     match node.state {
                         SelectionState::Selected => {
-                            selected_paths_out.insert(node.path.clone());
+                            selected_paths_out.insert(node.path().to_path_buf());
                             // Only add details for selected files to file_details_out
-                            if let Some(detail) = cached_details.get(&node.path) {
+                            if let Some(detail) = cached_details.get(node.path()) {
                                 // We trust the cache. The checksum in `detail` is what we save.
                                 // `node.checksum` is the latest from disk, but we're saving the cached state.
-                                file_details_out.insert(node.path.clone(), detail.clone());
+                                file_details_out.insert(node.path().to_path_buf(), detail.clone());
                                 log::trace!(
                                     "Snapshot: Using cached detail for selected file {:?}: (cs: {}, count: {})",
-                                    node.path,
+                                    node.path(),
                                     detail.checksum,
                                     detail.token_count
                                 );
@@ -492,12 +492,12 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                                 // update_total_token_count, or get_token_count_with_cache failed for it.
                                 log::warn!(
                                     "Snapshot: Selected file {:?} not found in cache. Its details will not be saved in profile.",
-                                    node.path
+                                    node.path()
                                 );
                             }
                         }
                         SelectionState::Deselected => {
-                            deselected_paths_out.insert(node.path.clone());
+                            deselected_paths_out.insert(node.path().to_path_buf());
                         }
                         SelectionState::New => {}
                     }
@@ -703,9 +703,9 @@ mod tests {
             ));
             // Simulate actual behavior for test consistency
             for node in tree.iter_mut() {
-                if selected_paths.contains(&node.path) {
+                if selected_paths.contains(node.path()) {
                     node.state = SelectionState::Selected;
-                } else if deselected_paths.contains(&node.path) {
+                } else if deselected_paths.contains(node.path()) {
                     node.state = SelectionState::Deselected;
                 } else {
                     node.state = SelectionState::New;
@@ -723,7 +723,7 @@ mod tests {
             self.update_folder_selection_calls
                 .lock()
                 .unwrap()
-                .push((node.path.clone(), new_state));
+                .push((node.path().to_path_buf(), new_state));
             node.state = new_state;
             if node.is_dir {
                 for child in node.children.iter_mut() {

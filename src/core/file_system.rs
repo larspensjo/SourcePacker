@@ -571,14 +571,14 @@ mod tests {
         let scanner = CoreFileSystemScanner::new();
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
 
-        let file1_node = nodes.iter().find(|n| n.path == file1_path).unwrap();
+        let file1_node = nodes.iter().find(|n| n.path() == file1_path).unwrap();
         let ftd = FileTokenDetails {
             checksum: checksum_utils::calculate_sha256_checksum(&file1_path).unwrap(),
             token_count: 0,
         };
         assert!(file1_node.checksum_match(Some(&ftd)));
 
-        let subdir_node = nodes.iter().find(|n| n.path == subdir_path).unwrap();
+        let subdir_node = nodes.iter().find(|n| n.path() == subdir_path).unwrap();
         assert!(subdir_node.is_dir);
         Ok(())
     }

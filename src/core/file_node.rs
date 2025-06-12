@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize}; // For Profile serialization
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app_logic::handler::PathToTreeItemIdMap;
 use crate::platform_layer::{CheckState, TreeItemDescriptor, TreeItemId};
@@ -30,7 +30,7 @@ impl Default for SelectionState {
  */
 #[derive(Debug, Clone, PartialEq)] // Not serializing FileNode directly; Profile stores paths.
 pub struct FileNode {
-    pub path: PathBuf,
+    path: PathBuf,
     pub name: String,
     pub is_dir: bool,
     pub state: SelectionState,
@@ -57,6 +57,10 @@ impl FileNode {
 
     pub fn is_selected(&self) -> bool {
         self.state == SelectionState::Selected
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
@@ -134,7 +138,7 @@ impl FileNode {
             *next_tree_item_id_counter += 1;
             let item_id = TreeItemId(id_val);
 
-            path_to_tree_item_id.insert(node.path.clone(), item_id);
+            path_to_tree_item_id.insert(node.path().to_path_buf(), item_id);
 
             let children = Self::build_tree_item_descriptors_recursive(
                 &node.children,
@@ -180,7 +184,7 @@ impl FileNode {
                     let id_val = *counter;
                     *counter += 1;
                     let item_id = TreeItemId(id_val);
-                    map.insert(node.path.clone(), item_id);
+                    map.insert(node.path().to_path_buf(), item_id);
                     let descriptor = node.new_tree_item_descriptor(item_id, children);
                     descriptors.push(descriptor);
                 }
@@ -269,7 +273,7 @@ mod tests {
     fn test_filenode_new_defaults() {
         let p = PathBuf::from("/tmp/foo");
         let n = FileNode::new_test(p.clone(), "foo".into(), false);
-        assert_eq!(n.path, p);
+        assert_eq!(n.path(), p.as_path());
         assert_eq!(n.name, "foo");
         assert_eq!(n.is_dir, false);
         assert_eq!(n.state, SelectionState::New);
