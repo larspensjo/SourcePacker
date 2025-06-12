@@ -8,12 +8,10 @@ use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::WindowId;
 use std::sync::Arc;
-use windows::{
-    Win32::{
-        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM, COLORREF},
-        Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH, SetBkColor},
-        UI::WindowsAndMessaging::{GetDlgCtrlID, InvalidateRect},
-    },
+use windows::Win32::{
+    Foundation::{COLORREF, GetLastError, HWND, LRESULT},
+    Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH, SetBkColor},
+    UI::WindowsAndMessaging::GetDlgCtrlID,
 };
 
 #[derive(Debug)]
@@ -28,7 +26,9 @@ pub(crate) fn set_input_background_color(
     color: Option<u32>,
 ) -> PlatformResult<()> {
     if let Some(existing) = window_data.input_bg_colors.remove(&control_id) {
-        unsafe { let _ = DeleteObject(existing.brush); }
+        unsafe {
+            let _ = DeleteObject(existing.brush.into());
+        }
     }
     if let Some(c) = color {
         let colorref = COLORREF(c);
@@ -39,9 +39,13 @@ pub(crate) fn set_input_background_color(
                 unsafe { GetLastError() }
             )));
         }
-        window_data
-            .input_bg_colors
-            .insert(control_id, InputColorState { color: colorref, brush });
+        window_data.input_bg_colors.insert(
+            control_id,
+            InputColorState {
+                color: colorref,
+                brush,
+            },
+        );
     }
     Ok(())
 }
@@ -69,6 +73,8 @@ pub(crate) fn handle_wm_ctlcoloredit(
 
 pub(crate) fn cleanup(window_data: &mut crate::platform_layer::window_common::NativeWindowData) {
     for (_, state) in window_data.input_bg_colors.drain() {
-        unsafe { let _ = DeleteObject(state.brush); }
+        unsafe {
+            let _ = DeleteObject(state.brush.into());
+        }
     }
 }

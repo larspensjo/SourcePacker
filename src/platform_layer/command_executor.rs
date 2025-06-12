@@ -19,11 +19,8 @@ use std::sync::Arc;
 use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
-        UI::{
-            Controls::WC_EDITW,
-            Input::KeyboardAndMouse::EnableWindow,
-            WindowsAndMessaging::*,
-        },
+        Graphics::Gdi::InvalidateRect,
+        UI::{Controls::WC_EDITW, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*},
     },
     core::HSTRING,
 };
@@ -722,7 +719,7 @@ pub(crate) fn execute_set_input_background_color(
     }
 
     unsafe {
-        InvalidateRect(Some(hwnd_edit), None, true);
+        _ = InvalidateRect(Some(hwnd_edit), None, true);
     }
     Ok(())
 }
@@ -753,9 +750,9 @@ pub(crate) fn execute_close_window(
 
 /*
  * Custom window procedure for panel controls.
- * It forwards WM_COMMAND messages to the panel's parent so that
- * controls embedded within the panel generate events at the main
- * window level.
+ * It forwards important messages like WM_COMMAND and WM_CTLCOLOR* to the panel's parent
+ * so that controls embedded within the panel generate events and can be custom-drawn
+ * at the main window level.
  */
 unsafe extern "system" fn forwarding_panel_proc(
     hwnd: HWND,
@@ -764,14 +761,22 @@ unsafe extern "system" fn forwarding_panel_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
-        if msg == WM_COMMAND {
+        // Forward key messages to the parent window (the main window).
+        // This allows the main window's WndProc to handle notifications from controls inside the panel.
+        if msg == WM_COMMAND
+            || msg == WM_CTLCOLOREDIT
+            || msg == WM_CTLCOLORSTATIC
+            || msg == WM_NOTIFY
+        {
             if let Ok(parent) = GetParent(hwnd) {
                 if !parent.is_invalid() {
-                    SendMessageW(parent, WM_COMMAND, Some(wparam), Some(lparam));
+                    // Use SendMessageW to synchronously send the message and return the result.
+                    // This is crucial for messages like WM_CTLCOLOREDIT that expect a return value (HBRUSH).
+                    return SendMessageW(parent, msg, Some(wparam), Some(lparam));
                 }
             }
-            return LRESULT(0);
         }
+
         let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if prev != 0 {
             let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
