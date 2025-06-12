@@ -217,7 +217,7 @@ pub(crate) fn handle_create_treeview_command(
             ))
         })?;
 
-        if window_data.control_hwnd_map.contains_key(&control_id)
+        if window_data.has_control(control_id)
             || window_data.has_treeview_state()
         {
             log::warn!(
@@ -293,7 +293,7 @@ pub(crate) fn handle_create_treeview_command(
         })?;
 
         // Check again in case the window was destroyed or control created by another thread
-        if window_data.control_hwnd_map.contains_key(&control_id)
+        if window_data.has_control(control_id)
             || window_data.has_treeview_state()
         {
             log::warn!(
@@ -310,7 +310,7 @@ pub(crate) fn handle_create_treeview_command(
             )));
         }
 
-        window_data.control_hwnd_map.insert(control_id, hwnd_tv);
+        window_data.register_control_hwnd(control_id, hwnd_tv);
         window_data.init_treeview_state();
         log::debug!(
             "TreeViewHandler: Created TreeView (ID {}) for window {:?} with HWND {:?}",

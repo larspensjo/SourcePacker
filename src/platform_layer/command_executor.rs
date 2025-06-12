@@ -426,7 +426,7 @@ pub(crate) fn execute_create_button(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&control_id) {
+    if window_data.has_control(control_id) {
         log::warn!(
             "CommandExecutor: Button with ID {} already exists for window {:?}.",
             control_id,
@@ -465,7 +465,7 @@ pub(crate) fn execute_create_button(
             None,
         )?
     };
-    window_data.control_hwnd_map.insert(control_id, hwnd_button);
+    window_data.register_control_hwnd(control_id, hwnd_button);
     log::debug!(
         "CommandExecutor: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
         text,
@@ -583,7 +583,7 @@ pub(crate) fn execute_create_input(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&control_id) {
+    if window_data.has_control(control_id) {
         log::warn!(
             "CommandExecutor: Input with logical ID {} already exists for window {:?}",
             control_id,
@@ -637,7 +637,7 @@ pub(crate) fn execute_create_input(
         )?
     };
 
-    window_data.control_hwnd_map.insert(control_id, hwnd_edit);
+    window_data.register_control_hwnd(control_id, hwnd_edit);
     log::debug!(
         "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
         control_id,
@@ -851,7 +851,7 @@ pub(crate) fn execute_create_panel(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&panel_id) {
+    if window_data.has_control(panel_id) {
         log::warn!(
             "CommandExecutor: Panel with logical ID {} already exists for window {:?}.",
             panel_id,
@@ -906,7 +906,7 @@ pub(crate) fn execute_create_panel(
         let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
         SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
     }
-    window_data.control_hwnd_map.insert(panel_id, hwnd_panel);
+    window_data.register_control_hwnd(panel_id, hwnd_panel);
     log::debug!(
         "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
         panel_id,

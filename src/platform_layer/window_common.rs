@@ -85,7 +85,7 @@ pub(crate) struct NativeWindowData {
     // The specific internal state for the TreeView control if one exists.
     treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
-    pub(crate) control_hwnd_map: HashMap<i32, HWND>,
+    control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     pub(crate) menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
@@ -126,6 +126,18 @@ impl NativeWindowData {
 
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.control_hwnd_map.get(&control_id).copied()
+    }
+
+    pub(crate) fn register_control_hwnd(&mut self, control_id: i32, hwnd: HWND) {
+        self.control_hwnd_map.insert(control_id, hwnd);
+    }
+
+    pub(crate) fn has_control(&self, control_id: i32) -> bool {
+        self.control_hwnd_map.contains_key(&control_id)
+    }
+
+    pub(crate) fn control_hwnds(&self) -> &HashMap<i32, HWND> {
+        &self.control_hwnd_map
     }
 
     pub(crate) fn has_treeview_state(&self) -> bool {
@@ -899,7 +911,7 @@ impl Win32ApiInternalState {
             None,
             client_rect,
             rules,
-            &window_data.control_hwnd_map,
+            window_data.control_hwnds(),
         );
     }
 
