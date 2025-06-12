@@ -308,6 +308,11 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
+            PlatformCommand::SetInputBackgroundColor {
+                window_id,
+                control_id,
+                color,
+            } => command_executor::execute_set_input_background_color(self, window_id, control_id, color),
         }
     }
 }
@@ -361,6 +366,7 @@ impl PlatformInterface {
             next_menu_item_id_counter: 30000, // Initial value for menu item IDs
             layout_rules: None,
             label_severities: HashMap::new(), // For new status labels
+            input_bg_colors: HashMap::new(),
             status_bar_font: None,            // Font for status bar labels
         };
 

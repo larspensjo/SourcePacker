@@ -19,6 +19,7 @@ use std::sync::Arc;
 use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::InvalidateRect,
         UI::{Controls::WC_EDITW, Input::KeyboardAndMouse::EnableWindow, WindowsAndMessaging::*},
     },
     core::HSTRING,
@@ -672,6 +673,57 @@ pub(crate) fn execute_set_input_text(
     Ok(())
 }
 
+/*
+ * Executes the `SetInputBackgroundColor` command. The desired color is stored
+ * in `NativeWindowData` and applied during WM_CTLCOLOREDIT handling. This
+ * avoids reliance on EM_SETBKGNDCOLOR which is not supported for plain EDIT
+ * controls on all Windows versions.
+ */
+pub(crate) fn execute_set_input_background_color(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+    color: Option<u32>,
+) -> PlatformResult<()> {
+    let hwnd_edit;
+    {
+        let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
+            log::error!(
+                "CommandExecutor: Failed to lock windows map for SetInputBackgroundColor: {:?}",
+                e
+            );
+            PlatformError::OperationFailed("Failed to lock windows map".into())
+        })?;
+        let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: WindowId {:?} not found for SetInputBackgroundColor",
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for SetInputBackgroundColor",
+                window_id
+            ))
+        })?;
+        hwnd_edit = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
+                control_id,
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
+                control_id, window_id
+            ))
+        })?;
+        super::controls::input_handler::set_input_background_color(window_data, control_id, color)?;
+    }
+
+    unsafe {
+        _ = InvalidateRect(Some(hwnd_edit), None, true);
+    }
+    Ok(())
+}
+
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)
 pub(crate) fn execute_set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -698,9 +750,9 @@ pub(crate) fn execute_close_window(
 
 /*
  * Custom window procedure for panel controls.
- * It forwards WM_COMMAND messages to the panel's parent so that
- * controls embedded within the panel generate events at the main
- * window level.
+ * It forwards important messages like WM_COMMAND and WM_CTLCOLOR* to the panel's parent
+ * so that controls embedded within the panel generate events and can be custom-drawn
+ * at the main window level.
  */
 unsafe extern "system" fn forwarding_panel_proc(
     hwnd: HWND,
@@ -709,14 +761,22 @@ unsafe extern "system" fn forwarding_panel_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
-        if msg == WM_COMMAND {
+        // Forward key messages to the parent window (the main window).
+        // This allows the main window's WndProc to handle notifications from controls inside the panel.
+        if msg == WM_COMMAND
+            || msg == WM_CTLCOLOREDIT
+            || msg == WM_CTLCOLORSTATIC
+            || msg == WM_NOTIFY
+        {
             if let Ok(parent) = GetParent(hwnd) {
                 if !parent.is_invalid() {
-                    SendMessageW(parent, WM_COMMAND, Some(wparam), Some(lparam));
+                    // Use SendMessageW to synchronously send the message and return the result.
+                    // This is crucial for messages like WM_CTLCOLOREDIT that expect a return value (HBRUSH).
+                    return SendMessageW(parent, msg, Some(wparam), Some(lparam));
                 }
             }
-            return LRESULT(0);
         }
+
         let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if prev != 0 {
             let prev_proc: WNDPROC = std::mem::transmute(prev as isize);

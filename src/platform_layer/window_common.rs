@@ -11,7 +11,7 @@
  */
 use super::{
     app::Win32ApiInternalState,
-    controls::{label_handler, treeview_handler},
+    controls::{input_handler, label_handler, treeview_handler},
     error::{PlatformError, Result as PlatformResult},
     types::{
         AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformEventHandler,
@@ -89,6 +89,8 @@ pub(crate) struct NativeWindowData {
     pub(crate) layout_rules: Option<Vec<LayoutRule>>,
     /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
+    /// Background color state for input controls keyed by their logical ID.
+    pub(crate) input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     pub(crate) status_bar_font: Option<HFONT>,
 }
 
@@ -346,6 +348,16 @@ impl Win32ApiInternalState {
                     window_id,
                     hdc_static_ctrl,
                     hwnd_static_ctrl,
+                );
+            }
+            WM_CTLCOLOREDIT => {
+                let hdc_edit = HDC(wparam.0 as *mut c_void);
+                let hwnd_edit = HWND(lparam.0 as *mut c_void);
+                lresult_override = input_handler::handle_wm_ctlcoloredit(
+                    self,
+                    window_id,
+                    hdc_edit,
+                    hwnd_edit,
                 );
             }
             _ => {}
@@ -987,6 +999,7 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
+                super::controls::input_handler::cleanup(&mut window_data_entry);
                 log::debug!("Removed WindowId {:?} from active_windows.", window_id);
             } else {
                 log::warn!(

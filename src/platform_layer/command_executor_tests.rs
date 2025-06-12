@@ -39,6 +39,7 @@ fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) 
         next_menu_item_id_counter: 30000,
         layout_rules: None,
         label_severities: HashMap::new(),
+        input_bg_colors: HashMap::new(),
         status_bar_font: None,
     };
     (internal_state_arc, window_id, native_window_data)

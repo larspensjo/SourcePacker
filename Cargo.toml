@@ -16,7 +16,7 @@ log = "0.4"
 simplelog = "0.12.2"
 tiktoken-rs = "0.7.0"
 time = "0.3.41"
-sha2 = "0.10.8" # Version was updated slightly to match latest, but 0.10.9 is also fine.
+sha2 = "0.10.8"
 
 [dev-dependencies]
 tempfile = "3.20.0"
@@ -24,7 +24,7 @@ rand = "0.9.1"
 
 # These dependencies are ONLY included when compiling for Windows.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61.1", features = [ # I've updated to the version in your log, but 0.61.1 is also fine if your lock file uses it.
+windows = { version = "0.61.2", features = [ # I've updated to the version in your log, but 0.61.1 is also fine if your lock file uses it.
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",
@@ -37,7 +37,8 @@ windows = { version = "0.61.1", features = [ # I've updated to the version in yo
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging"
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Controls_RichEdit",
 ]}
 
 [profile.dev]

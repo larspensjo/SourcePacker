@@ -8,7 +8,7 @@
  * to get necessary data for UI display.
  */
 use crate::core::{ArchiveStatus, ProfileRuntimeDataOperations};
-use crate::platform_layer::WindowId;
+use crate::platform_layer::{TreeItemDescriptor, WindowId};
 use std::collections::HashMap;
 
 // These types are currently defined in `handler.rs`.
@@ -37,6 +37,10 @@ pub struct MainWindowUiState {
     pub pending_new_profile_name: Option<String>,
     /* Stores the current text used for filtering the TreeView. */
     pub filter_text: Option<String>,
+    /* Cached descriptors from the last successful filter operation. */
+    pub last_successful_filter_result: Vec<TreeItemDescriptor>,
+    /* Indicates that the current filter text yielded no matches. */
+    pub filter_no_match: bool,
 }
 
 impl MainWindowUiState {
@@ -58,6 +62,8 @@ impl MainWindowUiState {
             pending_action: None,
             pending_new_profile_name: None,
             filter_text: None,
+            last_successful_filter_result: Vec::new(),
+            filter_no_match: false,
         }
     }
 
@@ -198,6 +204,8 @@ mod tests {
         assert!(ui_state.pending_action.is_none());
         assert!(ui_state.pending_new_profile_name.is_none());
         assert!(ui_state.filter_text.is_none());
+        assert!(ui_state.last_successful_filter_result.is_empty());
+        assert!(!ui_state.filter_no_match);
     }
 
     #[test]

@@ -213,12 +213,25 @@ impl MyAppLogic {
             )
         };
 
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::PopulateTreeView {
-                window_id,
-                control_id: ui_constants::ID_TREEVIEW_CTRL,
-                items: descriptors,
-            });
+        let (items_to_use, no_match) = if ui_state.filter_text.is_some() {
+            if descriptors.is_empty() {
+                (ui_state.last_successful_filter_result.clone(), true)
+            } else {
+                ui_state.last_successful_filter_result = descriptors.clone();
+                (descriptors, false)
+            }
+        } else {
+            ui_state.last_successful_filter_result = descriptors.clone();
+            (descriptors, false)
+        };
+
+        ui_state.filter_no_match = no_match;
+
+        self.synchronous_command_queue.push_back(PlatformCommand::PopulateTreeView {
+            window_id,
+            control_id: ui_constants::ID_TREEVIEW_CTRL,
+            items: items_to_use,
+        });
     }
 
     /*
@@ -1552,15 +1565,42 @@ impl MyAppLogic {
             }
         };
 
-        if text.is_empty() {
+        let filter_active = if text.is_empty() {
             log::debug!("Filter text submitted is empty. Clearing active filter.");
             ui_state_mut.filter_text = None;
+            false
         } else {
             log::debug!("Filter text submitted: '{}'. Storing for filtering.", text);
             ui_state_mut.filter_text = Some(text);
-        }
+            true
+        };
 
         self.repopulate_tree_view(window_id);
+
+        let ui_state_ref = self.ui_state.as_ref().unwrap();
+
+        let color_cmd = if filter_active {
+            if ui_state_ref.filter_no_match {
+                PlatformCommand::SetInputBackgroundColor {
+                    window_id,
+                    control_id: ui_constants::FILTER_INPUT_ID,
+                    color: Some(ui_constants::FILTER_COLOR_NO_MATCH),
+                }
+            } else {
+                PlatformCommand::SetInputBackgroundColor {
+                    window_id,
+                    control_id: ui_constants::FILTER_INPUT_ID,
+                    color: Some(ui_constants::FILTER_COLOR_ACTIVE),
+                }
+            }
+        } else {
+            PlatformCommand::SetInputBackgroundColor {
+                window_id,
+                control_id: ui_constants::FILTER_INPUT_ID,
+                color: None,
+            }
+        };
+        self.synchronous_command_queue.push_back(color_cmd);
 
         self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
             window_id,
@@ -1582,7 +1622,13 @@ impl MyAppLogic {
             control_id: ui_constants::FILTER_INPUT_ID,
             text: String::new(),
         });
+        let _ = ui_state_mut; // release borrow before repopulating
         self.repopulate_tree_view(window_id);
+        self.synchronous_command_queue.push_back(PlatformCommand::SetInputBackgroundColor {
+            window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
+            color: None,
+        });
 
         self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
             window_id,

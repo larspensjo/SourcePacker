@@ -340,6 +340,12 @@ pub enum PlatformCommand {
         control_id: i32,
         text: String,
     },
+    /// Sets the background color of an input control. None resets to system default.
+    SetInputBackgroundColor {
+        window_id: WindowId,
+        control_id: i32,
+        color: Option<u32>,
+    },
     UpdateLabelText {
         window_id: WindowId,
         control_id: i32,
