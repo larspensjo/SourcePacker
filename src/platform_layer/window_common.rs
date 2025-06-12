@@ -95,7 +95,8 @@ pub(crate) struct NativeWindowData {
     /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
-    pub(crate) input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
+    pub(crate) input_bg_colors:
+        HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     pub(crate) status_bar_font: Option<HFONT>,
 }
 
@@ -342,6 +343,9 @@ impl Win32ApiInternalState {
                 );
             }
             WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE => {
+                log::debug!(
+                    "handle_window_message: Received message WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE"
+                );
                 event_to_send = Some(AppEvent::MainWindowUISetupComplete { window_id });
             }
             WM_GETMINMAXINFO => {
@@ -361,12 +365,8 @@ impl Win32ApiInternalState {
             WM_CTLCOLOREDIT => {
                 let hdc_edit = HDC(wparam.0 as *mut c_void);
                 let hwnd_edit = HWND(lparam.0 as *mut c_void);
-                lresult_override = input_handler::handle_wm_ctlcoloredit(
-                    self,
-                    window_id,
-                    hdc_edit,
-                    hwnd_edit,
-                );
+                lresult_override =
+                    input_handler::handle_wm_ctlcoloredit(self, window_id, hdc_edit, hwnd_edit);
             }
             _ => {}
         }

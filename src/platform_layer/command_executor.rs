@@ -148,6 +148,9 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
         )));
     }
 
+    log::debug!(
+        "execute_signal_main_window_ui_setup_complete: Post message WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE"
+    );
     unsafe {
         if PostMessageW(
             Some(hwnd_target),
