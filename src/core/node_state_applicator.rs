@@ -68,15 +68,15 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
         deselected_paths: &HashSet<PathBuf>,
     ) {
         for node in tree.iter_mut() {
-            if selected_paths.contains(&node.path) {
-                node.state = SelectionState::Selected;
-            } else if deselected_paths.contains(&node.path) {
-                node.state = SelectionState::Deselected;
+            if selected_paths.contains(node.path()) {
+                node.set_state(SelectionState::Selected);
+            } else if deselected_paths.contains(node.path()) {
+                node.set_state(SelectionState::Deselected);
             } else {
-                node.state = SelectionState::New;
+                node.set_state(SelectionState::New);
             }
 
-            if node.is_dir && !node.children.is_empty() {
+            if node.is_dir() && !node.children.is_empty() {
                 self.apply_selection_states_to_nodes(
                     &mut node.children,
                     selected_paths,
@@ -88,8 +88,8 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
 
     fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState) {
         // Logic moved from the old free function
-        node.state = new_state;
-        if node.is_dir {
+        node.set_state(new_state);
+        if node.is_dir() {
             for child in node.children.iter_mut() {
                 self.update_folder_selection(child, new_state);
             }
@@ -183,15 +183,15 @@ mod tests {
         manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
-        assert_eq!(tree[0].state, SelectionState::Selected); // file1.txt
-        assert_eq!(tree[1].state, SelectionState::New); // dir1
-        assert_eq!(tree[1].children[0].state, SelectionState::Deselected); // dir1/file2.txt
-        assert_eq!(tree[1].children[1].state, SelectionState::New); // dir1/subdir
+        assert_eq!(tree[0].state(), SelectionState::Selected); // file1.txt
+        assert_eq!(tree[1].state(), SelectionState::New); // dir1
+        assert_eq!(tree[1].children[0].state(), SelectionState::Deselected); // dir1/file2.txt
+        assert_eq!(tree[1].children[1].state(), SelectionState::New); // dir1/subdir
         assert_eq!(
-            tree[1].children[1].children[0].state,
+            tree[1].children[1].children[0].state(),
             SelectionState::Selected
         ); // dir1/subdir/file3.txt
-        assert_eq!(tree[2].state, SelectionState::New); // file4.ext
+        assert_eq!(tree[2].state(), SelectionState::New); // file4.ext
     }
 
     #[test]
@@ -199,7 +199,7 @@ mod tests {
         // Arrange
         let manager = NodeStateApplicator::new();
         let mut tree = create_test_tree();
-        tree[0].state = SelectionState::Selected; // Pre-set state
+        tree[0].set_state(SelectionState::Selected); // Pre-set state
 
         let mut selected_paths = HashSet::new();
         selected_paths.insert(PathBuf::from("/root/dir1/file2.txt"));
@@ -209,8 +209,8 @@ mod tests {
         manager.apply_selection_states_to_nodes(&mut tree, &selected_paths, &deselected_paths);
 
         // Assert
-        assert_eq!(tree[0].state, SelectionState::New); // Should revert to New as it's not in selected_paths
-        assert_eq!(tree[1].children[0].state, SelectionState::Selected); // dir1/file2.txt should be selected
+        assert_eq!(tree[0].state(), SelectionState::New); // Should revert to New as it's not in selected_paths
+        assert_eq!(tree[1].children[0].state(), SelectionState::Selected); // dir1/file2.txt should be selected
     }
 
     #[test]
@@ -223,14 +223,14 @@ mod tests {
             manager.update_folder_selection(&mut tree[1], SelectionState::Selected);
 
             // Assert
-            assert_eq!(tree[1].state, SelectionState::Selected);
-            assert_eq!(tree[1].children[0].state, SelectionState::Selected);
-            assert_eq!(tree[1].children[1].state, SelectionState::Selected);
+            assert_eq!(tree[1].state(), SelectionState::Selected);
+            assert_eq!(tree[1].children[0].state(), SelectionState::Selected);
+            assert_eq!(tree[1].children[1].state(), SelectionState::Selected);
             assert_eq!(
-                tree[1].children[1].children[0].state,
+                tree[1].children[1].children[0].state(),
                 SelectionState::Selected
             );
-            assert_eq!(tree[0].state, SelectionState::New); // Other nodes unaffected
+            assert_eq!(tree[0].state(), SelectionState::New); // Other nodes unaffected
         });
     }
 
@@ -245,11 +245,11 @@ mod tests {
             manager.update_folder_selection(&mut tree[1], SelectionState::Deselected); // Then deselect
 
             // Assert
-            assert_eq!(tree[1].state, SelectionState::Deselected);
-            assert_eq!(tree[1].children[0].state, SelectionState::Deselected);
-            assert_eq!(tree[1].children[1].state, SelectionState::Deselected);
+            assert_eq!(tree[1].state(), SelectionState::Deselected);
+            assert_eq!(tree[1].children[0].state(), SelectionState::Deselected);
+            assert_eq!(tree[1].children[1].state(), SelectionState::Deselected);
             assert_eq!(
-                tree[1].children[1].children[0].state,
+                tree[1].children[1].children[0].state(),
                 SelectionState::Deselected
             );
         });
@@ -263,11 +263,11 @@ mod tests {
 
             // Act & Assert for Selected
             manager.update_folder_selection(&mut tree[0], SelectionState::Selected);
-            assert_eq!(tree[0].state, SelectionState::Selected);
+            assert_eq!(tree[0].state(), SelectionState::Selected);
 
             // Act & Assert for Deselected
             manager.update_folder_selection(&mut tree[0], SelectionState::Deselected);
-            assert_eq!(tree[0].state, SelectionState::Deselected);
+            assert_eq!(tree[0].state(), SelectionState::Deselected);
 
             // Children should remain empty as it's a file node
             assert_eq!(tree[0].children.len(), 0);

@@ -98,20 +98,20 @@ impl ArchiverOperations for CoreArchiver {
         }
 
         while let Some(node) = buffer.pop() {
-            if node.is_dir {
+            if node.is_dir() {
                 for child in node.children.iter().rev() {
                     buffer.push(child);
                 }
             } else if node.is_selected() {
                 let display_path = node
-                    .path
+                    .path()
                     .strip_prefix(root_path_for_display)
-                    .unwrap_or(&node.path)
+                    .unwrap_or(node.path())
                     .to_string_lossy();
 
                 archive_content.push_str(&format!("// ===== File: {} =====\n", display_path));
 
-                match fs::read_to_string(&node.path) {
+                match fs::read_to_string(node.path()) {
                     Ok(content) => {
                         archive_content.push_str(&content);
                         if !content.ends_with('\n') {
@@ -177,7 +177,7 @@ impl ArchiverOperations for CoreArchiver {
             has_any_selected: &mut bool,
         ) -> io::Result<()> {
             for node in nodes {
-                if node.is_dir {
+                if node.is_dir() {
                     find_newest_selected(
                         archiver,
                         &node.children,
@@ -186,7 +186,7 @@ impl ArchiverOperations for CoreArchiver {
                     )?;
                 } else if node.is_selected() {
                     *has_any_selected = true;
-                    let file_ts = archiver.get_file_timestamp(&node.path)?;
+                    let file_ts = archiver.get_file_timestamp(node.path())?;
                     if let Some(newest) = current_newest {
                         if file_ts > *newest {
                             *current_newest = Some(file_ts);
