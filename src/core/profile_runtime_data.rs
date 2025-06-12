@@ -189,7 +189,7 @@ impl ProfileRuntimeData {
         deselected: &mut HashSet<PathBuf>,
     ) {
         for node in nodes {
-            match node.state {
+            match node.state() {
                 SelectionState::Selected => {
                     selected.insert(node.path().to_path_buf());
                 }
@@ -213,7 +213,7 @@ impl ProfileRuntimeData {
         node: &FileNode,
         updates: &mut Vec<(PathBuf, SelectionState)>,
     ) {
-        updates.push((node.path().to_path_buf(), node.state));
+        updates.push((node.path().to_path_buf(), node.state()));
         if node.is_dir() {
             for child in &node.children {
                 Self::collect_node_states_recursive(child, updates);
@@ -228,7 +228,7 @@ impl ProfileRuntimeData {
     fn does_node_contain_new_file_recursive(node: &FileNode) -> bool {
         if !node.is_dir() {
             // It's a file
-            return node.state == SelectionState::New;
+            return node.state() == SelectionState::New;
         }
 
         // It's a directory, check its children
@@ -295,7 +295,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 
     fn get_node_attributes_for_path(&self, path: &Path) -> Option<(SelectionState, bool)> {
         Self::find_node_recursive_ref(&self.file_system_snapshot_nodes, path)
-            .map(|node| (node.state, node.is_dir()))
+            .map(|node| (node.state(), node.is_dir()))
     }
 
     fn update_node_state_and_collect_changes(
@@ -375,7 +375,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                         processed_count,
                         failed_count,
                     );
-                } else if node.state == SelectionState::Selected {
+                } else if node.state() == SelectionState::Selected {
                     *processed_count += 1;
                     if let Some(count) = ProfileRuntimeData::get_token_count_with_cache(
                         token_counter_service,
@@ -452,7 +452,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                 if node.is_dir() {
                     // If the directory itself is marked selected/deselected, record its path.
                     // Children's states will be handled individually.
-                    match node.state {
+                    match node.state() {
                         SelectionState::Selected => {
                             selected_paths_out.insert(node.path().to_path_buf());
                         }
@@ -472,7 +472,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     }
                 } else {
                     // It's a file
-                    match node.state {
+                    match node.state() {
                         SelectionState::Selected => {
                             selected_paths_out.insert(node.path().to_path_buf());
                             // Only add details for selected files to file_details_out
@@ -704,11 +704,11 @@ mod tests {
             // Simulate actual behavior for test consistency
             for node in tree.iter_mut() {
                 if selected_paths.contains(node.path()) {
-                    node.state = SelectionState::Selected;
+                    node.set_state(SelectionState::Selected);
                 } else if deselected_paths.contains(node.path()) {
-                    node.state = SelectionState::Deselected;
+                    node.set_state(SelectionState::Deselected);
                 } else {
-                    node.state = SelectionState::New;
+                    node.set_state(SelectionState::New);
                 }
                 if node.is_dir() && !node.children.is_empty() {
                     self.apply_selection_states_to_nodes(
@@ -724,7 +724,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((node.path().to_path_buf(), new_state));
-            node.state = new_state;
+            node.set_state(new_state);
             if node.is_dir() {
                 for child in node.children.iter_mut() {
                     self.update_folder_selection(child, new_state);
@@ -1139,19 +1139,19 @@ mod tests {
             &dir1_path,
         )
         .unwrap();
-        assert_eq!(dir1_node.state, SelectionState::Selected);
+        assert_eq!(dir1_node.state(), SelectionState::Selected);
         let file2_node = ProfileRuntimeData::find_node_recursive_ref(
             &session_data.file_system_snapshot_nodes,
             &file2_path,
         )
         .unwrap();
-        assert_eq!(file2_node.state, SelectionState::Selected);
+        assert_eq!(file2_node.state(), SelectionState::Selected);
         let file1_node = ProfileRuntimeData::find_node_recursive_ref(
             &session_data.file_system_snapshot_nodes,
             &file1_path,
         )
         .unwrap();
-        assert_eq!(file1_node.state, SelectionState::New); // Should be unchanged
+        assert_eq!(file1_node.state(), SelectionState::New); // Should be unchanged
     }
 
     #[test]

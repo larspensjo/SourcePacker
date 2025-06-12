@@ -261,13 +261,13 @@ mod handler_tests {
             ) {
                 for node in nodes.iter_mut() {
                     if selected.contains(node.path()) {
-                        node.state = SelectionState::Selected;
+                        node.set_state(SelectionState::Selected);
                     } else if deselected.contains(node.path()) {
-                        node.state = SelectionState::Deselected;
+                        node.set_state(SelectionState::Deselected);
                     } else {
                         // If not explicitly selected or deselected, assume it's New for this mock.
                         // A more sophisticated mock might preserve original states or handle Unknown.
-                        node.state = SelectionState::New;
+                        node.set_state(SelectionState::New);
                     }
                     if node.is_dir() {
                         apply_recursive(&mut node.children, selected, deselected);
@@ -288,7 +288,7 @@ mod handler_tests {
             ) -> Option<(SelectionState, bool)> {
                 for node in nodes {
                     if node.path() == path {
-                        return Some((node.state, node.is_dir()));
+                        return Some((node.state(), node.is_dir()));
                     }
                     if node.is_dir() && path.starts_with(node.path()) {
                         // Optimization: only search children if path could be inside
@@ -323,8 +323,8 @@ mod handler_tests {
                 let mut found_target = false;
                 for node in nodes.iter_mut() {
                     if node.path() == target_path {
-                        node.state = new_sel_state;
-                        changes.push((node.path().to_path_buf(), node.state));
+                        node.set_state(new_sel_state);
+                        changes.push((node.path().to_path_buf(), node.state()));
                         if node.is_dir() {
                             // Apply to all children recursively if a directory is toggled
                             for child in node.children.iter_mut() {
@@ -352,8 +352,8 @@ mod handler_tests {
                 new_sel_state: SelectionState,
                 changes: &mut Vec<(PathBuf, SelectionState)>,
             ) {
-                node.state = new_sel_state;
-                changes.push((node.path().to_path_buf(), node.state));
+                node.set_state(new_sel_state);
+                changes.push((node.path().to_path_buf(), node.state()));
                 if node.is_dir() {
                     for child in node.children.iter_mut() {
                         update_recursive_children(child, new_sel_state, changes);
@@ -411,7 +411,7 @@ mod handler_tests {
             }
             fn check_node_itself_or_descendants(node: &FileNode) -> bool {
                 if !node.is_dir() {
-                    return node.state == SelectionState::New;
+                    return node.state() == SelectionState::New;
                 }
                 // For a directory, check if any of its children (recursively) are New.
                 // The directory's own state doesn't make it "contain a new file" for this method's purpose.
@@ -462,7 +462,7 @@ mod handler_tests {
                 deselected: &mut HashSet<PathBuf>,
             ) {
                 for node in nodes {
-                    match node.state {
+                    match node.state() {
                         SelectionState::Selected => {
                             selected.insert(node.path().to_path_buf());
                         }
@@ -553,7 +553,7 @@ mod handler_tests {
                 deselected: &mut HashSet<PathBuf>,
             ) {
                 for node in nodes {
-                    match node.state {
+                    match node.state() {
                         SelectionState::Selected => {
                             selected.insert(node.path().to_path_buf());
                         }
@@ -954,11 +954,11 @@ mod handler_tests {
             // Basic simulation for mock
             for node in tree.iter_mut() {
                 if selected_paths.contains(node.path()) {
-                    node.state = SelectionState::Selected;
+                    node.set_state(SelectionState::Selected);
                 } else if deselected_paths.contains(node.path()) {
-                    node.state = SelectionState::Deselected;
+                    node.set_state(SelectionState::Deselected);
                 } else {
-                    node.state = SelectionState::New;
+                    node.set_state(SelectionState::New);
                 }
                 if node.is_dir() && !node.children.is_empty() {
                     self.apply_selection_states_to_nodes(
@@ -975,7 +975,7 @@ mod handler_tests {
                 .lock()
                 .unwrap()
                 .push((node.clone(), new_state)); // Log state before modification
-            node.state = new_state;
+            node.set_state(new_state);
             if node.is_dir() {
                 for child in node.children.iter_mut() {
                     self.update_folder_selection(child, new_state); // Recursive call

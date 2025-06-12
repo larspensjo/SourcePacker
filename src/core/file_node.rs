@@ -33,9 +33,9 @@ pub struct FileNode {
     path: PathBuf,
     name: String,
     is_dir: bool,
-    pub state: SelectionState,
+    state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
-    checksum: String,            // Will be empty striong for directories and some unit tests.
+    checksum: String,            // Will be empty string for directories and some unit tests.
 }
 
 impl FileNode {
@@ -57,6 +57,14 @@ impl FileNode {
 
     pub fn is_selected(&self) -> bool {
         self.state == SelectionState::Selected
+    }
+
+    pub fn state(&self) -> SelectionState {
+        self.state
+    }
+
+    pub fn set_state(&mut self, new_state: SelectionState) {
+        self.state = new_state;
     }
 
     pub fn path(&self) -> &Path {
