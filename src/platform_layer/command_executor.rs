@@ -134,7 +134,7 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
                     window_id
                 ))
             })?
-            .this_window_hwnd
+            .get_hwnd()
     };
 
     if hwnd_target.is_invalid() {
@@ -213,8 +213,8 @@ pub(crate) fn execute_create_main_menu(
             ))
         })?;
 
-        hwnd_owner_opt = Some(window_data.this_window_hwnd);
-        if window_data.this_window_hwnd.is_invalid() {
+        hwnd_owner_opt = Some(window_data.get_hwnd());
+        if window_data.get_hwnd().is_invalid() {
             unsafe {
                 DestroyMenu(h_main_menu).unwrap_or_default();
             }
@@ -445,7 +445,7 @@ pub(crate) fn execute_create_button(
         )));
     }
 
-    if window_data.this_window_hwnd.is_invalid() {
+    if window_data.get_hwnd().is_invalid() {
         log::error!(
             "CommandExecutor: Parent HWND for CreateButton is invalid (WinID: {:?})",
             window_id
@@ -466,7 +466,7 @@ pub(crate) fn execute_create_button(
             0,
             10,
             10, // Dummies, WM_SIZE/LayoutRules will adjust
-            Some(window_data.this_window_hwnd),
+            Some(window_data.get_hwnd()),
             Some(HMENU(control_id as *mut _)), // Use logical ID for HMENU
             Some(internal_state.h_instance),
             None,
@@ -613,7 +613,7 @@ pub(crate) fn execute_create_input(
                 id, window_id
             ))
         })?,
-        None => window_data.this_window_hwnd,
+        None => window_data.get_hwnd(),
     };
 
     if hwnd_parent.is_invalid() {
@@ -878,7 +878,7 @@ pub(crate) fn execute_create_panel(
                 id, window_id
             ))
         })?,
-        None => window_data.this_window_hwnd, // Parent is the main window
+        None => window_data.get_hwnd(), // Parent is the main window
     };
 
     if hwnd_parent.is_invalid() {

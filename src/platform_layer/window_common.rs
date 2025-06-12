@@ -80,7 +80,7 @@ const SUCCESS_CODE: LRESULT = LRESULT(0);
  */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
-    pub(crate) this_window_hwnd: HWND,
+    this_window_hwnd: HWND,
     pub(crate) logical_window_id: WindowId,
     // The specific internal state for the TreeView control if one exists.
     pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
@@ -101,6 +101,29 @@ pub(crate) struct NativeWindowData {
 }
 
 impl NativeWindowData {
+    pub(crate) fn new(logical_window_id: WindowId) -> Self {
+        Self {
+            this_window_hwnd: HWND_INVALID,
+            logical_window_id,
+            treeview_state: None,
+            control_hwnd_map: HashMap::new(),
+            menu_action_map: HashMap::new(),
+            next_menu_item_id_counter: 30000,
+            layout_rules: None,
+            label_severities: HashMap::new(),
+            input_bg_colors: HashMap::new(),
+            status_bar_font: None,
+        }
+    }
+
+    pub(crate) fn get_hwnd(&self) -> HWND {
+        self.this_window_hwnd
+    }
+
+    pub(crate) fn set_hwnd(&mut self, hwnd: HWND) {
+        self.this_window_hwnd = hwnd;
+    }
+
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.control_hwnd_map.get(&control_id).copied()
     }

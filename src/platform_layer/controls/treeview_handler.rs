@@ -230,7 +230,7 @@ pub(crate) fn handle_create_treeview_command(
                 control_id, window_id
             )));
         }
-        hwnd_parent_for_creation = window_data.this_window_hwnd;
+        hwnd_parent_for_creation = window_data.get_hwnd();
         h_instance_for_creation = internal_state.h_instance;
 
         if hwnd_parent_for_creation.is_invalid() {

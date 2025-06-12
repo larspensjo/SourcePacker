@@ -30,18 +30,7 @@ fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) 
     let internal_state_arc = Win32ApiInternalState::new("TestAppForExecutor".to_string()).unwrap();
     let window_id = internal_state_arc.generate_window_id();
 
-    let native_window_data = NativeWindowData {
-        this_window_hwnd: window_common::HWND_INVALID,
-        logical_window_id: window_id,
-        treeview_state: None,
-        control_hwnd_map: HashMap::new(),
-        menu_action_map: HashMap::new(),
-        next_menu_item_id_counter: 30000,
-        layout_rules: None,
-        label_severities: HashMap::new(),
-        input_bg_colors: HashMap::new(),
-        status_bar_font: None,
-    };
+    let native_window_data = NativeWindowData::new(window_id);
     (internal_state_arc, window_id, native_window_data)
 }
 #[cfg(test)]

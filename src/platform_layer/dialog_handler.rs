@@ -54,7 +54,7 @@ pub(crate) fn get_hwnd_owner(
     })?;
     windows_guard
         .get(&window_id)
-        .map(|data| data.this_window_hwnd)
+        .map(|data| data.get_hwnd())
         .ok_or_else(|| {
             PlatformError::InvalidHandle(format!(
                 "WindowId {:?} not found for get_hwnd_owner",
