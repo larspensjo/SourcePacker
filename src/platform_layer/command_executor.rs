@@ -150,7 +150,7 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
 
     unsafe {
         if PostMessageW(
-            hwnd_target,
+            Some(hwnd_target),
             crate::platform_layer::window_common::WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE,
             WPARAM(0),
             LPARAM(0),
