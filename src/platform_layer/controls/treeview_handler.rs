@@ -218,7 +218,7 @@ pub(crate) fn handle_create_treeview_command(
         })?;
 
         if window_data.control_hwnd_map.contains_key(&control_id)
-            || window_data.treeview_state.is_some()
+            || window_data.has_treeview_state()
         {
             log::warn!(
                 "TreeViewHandler: TreeView with ID {} or existing TreeView state already present for window {:?}.",
@@ -294,7 +294,7 @@ pub(crate) fn handle_create_treeview_command(
 
         // Check again in case the window was destroyed or control created by another thread
         if window_data.control_hwnd_map.contains_key(&control_id)
-            || window_data.treeview_state.is_some()
+            || window_data.has_treeview_state()
         {
             log::warn!(
                 "TreeViewHandler: TreeView (ID {}) or state for window {:?} was created concurrently or window was altered. Destroying newly created one.",
@@ -311,7 +311,7 @@ pub(crate) fn handle_create_treeview_command(
         }
 
         window_data.control_hwnd_map.insert(control_id, hwnd_tv);
-        window_data.treeview_state = Some(TreeViewInternalState::new());
+        window_data.init_treeview_state();
         log::debug!(
             "TreeViewHandler: Created TreeView (ID {}) for window {:?} with HWND {:?}",
             control_id,
@@ -388,7 +388,7 @@ pub(crate) fn populate_treeview(
                 control_id, window_id
             )));
         }
-        taken_tv_state = window_data.treeview_state.take();
+        taken_tv_state = window_data.take_treeview_state();
         if taken_tv_state.is_none() {
             log::warn!(
                 "TreeViewHandler: TreeView state was None for WinID {:?}/ControlID {}, creating new for population.",
@@ -420,7 +420,7 @@ pub(crate) fn populate_treeview(
                     e.clone() // Return original error
                 })?;
                 if let Some(window_data_err_case) = windows_map_guard.get_mut(&window_id) {
-                    window_data_err_case.treeview_state = Some(tv_state_actual);
+                    window_data_err_case.set_treeview_state(Some(tv_state_actual));
                 } else {
                     log::error!(
                         "TreeViewHandler: Failed to put back tv_state for {:?} after error: window not found",
@@ -459,7 +459,7 @@ pub(crate) fn populate_treeview(
             )
         })?;
         if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-            window_data.treeview_state = taken_tv_state;
+            window_data.set_treeview_state(taken_tv_state);
         } else {
             log::error!(
                 "TreeViewHandler: WindowId {:?} disappeared while TreeView (ControlID {}) was being populated.",
@@ -526,7 +526,7 @@ pub(crate) fn update_treeview_item_visual_state(
                 ))
             })?;
 
-        let tv_state = window_data.treeview_state.as_ref().ok_or_else(|| {
+        let tv_state = window_data.get_treeview_state().ok_or_else(|| {
             log::warn!("TreeViewHandler: No TreeView state exists in window {:?} for UpdateVisualState (ControlID {})", window_id, control_id);
             PlatformError::OperationFailed(format!(
                 "No TreeView state exists in window {:?} for UpdateVisualState (ControlID {})",
@@ -637,7 +637,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
             return None;
         }
     };
-    if window_data.treeview_state.is_none() {
+    if !window_data.has_treeview_state() {
         log::warn!(
             "TreeViewHandler: handle_treeview_itemchanged_notification: tv_state does not exist for WinID {:?}/ControlID {}.",
             window_id,
@@ -714,7 +714,7 @@ pub(crate) fn handle_redraw_tree_item_command(
             )));
         }
 
-        let tv_state = window_data.treeview_state.as_ref().ok_or_else(|| {
+        let tv_state = window_data.get_treeview_state().ok_or_else(|| {
             log::warn!("TreeViewHandler: TreeView state not found for WinID {:?} (ControlID {}) during RedrawTreeItem.", window_id, control_id);
             PlatformError::OperationFailed(format!(
                 "TreeView state not found for WinID {:?} (ControlID {}) during RedrawTreeItem.",
@@ -1190,7 +1190,7 @@ pub(crate) fn handle_wm_app_treeview_checkbox_clicked(
     let window_data = windows_guard.get(&window_id)?;
     let hwnd_treeview = window_data.get_control_hwnd(control_id_of_treeview)?;
 
-    let tv_state = window_data.treeview_state.as_ref()?; // Ensure TreeView state exists
+    let tv_state = window_data.get_treeview_state()?; // Ensure TreeView state exists
 
     // Get the item's current state (including checkbox state)
     let mut tv_item_get = TVITEMEXW {

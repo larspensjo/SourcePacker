@@ -83,7 +83,7 @@ pub(crate) struct NativeWindowData {
     this_window_hwnd: HWND,
     logical_window_id: WindowId,
     // The specific internal state for the TreeView control if one exists.
-    pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
+    treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
     pub(crate) control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
@@ -130,6 +130,26 @@ impl NativeWindowData {
 
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.control_hwnd_map.get(&control_id).copied()
+    }
+
+    pub(crate) fn has_treeview_state(&self) -> bool {
+        self.treeview_state.is_some()
+    }
+
+    pub(crate) fn init_treeview_state(&mut self) {
+        self.treeview_state = Some(treeview_handler::TreeViewInternalState::new());
+    }
+
+    pub(crate) fn take_treeview_state(&mut self) -> Option<treeview_handler::TreeViewInternalState> {
+        self.treeview_state.take()
+    }
+
+    pub(crate) fn set_treeview_state(&mut self, state: Option<treeview_handler::TreeViewInternalState>) {
+        self.treeview_state = state;
+    }
+
+    pub(crate) fn get_treeview_state(&self) -> Option<&treeview_handler::TreeViewInternalState> {
+        self.treeview_state.as_ref()
     }
 
     fn generate_menu_item_id(&mut self) -> i32 {
@@ -487,7 +507,7 @@ impl Win32ApiInternalState {
             // And is the notification coming from the control ID stored for that treeview?
             // For now, assume if treeview_state exists, this NM_CUSTOMDRAW or NM_CLICK could be for it.
             // A more robust check would be to see if nmhdr.hwndFrom matches the stored TreeView HWND.
-            is_treeview_notification = window_data.treeview_state.is_some()
+            is_treeview_notification = window_data.has_treeview_state()
                 && window_data.get_control_hwnd(control_id_from_notify) == Some(nmhdr.hwndFrom);
         }
 
