@@ -298,14 +298,7 @@ pub(crate) unsafe fn add_menu_item_recursive_impl(
     if item_config.children.is_empty() {
         // This is a command item
         if let Some(action) = item_config.action {
-            let generated_id = window_data.generate_menu_item_id();
-            window_data.menu_action_map.insert(generated_id, action);
-            log::debug!(
-                "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
-                action,
-                generated_id,
-                window_data.logical_window_id
-            );
+            let generated_id = window_data.register_menu_action(action);
             unsafe {
                 AppendMenuW(
                     parent_menu_handle,

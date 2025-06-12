@@ -81,7 +81,7 @@ const SUCCESS_CODE: LRESULT = LRESULT(0);
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
     this_window_hwnd: HWND,
-    pub(crate) logical_window_id: WindowId,
+    logical_window_id: WindowId,
     // The specific internal state for the TreeView control if one exists.
     pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
@@ -116,6 +116,10 @@ impl NativeWindowData {
         }
     }
 
+    pub(crate) fn get_window_id(&self) -> WindowId {
+        self.logical_window_id
+    }
+
     pub(crate) fn get_hwnd(&self) -> HWND {
         self.this_window_hwnd
     }
@@ -128,9 +132,21 @@ impl NativeWindowData {
         self.control_hwnd_map.get(&control_id).copied()
     }
 
-    pub(crate) fn generate_menu_item_id(&mut self) -> i32 {
+    fn generate_menu_item_id(&mut self) -> i32 {
         let id = self.next_menu_item_id_counter;
         self.next_menu_item_id_counter += 1;
+        id
+    }
+
+    pub(crate) fn register_menu_action(&mut self, action: MenuAction) -> i32 {
+        let id = self.generate_menu_item_id();
+        self.menu_action_map.insert(id, action);
+        log::debug!(
+            "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
+            action,
+            id,
+            self.logical_window_id
+        );
         id
     }
 }
