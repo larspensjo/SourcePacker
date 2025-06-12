@@ -47,7 +47,6 @@ pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 // Common control class names
-pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
 // Common style constants
 pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);

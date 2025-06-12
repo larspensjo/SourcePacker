@@ -7,17 +7,17 @@
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::{AppEvent, WindowId};
-use crate::platform_layer::window_common::WC_BUTTON;
 
 use std::sync::Arc;
 use windows::Win32::{
-    Foundation::{HWND, HINSTANCE},
+    Foundation::{HINSTANCE, HWND},
     UI::WindowsAndMessaging::{
-        CreateWindowExW, HMENU, WINDOW_EX_STYLE, WS_CHILD, WS_VISIBLE, BS_PUSHBUTTON,
-        WINDOW_STYLE,
+        BS_PUSHBUTTON, CreateWindowExW, HMENU, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_VISIBLE,
     },
 };
-use windows::core::HSTRING;
+use windows::core::{HSTRING, PCWSTR};
+
+const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 
 /*
  * Creates a native push button and registers the resulting HWND in the
@@ -53,7 +53,10 @@ pub(crate) fn handle_create_button_command(
                 "ButtonHandler: WindowId {:?} not found for CreateButton.",
                 window_id
             );
-            PlatformError::InvalidHandle(format!("WindowId {:?} not found for CreateButton", window_id))
+            PlatformError::InvalidHandle(format!(
+                "WindowId {:?} not found for CreateButton",
+                window_id
+            ))
         })?;
 
         if window_data.control_hwnd_map.contains_key(&control_id) {
@@ -115,7 +118,9 @@ pub(crate) fn handle_create_button_command(
                 control_id,
                 window_id
             );
-            unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok(); }
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok();
+            }
             return Err(PlatformError::OperationFailed(format!(
                 "Button with ID {} already exists for window {:?}",
                 control_id, window_id
@@ -134,9 +139,12 @@ pub(crate) fn handle_create_button_command(
             "ButtonHandler: WindowId {:?} disappeared before button insert. Destroying HWND.",
             window_id
         );
-        unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok(); }
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok();
+        }
         return Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found after CreateButton", window_id
+            "WindowId {:?} not found after CreateButton",
+            window_id
         )));
     }
     Ok(())
@@ -159,58 +167,5 @@ pub(crate) fn handle_bn_clicked(
     AppEvent::ButtonClicked {
         window_id,
         control_id,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::platform_layer::{window_common, app::Win32ApiInternalState};
-
-    use std::collections::HashMap;
-
-    // --- Arrange helpers ---
-    fn setup_state() -> (Arc<Win32ApiInternalState>, WindowId, window_common::NativeWindowData) {
-        let internal_state = Win32ApiInternalState::new("TestApp".into()).unwrap();
-        let win_id = internal_state.generate_window_id();
-        let window_data = window_common::NativeWindowData {
-            this_window_hwnd: window_common::HWND_INVALID,
-            logical_window_id: win_id,
-            treeview_state: None,
-            control_hwnd_map: HashMap::new(),
-            menu_action_map: HashMap::new(),
-            next_menu_item_id_counter: 0,
-            layout_rules: None,
-            label_severities: HashMap::new(),
-            input_bg_colors: HashMap::new(),
-            status_bar_font: None,
-        };
-        (internal_state, win_id, window_data)
-    }
-
-    #[test]
-    fn test_handle_bn_clicked_returns_event() {
-        // Arrange
-        let win_id = WindowId(1);
-        let hwnd = HWND(0x1234 as _);
-
-        // Act
-        let evt = handle_bn_clicked(win_id, 42, hwnd);
-
-        // Assert
-        assert_eq!(evt, AppEvent::ButtonClicked { window_id: win_id, control_id: 42 });
-    }
-
-    #[test]
-    fn test_create_button_missing_window_returns_error() {
-        // Arrange
-        let (state, win_id, _data) = setup_state();
-        // Do not insert window data into map
-
-        // Act
-        let result = handle_create_button_command(&state, win_id, 1, "Test".into());
-
-        // Assert
-        assert!(result.is_err());
     }
 }

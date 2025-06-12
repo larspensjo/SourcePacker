@@ -14,7 +14,6 @@ use super::controls::treeview_handler; // Ensure treeview_handler is used for it
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::{CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
 
-use crate::platform_layer::window_common::WC_BUTTON;
 use std::sync::Arc;
 use windows::{
     Win32::{
@@ -397,7 +396,6 @@ pub(crate) fn execute_set_control_enabled(
     }
     Ok(())
 }
-
 
 /*
  * Delegates to treeview_handler::populate_treeview.
