@@ -919,16 +919,11 @@ impl Win32ApiInternalState {
             // Control
             let hwnd_control = HWND(control_hwnd.0 as *mut std::ffi::c_void);
             if notification_code == BN_CLICKED as i32 {
-                log::debug!(
-                    "Button ID {} clicked (HWND {:?}) for WinID {:?}.",
+                return Some(super::controls::button_handler::handle_bn_clicked(
+                    window_id,
                     command_id,
                     hwnd_control,
-                    window_id
-                );
-                return Some(AppEvent::ButtonClicked {
-                    window_id,
-                    control_id: command_id,
-                });
+                ));
             } else if notification_code == EN_CHANGE as i32 {
                 log::trace!(
                     "Edit control ID {} changed, starting debounce timer",
