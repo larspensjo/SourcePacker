@@ -20,7 +20,7 @@ use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
         UI::{
-            Controls::{WC_EDITW, EM_SETBKGNDCOLOR},
+            Controls::{RichEdit::EM_SETBKGNDCOLOR, WC_EDITW},
             Input::KeyboardAndMouse::EnableWindow,
             WindowsAndMessaging::*,
         },
@@ -722,8 +722,8 @@ pub(crate) fn execute_set_input_background_color(
         SendMessageW(
             hwnd_edit,
             EM_SETBKGNDCOLOR,
-            WPARAM(0),
-            LPARAM(color.unwrap_or(0) as isize),
+            Some(WPARAM(0)),
+            Some(LPARAM(color.unwrap_or(0) as isize)),
         );
     }
     Ok(())
