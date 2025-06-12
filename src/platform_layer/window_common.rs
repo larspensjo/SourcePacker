@@ -47,7 +47,6 @@ pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
 
 // Common control class names
-pub(crate) const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");
 // Common style constants
 pub(crate) const SS_LEFT: WINDOW_STYLE = WINDOW_STYLE(0x00000000_u32);
@@ -919,16 +918,11 @@ impl Win32ApiInternalState {
             // Control
             let hwnd_control = HWND(control_hwnd.0 as *mut std::ffi::c_void);
             if notification_code == BN_CLICKED as i32 {
-                log::debug!(
-                    "Button ID {} clicked (HWND {:?}) for WinID {:?}.",
+                return Some(super::controls::button_handler::handle_bn_clicked(
+                    window_id,
                     command_id,
                     hwnd_control,
-                    window_id
-                );
-                return Some(AppEvent::ButtonClicked {
-                    window_id,
-                    control_id: command_id,
-                });
+                ));
             } else if notification_code == EN_CHANGE as i32 {
                 log::trace!(
                     "Edit control ID {} changed, starting debounce timer",
