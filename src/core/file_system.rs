@@ -218,7 +218,7 @@ fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
         } else if !a.is_dir && b.is_dir {
             std::cmp::Ordering::Greater
         } else {
-            a.name.cmp(&b.name)
+            a.name().cmp(b.name())
         }
     });
 
@@ -311,7 +311,7 @@ mod tests {
         let nodes = test_scan_with_scanner(&scanner, dir.path())?;
         log::debug!("--- Scan finished for test_scan_respects_gitignore_rules ---");
 
-        let top_level_names: Vec<String> = nodes.iter().map(|n| n.name.clone()).collect();
+        let top_level_names: Vec<String> = nodes.iter().map(|n| n.name().to_string()).collect();
         // Expected: data, doc, logs, src, LICENSE.txt, root_file.toml
         // "target" dir should now be properly ignored.
         assert_eq!(
@@ -332,7 +332,7 @@ mod tests {
         );
 
         // Check 'src' directory contents
-        let src_node = nodes.iter().find(|n| n.name == "src").unwrap();
+        let src_node = nodes.iter().find(|n| n.name() == "src").unwrap();
         // Expected children in src: lib.rs, main.rs, sub_src (directory)
         // src/sub_src/temp.tmp is ignored by *.tmp
         assert_eq!(
@@ -342,15 +342,15 @@ mod tests {
             src_node
                 .children
                 .iter()
-                .map(|c| &c.name)
+                .map(|c| c.name())
                 .collect::<Vec<_>>()
         );
-        assert!(src_node.children.iter().any(|n| n.name == "lib.rs"));
-        assert!(src_node.children.iter().any(|n| n.name == "main.rs"));
+        assert!(src_node.children.iter().any(|n| n.name() == "lib.rs"));
+        assert!(src_node.children.iter().any(|n| n.name() == "main.rs"));
         let sub_src_node = src_node
             .children
             .iter()
-            .find(|n| n.name == "sub_src" && n.is_dir)
+            .find(|n| n.name() == "sub_src" && n.is_dir)
             .expect("sub_src directory should exist");
         // Expected children in src/sub_src: deep.rs
         // temp.tmp is ignored.
@@ -361,13 +361,13 @@ mod tests {
             sub_src_node
                 .children
                 .iter()
-                .map(|c| &c.name)
+                .map(|c| c.name())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(sub_src_node.children[0].name, "deep.rs");
+        assert_eq!(sub_src_node.children[0].name(), "deep.rs");
 
         // Check 'logs' directory contents
-        let logs_node = nodes.iter().find(|n| n.name == "logs").unwrap();
+        let logs_node = nodes.iter().find(|n| n.name() == "logs").unwrap();
         // Expected children in logs: trace.log (app.log is ignored by logs/*, trace.log is un-ignored)
         assert_eq!(
             logs_node.children.len(),
@@ -376,13 +376,13 @@ mod tests {
             logs_node
                 .children
                 .iter()
-                .map(|c| &c.name)
+                .map(|c| c.name())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(logs_node.children[0].name, "trace.log");
+        assert_eq!(logs_node.children[0].name(), "trace.log");
 
         // Check 'data' directory contents
-        let data_node = nodes.iter().find(|n| n.name == "data").unwrap();
+        let data_node = nodes.iter().find(|n| n.name() == "data").unwrap();
         // Expected children in data: config.json
         // data/sensitive/ is ignored by data/.gitignore
         assert_eq!(
@@ -392,10 +392,10 @@ mod tests {
             data_node
                 .children
                 .iter()
-                .map(|c| &c.name)
+                .map(|c| c.name())
                 .collect::<Vec<_>>()
         );
-        assert_eq!(data_node.children[0].name, "config.json");
+        assert_eq!(data_node.children[0].name(), "config.json");
 
         Ok(())
     }
@@ -415,10 +415,10 @@ mod tests {
             nodes.len(),
             5,
             "Scan should return all top-level items. Found names: {:?}",
-            nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+            nodes.iter().map(|n| n.name()).collect::<Vec<_>>()
         );
 
-        let src_node = nodes.iter().find(|n| n.name == "src" && n.is_dir).unwrap();
+        let src_node = nodes.iter().find(|n| n.name() == "src" && n.is_dir).unwrap();
         assert_eq!(
             src_node.children.len(),
             3,
@@ -426,14 +426,14 @@ mod tests {
             src_node
                 .children
                 .iter()
-                .map(|n| &n.name)
+                .map(|n| n.name())
                 .collect::<Vec<_>>()
         ); // sub_src, lib.rs, main.rs
 
         let sub_src_node = src_node
             .children
             .iter()
-            .find(|n| n.name == "sub_src" && n.is_dir)
+            .find(|n| n.name() == "sub_src" && n.is_dir)
             .unwrap();
         assert_eq!(
             sub_src_node.children.len(),
@@ -442,10 +442,10 @@ mod tests {
             sub_src_node
                 .children
                 .iter()
-                .map(|n| &n.name)
+                .map(|n| n.name())
                 .collect::<Vec<_>>()
         ); // deep.rs
-        assert_eq!(sub_src_node.children[0].name, "deep.rs");
+        assert_eq!(sub_src_node.children[0].name(), "deep.rs");
 
         Ok(())
     }
@@ -471,9 +471,9 @@ mod tests {
         if nodes.len() != 2 {
             log::debug!("Nodes found (expected 2):");
             for node in &nodes {
-                log::debug!("  Top-level: {} (is_dir: {})", node.name, node.is_dir);
+                log::debug!("  Top-level: {} (is_dir: {})", node.name(), node.is_dir);
                 for child in &node.children {
-                    log::debug!("    Child: {} (is_dir: {})", child.name, child.is_dir);
+                    log::debug!("    Child: {} (is_dir: {})", child.name(), child.is_dir);
                 }
             }
         }
@@ -482,18 +482,18 @@ mod tests {
             nodes.len(),
             2,
             "Expected 2 top-level entries. Found: {:?}",
-            nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+            nodes.iter().map(|n| n.name()).collect::<Vec<_>>()
         );
 
-        let top_level_names: Vec<&String> = nodes.iter().map(|n| &n.name).collect();
+        let top_level_names: Vec<&str> = nodes.iter().map(|n| n.name()).collect();
         // Order depends on WalkBuilder's sort_by_file_path, then our recursive sort.
         // "another_empty_top_level_dir", "parent" is a likely order.
-        assert!(top_level_names.contains(&&"another_empty_top_level_dir".to_string()));
-        assert!(top_level_names.contains(&&"parent".to_string()));
+        assert!(top_level_names.contains(&"another_empty_top_level_dir"));
+        assert!(top_level_names.contains(&"parent"));
 
         let parent_node = nodes
             .iter()
-            .find(|n| n.name == "parent")
+            .find(|n| n.name() == "parent")
             .expect("Should find 'parent' dir");
         assert!(parent_node.is_dir);
         assert_eq!(
@@ -503,14 +503,14 @@ mod tests {
             parent_node
                 .children
                 .iter()
-                .map(|n| &n.name)
+                .map(|n| n.name())
                 .collect::<Vec<_>>()
         );
 
         let parent_children_names: Vec<String> = parent_node
             .children
             .iter()
-            .map(|n| n.name.clone())
+            .map(|n| n.name().to_string())
             .collect();
         assert!(parent_children_names.contains(&"empty_child".to_string()));
         assert!(parent_children_names.contains(&"file.txt".to_string()));
@@ -519,12 +519,12 @@ mod tests {
             parent_node
                 .children
                 .iter()
-                .any(|c| c.name == "file.txt" && !c.is_dir)
+                .any(|c| c.name() == "file.txt" && !c.is_dir)
         );
         let empty_child_node = parent_node
             .children
             .iter()
-            .find(|c| c.name == "empty_child")
+            .find(|c| c.name() == "empty_child")
             .unwrap();
         assert!(empty_child_node.is_dir);
         assert!(
@@ -534,7 +534,7 @@ mod tests {
 
         let another_empty_node = nodes
             .iter()
-            .find(|n| n.name == "another_empty_top_level_dir")
+            .find(|n| n.name() == "another_empty_top_level_dir")
             .expect("Should find 'another_empty_top_level_dir'");
         assert!(another_empty_node.is_dir);
         assert!(

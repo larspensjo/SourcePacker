@@ -31,7 +31,7 @@ impl Default for SelectionState {
 #[derive(Debug, Clone, PartialEq)] // Not serializing FileNode directly; Profile stores paths.
 pub struct FileNode {
     path: PathBuf,
-    pub name: String,
+    name: String,
     pub is_dir: bool,
     pub state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
@@ -61,6 +61,10 @@ impl FileNode {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
@@ -178,7 +182,7 @@ impl FileNode {
             let mut descriptors = Vec::new();
             for node in nodes {
                 let children = recurse(&node.children, glob, map, counter);
-                let name_lower = node.name.to_lowercase();
+                let name_lower = node.name().to_lowercase();
                 let name_matches = glob.matches(&name_lower);
                 if name_matches || !children.is_empty() {
                     let id_val = *counter;
@@ -274,7 +278,7 @@ mod tests {
         let p = PathBuf::from("/tmp/foo");
         let n = FileNode::new_test(p.clone(), "foo".into(), false);
         assert_eq!(n.path(), p.as_path());
-        assert_eq!(n.name, "foo");
+        assert_eq!(n.name(), "foo");
         assert_eq!(n.is_dir, false);
         assert_eq!(n.state, SelectionState::New);
         assert!(n.children.is_empty());
