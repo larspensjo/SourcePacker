@@ -76,7 +76,7 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
                 node.state = SelectionState::New;
             }
 
-            if node.is_dir && !node.children.is_empty() {
+            if node.is_dir() && !node.children.is_empty() {
                 self.apply_selection_states_to_nodes(
                     &mut node.children,
                     selected_paths,
@@ -89,7 +89,7 @@ impl NodeStateApplicatorOperations for NodeStateApplicator {
     fn update_folder_selection(&self, node: &mut FileNode, new_state: SelectionState) {
         // Logic moved from the old free function
         node.state = new_state;
-        if node.is_dir {
+        if node.is_dir() {
             for child in node.children.iter_mut() {
                 self.update_folder_selection(child, new_state);
             }

@@ -151,7 +151,7 @@ impl ProfileRuntimeData {
             if node.path() == path_to_find {
                 return Some(node);
             }
-            if node.is_dir && !node.children.is_empty() {
+            if node.is_dir() && !node.children.is_empty() {
                 if let Some(found_in_child) =
                     Self::find_node_recursive_ref(&node.children, path_to_find)
                 {
@@ -171,7 +171,7 @@ impl ProfileRuntimeData {
             if node.path() == path_to_find {
                 return Some(node);
             }
-            if node.is_dir && !node.children.is_empty() {
+            if node.is_dir() && !node.children.is_empty() {
                 if let Some(found_in_child) =
                     Self::find_node_recursive_mut(&mut node.children, path_to_find)
                 {
@@ -198,7 +198,7 @@ impl ProfileRuntimeData {
                 }
                 SelectionState::New => {}
             }
-            if node.is_dir && !node.children.is_empty() {
+            if node.is_dir() && !node.children.is_empty() {
                 Self::gather_selected_deselected_paths_recursive_internal(
                     &node.children,
                     selected,
@@ -214,7 +214,7 @@ impl ProfileRuntimeData {
         updates: &mut Vec<(PathBuf, SelectionState)>,
     ) {
         updates.push((node.path().to_path_buf(), node.state));
-        if node.is_dir {
+        if node.is_dir() {
             for child in &node.children {
                 Self::collect_node_states_recursive(child, updates);
             }
@@ -226,7 +226,7 @@ impl ProfileRuntimeData {
      * in the 'New' state.
      */
     fn does_node_contain_new_file_recursive(node: &FileNode) -> bool {
-        if !node.is_dir {
+        if !node.is_dir() {
             // It's a file
             return node.state == SelectionState::New;
         }
@@ -295,7 +295,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
 
     fn get_node_attributes_for_path(&self, path: &Path) -> Option<(SelectionState, bool)> {
         Self::find_node_recursive_ref(&self.file_system_snapshot_nodes, path)
-            .map(|node| (node.state, node.is_dir))
+            .map(|node| (node.state, node.is_dir()))
     }
 
     fn update_node_state_and_collect_changes(
@@ -366,7 +366,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             failed_count: &mut usize,
         ) {
             for node in nodes_to_scan {
-                if node.is_dir {
+                if node.is_dir() {
                     sum_tokens_recursive(
                         &node.children,
                         token_counter_service,
@@ -449,7 +449,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             file_details_out: &mut HashMap<PathBuf, FileTokenDetails>, // Populate this
         ) {
             for node in nodes {
-                if node.is_dir {
+                if node.is_dir() {
                     // If the directory itself is marked selected/deselected, record its path.
                     // Children's states will be handled individually.
                     match node.state {
@@ -710,7 +710,7 @@ mod tests {
                 } else {
                     node.state = SelectionState::New;
                 }
-                if node.is_dir && !node.children.is_empty() {
+                if node.is_dir() && !node.children.is_empty() {
                     self.apply_selection_states_to_nodes(
                         &mut node.children,
                         selected_paths,
@@ -725,7 +725,7 @@ mod tests {
                 .unwrap()
                 .push((node.path().to_path_buf(), new_state));
             node.state = new_state;
-            if node.is_dir {
+            if node.is_dir() {
                 for child in node.children.iter_mut() {
                     self.update_folder_selection(child, new_state);
                 }

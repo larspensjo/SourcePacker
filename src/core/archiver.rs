@@ -98,7 +98,7 @@ impl ArchiverOperations for CoreArchiver {
         }
 
         while let Some(node) = buffer.pop() {
-            if node.is_dir {
+            if node.is_dir() {
                 for child in node.children.iter().rev() {
                     buffer.push(child);
                 }
@@ -177,7 +177,7 @@ impl ArchiverOperations for CoreArchiver {
             has_any_selected: &mut bool,
         ) -> io::Result<()> {
             for node in nodes {
-                if node.is_dir {
+                if node.is_dir() {
                     find_newest_selected(
                         archiver,
                         &node.children,

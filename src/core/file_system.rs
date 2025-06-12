@@ -213,9 +213,9 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
 
 fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
     nodes.sort_by(|a, b| {
-        if a.is_dir && !b.is_dir {
+        if a.is_dir() && !b.is_dir() {
             std::cmp::Ordering::Less
-        } else if !a.is_dir && b.is_dir {
+        } else if !a.is_dir() && b.is_dir() {
             std::cmp::Ordering::Greater
         } else {
             a.name().cmp(b.name())
@@ -223,7 +223,7 @@ fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
     });
 
     for node in nodes.iter_mut() {
-        if node.is_dir && !node.children.is_empty() {
+        if node.is_dir() && !node.children.is_empty() {
             sort_file_nodes_recursively(&mut node.children);
         }
     }
@@ -350,7 +350,7 @@ mod tests {
         let sub_src_node = src_node
             .children
             .iter()
-            .find(|n| n.name() == "sub_src" && n.is_dir)
+            .find(|n| n.name() == "sub_src" && n.is_dir())
             .expect("sub_src directory should exist");
         // Expected children in src/sub_src: deep.rs
         // temp.tmp is ignored.
@@ -418,7 +418,7 @@ mod tests {
             nodes.iter().map(|n| n.name()).collect::<Vec<_>>()
         );
 
-        let src_node = nodes.iter().find(|n| n.name() == "src" && n.is_dir).unwrap();
+        let src_node = nodes.iter().find(|n| n.name() == "src" && n.is_dir()).unwrap();
         assert_eq!(
             src_node.children.len(),
             3,
@@ -433,7 +433,7 @@ mod tests {
         let sub_src_node = src_node
             .children
             .iter()
-            .find(|n| n.name() == "sub_src" && n.is_dir)
+            .find(|n| n.name() == "sub_src" && n.is_dir())
             .unwrap();
         assert_eq!(
             sub_src_node.children.len(),
@@ -471,9 +471,9 @@ mod tests {
         if nodes.len() != 2 {
             log::debug!("Nodes found (expected 2):");
             for node in &nodes {
-                log::debug!("  Top-level: {} (is_dir: {})", node.name(), node.is_dir);
+                log::debug!("  Top-level: {} (is_dir: {})", node.name(), node.is_dir());
                 for child in &node.children {
-                    log::debug!("    Child: {} (is_dir: {})", child.name(), child.is_dir);
+                    log::debug!("    Child: {} (is_dir: {})", child.name(), child.is_dir());
                 }
             }
         }
@@ -495,7 +495,7 @@ mod tests {
             .iter()
             .find(|n| n.name() == "parent")
             .expect("Should find 'parent' dir");
-        assert!(parent_node.is_dir);
+        assert!(parent_node.is_dir());
         assert_eq!(
             parent_node.children.len(),
             2,
@@ -519,14 +519,14 @@ mod tests {
             parent_node
                 .children
                 .iter()
-                .any(|c| c.name() == "file.txt" && !c.is_dir)
+                .any(|c| c.name() == "file.txt" && !c.is_dir())
         );
         let empty_child_node = parent_node
             .children
             .iter()
             .find(|c| c.name() == "empty_child")
             .unwrap();
-        assert!(empty_child_node.is_dir);
+        assert!(empty_child_node.is_dir());
         assert!(
             empty_child_node.children.is_empty(),
             "empty_child in parent should have no children"
@@ -536,7 +536,7 @@ mod tests {
             .iter()
             .find(|n| n.name() == "another_empty_top_level_dir")
             .expect("Should find 'another_empty_top_level_dir'");
-        assert!(another_empty_node.is_dir);
+        assert!(another_empty_node.is_dir());
         assert!(
             another_empty_node.children.is_empty(),
             "another_empty_top_level_dir should have no children"
@@ -579,7 +579,7 @@ mod tests {
         assert!(file1_node.checksum_match(Some(&ftd)));
 
         let subdir_node = nodes.iter().find(|n| n.path() == subdir_path).unwrap();
-        assert!(subdir_node.is_dir);
+        assert!(subdir_node.is_dir());
         Ok(())
     }
 }

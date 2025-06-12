@@ -32,7 +32,7 @@ impl Default for SelectionState {
 pub struct FileNode {
     path: PathBuf,
     name: String,
-    pub is_dir: bool,
+    is_dir: bool,
     pub state: SelectionState,
     pub children: Vec<FileNode>, // Children are only populated if is_dir is true
     checksum: String,            // Will be empty striong for directories and some unit tests.
@@ -65,6 +65,10 @@ impl FileNode {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
     }
 
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
@@ -279,7 +283,7 @@ mod tests {
         let n = FileNode::new_test(p.clone(), "foo".into(), false);
         assert_eq!(n.path(), p.as_path());
         assert_eq!(n.name(), "foo");
-        assert_eq!(n.is_dir, false);
+        assert_eq!(n.is_dir(), false);
         assert_eq!(n.state, SelectionState::New);
         assert!(n.children.is_empty());
     }
