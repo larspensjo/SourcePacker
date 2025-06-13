@@ -129,7 +129,7 @@ pub(crate) fn handle_create_label_command(
 
     // Apply custom font if this is a status bar label and font exists
     if class == LabelClass::StatusBar {
-        if let Some(h_font) = window_data.status_bar_font {
+        if let Some(h_font) = window_data.get_status_bar_font() {
             if !h_font.is_invalid() {
                 unsafe {
                     SendMessageW(

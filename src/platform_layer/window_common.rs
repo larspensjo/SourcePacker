@@ -97,7 +97,7 @@ pub(crate) struct NativeWindowData {
     /// Background color state for input controls keyed by their logical ID.
     input_bg_colors:
         HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
-    pub(crate) status_bar_font: Option<HFONT>,
+    status_bar_font: Option<HFONT>,
 }
 
 impl NativeWindowData {
@@ -262,6 +262,82 @@ impl NativeWindowData {
         for (_, state) in self.input_bg_colors.drain() {
             unsafe {
                 let _ = DeleteObject(state.brush.into());
+            }
+        }
+    }
+
+    pub(crate) fn ensure_status_bar_font(&mut self) {
+        if self.status_bar_font.is_some() {
+            return;
+        }
+
+        let font_name_hstring = HSTRING::from("Segoe UI");
+        let font_point_size = 9;
+        let hdc_screen = unsafe { GetDC(None) };
+        let logical_font_height = if !hdc_screen.is_invalid() {
+            let height = -unsafe {
+                MulDiv(
+                    font_point_size,
+                    GetDeviceCaps(Some(hdc_screen), LOGPIXELSY),
+                    72,
+                )
+            };
+            unsafe { ReleaseDC(None, hdc_screen) };
+            height
+        } else {
+            -font_point_size
+        };
+
+        let h_font = unsafe {
+            CreateFontW(
+                logical_font_height,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                FF_DONTCARE.0 as u32,
+                &font_name_hstring,
+            )
+        };
+
+        if h_font.is_invalid() {
+            log::error!(
+                "Platform: Failed to create status bar font: {:?}",
+                unsafe { GetLastError() }
+            );
+            self.status_bar_font = None;
+        } else {
+            log::debug!(
+                "Platform: Status bar font created: {:?} for window {:?}",
+                h_font,
+                self.logical_window_id
+            );
+            self.status_bar_font = Some(h_font);
+        }
+    }
+
+    pub(crate) fn get_status_bar_font(&self) -> Option<HFONT> {
+        self.status_bar_font
+    }
+
+    pub(crate) fn cleanup_status_bar_font(&mut self) {
+        if let Some(h_font) = self.status_bar_font.take() {
+            if !h_font.is_invalid() {
+                log::debug!(
+                    "Deleting status bar font {:?} for WinID {:?}",
+                    h_font,
+                    self.logical_window_id
+                );
+                unsafe {
+                    let _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
+                }
             }
         }
     }
@@ -681,55 +757,7 @@ impl Win32ApiInternalState {
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
             if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                if window_data.status_bar_font.is_none() {
-                    let font_name_hstring = HSTRING::from("Segoe UI");
-                    let font_point_size = 9;
-                    let hdc_screen = unsafe { GetDC(None) };
-                    let logical_font_height = if !hdc_screen.is_invalid() {
-                        let height = -unsafe {
-                            MulDiv(
-                                font_point_size,
-                                GetDeviceCaps(Some(hdc_screen), LOGPIXELSY),
-                                72,
-                            )
-                        };
-                        unsafe { ReleaseDC(None, hdc_screen) };
-                        height
-                    } else {
-                        -font_point_size // Fallback: direct point size as negative height
-                    };
-                    let h_font = unsafe {
-                        CreateFontW(
-                            logical_font_height,  // nHeight
-                            0,                    // nWidth
-                            0,                    // nEscapement
-                            0,                    // nOrientation
-                            FW_NORMAL.0 as i32,   // fnWeight
-                            0,                    // fdwItalic
-                            0,                    // fdwUnderline
-                            0,                    // fdwStrikeOut
-                            DEFAULT_CHARSET,      // fdwCharSet
-                            OUT_DEFAULT_PRECIS,   // fdwOutputPrecision
-                            CLIP_DEFAULT_PRECIS,  // fdwClipPrecision
-                            DEFAULT_QUALITY,      // fdwQuality
-                            FF_DONTCARE.0 as u32, // fdwPitchAndFamily
-                            &font_name_hstring,   // lpszFace
-                        )
-                    };
-                    if h_font.is_invalid() {
-                        log::error!("Platform: Failed to create status bar font: {:?}", unsafe {
-                            GetLastError()
-                        });
-                        window_data.status_bar_font = None;
-                    } else {
-                        log::debug!(
-                            "Platform: Status bar font created: {:?} for window {:?}",
-                            h_font,
-                            window_id
-                        );
-                        window_data.status_bar_font = Some(h_font);
-                    }
-                }
+                window_data.ensure_status_bar_font();
             }
         }
     }
@@ -1150,18 +1178,7 @@ impl Win32ApiInternalState {
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
             if let Some(mut window_data_entry) = windows_map_guard.remove(&window_id) {
-                if let Some(h_font) = window_data_entry.status_bar_font.take() {
-                    if !h_font.is_invalid() {
-                        log::debug!(
-                            "Deleting status bar font {:?} for WinID {:?}",
-                            h_font,
-                            window_id
-                        );
-                        unsafe {
-                            _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
-                        }
-                    }
-                }
+                window_data_entry.cleanup_status_bar_font();
                 window_data_entry.cleanup_input_background_colors();
                 log::debug!("Removed WindowId {:?} from active_windows.", window_id);
             } else {
