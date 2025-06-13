@@ -64,7 +64,7 @@ pub(crate) fn execute_define_layout(
     })?;
 
     // Store the rules
-    window_data.layout_rules = Some(rules);
+    window_data.define_layout(rules);
     log::debug!(
         "CommandExecutor: Stored layout rules for WinID {:?}",
         window_id

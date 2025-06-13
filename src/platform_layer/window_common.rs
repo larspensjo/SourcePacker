@@ -75,7 +75,7 @@ const SUCCESS_CODE: LRESULT = LRESULT(0);
  * `HWND`s, any control-specific states (like for the TreeView),
  * a map for menu item actions (`menu_action_map`),
  * a counter for generating unique menu item IDs (`next_menu_item_id_counter`),
- * a list of layout rules (`layout_rules`) for positioning controls, and
+ * a list of layout rules for positioning controls, and
  * severity information for new labels.
  */
 #[derive(Debug)]
@@ -91,7 +91,7 @@ pub(crate) struct NativeWindowData {
     // Counter to generate unique `i32` IDs for menu items that have an action.
     next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
-    pub(crate) layout_rules: Option<Vec<LayoutRule>>,
+    layout_rules: Option<Vec<LayoutRule>>,
     /// he current severity for each new status label, keyed by their logical ID.
     pub(crate) label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
@@ -192,6 +192,18 @@ impl NativeWindowData {
 
     pub(crate) fn get_next_menu_item_id_counter(&self) -> i32 {
         self.next_menu_item_id_counter
+    }
+
+    pub(crate) fn define_layout(&mut self, rules: Vec<LayoutRule>) {
+        self.layout_rules = Some(rules);
+    }
+
+    pub(crate) fn get_layout_rules(&self) -> Option<&Vec<LayoutRule>> {
+        self.layout_rules.as_ref()
+    }
+
+    pub(crate) fn has_layout_rules(&self) -> bool {
+        self.layout_rules.is_some()
     }
 }
 
@@ -899,7 +911,7 @@ impl Win32ApiInternalState {
             log::warn!("HWND invalid for layout: {:?}", window_id);
             return;
         }
-        let rules = match &window_data.layout_rules {
+        let rules = match window_data.get_layout_rules() {
             Some(r) => r,
             None => {
                 log::debug!("No layout rules for WinID {:?}", window_id);
