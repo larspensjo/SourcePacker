@@ -74,40 +74,267 @@ const SUCCESS_CODE: LRESULT = LRESULT(0);
  * `HWND`s, any control-specific states (like for the TreeView),
  * a map for menu item actions (`menu_action_map`),
  * a counter for generating unique menu item IDs (`next_menu_item_id_counter`),
- * a list of layout rules (`layout_rules`) for positioning controls, and
+ * a list of layout rules for positioning controls, and
  * severity information for new labels.
  */
 #[derive(Debug)]
 pub(crate) struct NativeWindowData {
-    pub(crate) this_window_hwnd: HWND,
-    pub(crate) logical_window_id: WindowId,
+    this_window_hwnd: HWND,
+    logical_window_id: WindowId,
     // The specific internal state for the TreeView control if one exists.
-    pub(crate) treeview_state: Option<treeview_handler::TreeViewInternalState>,
+    treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
-    pub(crate) control_hwnd_map: HashMap<i32, HWND>,
+    control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
-    pub(crate) menu_action_map: HashMap<i32, MenuAction>,
+    menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
-    pub(crate) next_menu_item_id_counter: i32,
+    next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
-    pub(crate) layout_rules: Option<Vec<LayoutRule>>,
-    /// he current severity for each new status label, keyed by their logical ID.
-    pub(crate) label_severities: HashMap<i32, MessageSeverity>,
+    layout_rules: Option<Vec<LayoutRule>>,
+    /// The current severity for each status label, keyed by its logical ID.
+    label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
-    pub(crate) input_bg_colors:
-        HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
-    pub(crate) status_bar_font: Option<HFONT>,
+    input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
+    status_bar_font: Option<HFONT>,
 }
 
 impl NativeWindowData {
+    pub(crate) fn new(logical_window_id: WindowId) -> Self {
+        Self {
+            this_window_hwnd: HWND_INVALID,
+            logical_window_id,
+            treeview_state: None,
+            control_hwnd_map: HashMap::new(),
+            menu_action_map: HashMap::new(),
+            next_menu_item_id_counter: 30000,
+            layout_rules: None,
+            label_severities: HashMap::new(),
+            input_bg_colors: HashMap::new(),
+            status_bar_font: None,
+        }
+    }
+
+    pub(crate) fn get_hwnd(&self) -> HWND {
+        self.this_window_hwnd
+    }
+
+    pub(crate) fn set_hwnd(&mut self, hwnd: HWND) {
+        self.this_window_hwnd = hwnd;
+    }
+
     pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
         self.control_hwnd_map.get(&control_id).copied()
     }
 
-    pub(crate) fn generate_menu_item_id(&mut self) -> i32 {
+    pub(crate) fn register_control_hwnd(&mut self, control_id: i32, hwnd: HWND) {
+        self.control_hwnd_map.insert(control_id, hwnd);
+    }
+
+    pub(crate) fn has_control(&self, control_id: i32) -> bool {
+        self.control_hwnd_map.contains_key(&control_id)
+    }
+
+    pub(crate) fn has_treeview_state(&self) -> bool {
+        self.treeview_state.is_some()
+    }
+
+    pub(crate) fn init_treeview_state(&mut self) {
+        self.treeview_state = Some(treeview_handler::TreeViewInternalState::new());
+    }
+
+    pub(crate) fn take_treeview_state(
+        &mut self,
+    ) -> Option<treeview_handler::TreeViewInternalState> {
+        self.treeview_state.take()
+    }
+
+    pub(crate) fn set_treeview_state(
+        &mut self,
+        state: Option<treeview_handler::TreeViewInternalState>,
+    ) {
+        self.treeview_state = state;
+    }
+
+    pub(crate) fn get_treeview_state(&self) -> Option<&treeview_handler::TreeViewInternalState> {
+        self.treeview_state.as_ref()
+    }
+
+    fn generate_menu_item_id(&mut self) -> i32 {
         let id = self.next_menu_item_id_counter;
         self.next_menu_item_id_counter += 1;
         id
+    }
+
+    pub(crate) fn register_menu_action(&mut self, action: MenuAction) -> i32 {
+        let id = self.generate_menu_item_id();
+        self.menu_action_map.insert(id, action);
+        log::debug!(
+            "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
+            action,
+            id,
+            self.logical_window_id
+        );
+        id
+    }
+
+    pub(crate) fn get_menu_action(&self, menu_id: i32) -> Option<MenuAction> {
+        self.menu_action_map.get(&menu_id).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn iter_menu_actions(&self) -> impl Iterator<Item = (&i32, &MenuAction)> {
+        self.menu_action_map.iter()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn menu_action_count(&self) -> usize {
+        self.menu_action_map.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn get_next_menu_item_id_counter(&self) -> i32 {
+        self.next_menu_item_id_counter
+    }
+
+    pub(crate) fn define_layout(&mut self, rules: Vec<LayoutRule>) {
+        self.layout_rules = Some(rules);
+    }
+
+    pub(crate) fn set_label_severity(&mut self, label_id: i32, severity: MessageSeverity) {
+        self.label_severities.insert(label_id, severity);
+    }
+
+    pub(crate) fn get_label_severity(&self, label_id: i32) -> Option<MessageSeverity> {
+        self.label_severities.get(&label_id).copied()
+    }
+
+    pub(crate) fn set_input_background_color(
+        &mut self,
+        control_id: i32,
+        color: Option<u32>,
+    ) -> crate::platform_layer::error::Result<()> {
+        use crate::platform_layer::controls::input_handler::InputColorState;
+        use windows::Win32::Foundation::{COLORREF, GetLastError};
+        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
+
+        if let Some(existing) = self.input_bg_colors.remove(&control_id) {
+            unsafe {
+                let _ = DeleteObject(existing.brush.into());
+            }
+        }
+
+        if let Some(c) = color {
+            let colorref = COLORREF(c);
+            let brush = unsafe { CreateSolidBrush(colorref) };
+            if brush.is_invalid() {
+                return Err(
+                    crate::platform_layer::error::PlatformError::OperationFailed(format!(
+                        "CreateSolidBrush failed: {:?}",
+                        unsafe { GetLastError() }
+                    )),
+                );
+            }
+            self.input_bg_colors.insert(
+                control_id,
+                InputColorState {
+                    color: colorref,
+                    brush,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn get_input_background_color(
+        &self,
+        control_id: i32,
+    ) -> Option<&crate::platform_layer::controls::input_handler::InputColorState> {
+        self.input_bg_colors.get(&control_id)
+    }
+
+    pub(crate) fn cleanup_input_background_colors(&mut self) {
+        use windows::Win32::Graphics::Gdi::DeleteObject;
+        for (_, state) in self.input_bg_colors.drain() {
+            unsafe {
+                let _ = DeleteObject(state.brush.into());
+            }
+        }
+    }
+
+    pub(crate) fn ensure_status_bar_font(&mut self) {
+        if self.status_bar_font.is_some() {
+            return;
+        }
+
+        let font_name_hstring = HSTRING::from("Segoe UI");
+        let font_point_size = 9;
+        let hdc_screen = unsafe { GetDC(None) };
+        let logical_font_height = if !hdc_screen.is_invalid() {
+            let height = -unsafe {
+                MulDiv(
+                    font_point_size,
+                    GetDeviceCaps(Some(hdc_screen), LOGPIXELSY),
+                    72,
+                )
+            };
+            unsafe { ReleaseDC(None, hdc_screen) };
+            height
+        } else {
+            -font_point_size
+        };
+
+        let h_font = unsafe {
+            CreateFontW(
+                logical_font_height,
+                0,
+                0,
+                0,
+                FW_NORMAL.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET,
+                OUT_DEFAULT_PRECIS,
+                CLIP_DEFAULT_PRECIS,
+                DEFAULT_QUALITY,
+                FF_DONTCARE.0 as u32,
+                &font_name_hstring,
+            )
+        };
+
+        if h_font.is_invalid() {
+            log::error!("Platform: Failed to create status bar font: {:?}", unsafe {
+                GetLastError()
+            });
+            self.status_bar_font = None;
+        } else {
+            log::debug!(
+                "Platform: Status bar font created: {:?} for window {:?}",
+                h_font,
+                self.logical_window_id
+            );
+            self.status_bar_font = Some(h_font);
+        }
+    }
+
+    pub(crate) fn get_status_bar_font(&self) -> Option<HFONT> {
+        self.status_bar_font
+    }
+
+    pub(crate) fn cleanup_status_bar_font(&mut self) {
+        if let Some(h_font) = self.status_bar_font.take() {
+            if !h_font.is_invalid() {
+                log::debug!(
+                    "Deleting status bar font {:?} for WinID {:?}",
+                    h_font,
+                    self.logical_window_id
+                );
+                unsafe {
+                    let _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
+                }
+            }
+        }
     }
 }
 
@@ -447,7 +674,7 @@ impl Win32ApiInternalState {
             // And is the notification coming from the control ID stored for that treeview?
             // For now, assume if treeview_state exists, this NM_CUSTOMDRAW or NM_CLICK could be for it.
             // A more robust check would be to see if nmhdr.hwndFrom matches the stored TreeView HWND.
-            is_treeview_notification = window_data.treeview_state.is_some()
+            is_treeview_notification = window_data.has_treeview_state()
                 && window_data.get_control_hwnd(control_id_from_notify) == Some(nmhdr.hwndFrom);
         }
 
@@ -525,55 +752,7 @@ impl Win32ApiInternalState {
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
             if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                if window_data.status_bar_font.is_none() {
-                    let font_name_hstring = HSTRING::from("Segoe UI");
-                    let font_point_size = 9;
-                    let hdc_screen = unsafe { GetDC(None) };
-                    let logical_font_height = if !hdc_screen.is_invalid() {
-                        let height = -unsafe {
-                            MulDiv(
-                                font_point_size,
-                                GetDeviceCaps(Some(hdc_screen), LOGPIXELSY),
-                                72,
-                            )
-                        };
-                        unsafe { ReleaseDC(None, hdc_screen) };
-                        height
-                    } else {
-                        -font_point_size // Fallback: direct point size as negative height
-                    };
-                    let h_font = unsafe {
-                        CreateFontW(
-                            logical_font_height,  // nHeight
-                            0,                    // nWidth
-                            0,                    // nEscapement
-                            0,                    // nOrientation
-                            FW_NORMAL.0 as i32,   // fnWeight
-                            0,                    // fdwItalic
-                            0,                    // fdwUnderline
-                            0,                    // fdwStrikeOut
-                            DEFAULT_CHARSET,      // fdwCharSet
-                            OUT_DEFAULT_PRECIS,   // fdwOutputPrecision
-                            CLIP_DEFAULT_PRECIS,  // fdwClipPrecision
-                            DEFAULT_QUALITY,      // fdwQuality
-                            FF_DONTCARE.0 as u32, // fdwPitchAndFamily
-                            &font_name_hstring,   // lpszFace
-                        )
-                    };
-                    if h_font.is_invalid() {
-                        log::error!("Platform: Failed to create status bar font: {:?}", unsafe {
-                            GetLastError()
-                        });
-                        window_data.status_bar_font = None;
-                    } else {
-                        log::debug!(
-                            "Platform: Status bar font created: {:?} for window {:?}",
-                            h_font,
-                            window_id
-                        );
-                        window_data.status_bar_font = Some(h_font);
-                    }
-                }
+                window_data.ensure_status_bar_font();
             }
         }
     }
@@ -815,7 +994,7 @@ impl Win32ApiInternalState {
             log::warn!("HWND invalid for layout: {:?}", window_id);
             return;
         }
-        let rules = match &window_data.layout_rules {
+        let rules = match window_data.layout_rules.as_ref() {
             Some(r) => r,
             None => {
                 log::debug!("No layout rules for WinID {:?}", window_id);
@@ -842,7 +1021,7 @@ impl Win32ApiInternalState {
             window_id,
             None,
             client_rect,
-            rules,
+            &rules,
             &window_data.control_hwnd_map,
         );
     }
@@ -890,14 +1069,14 @@ impl Win32ApiInternalState {
             // Menu or accelerator
             if let Ok(windows_guard) = self.active_windows.read() {
                 if let Some(window_data) = windows_guard.get(&window_id) {
-                    if let Some(action) = window_data.menu_action_map.get(&command_id) {
+                    if let Some(action) = window_data.get_menu_action(command_id) {
                         log::debug!(
                             "Menu action {:?} (ID {}) for WinID {:?}.",
                             action,
                             command_id,
                             window_id
                         );
-                        return Some(AppEvent::MenuActionClicked { action: *action });
+                        return Some(AppEvent::MenuActionClicked { action });
                     } else {
                         log::warn!(
                             "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
@@ -989,19 +1168,8 @@ impl Win32ApiInternalState {
         );
         if let Ok(mut windows_map_guard) = self.active_windows.write() {
             if let Some(mut window_data_entry) = windows_map_guard.remove(&window_id) {
-                if let Some(h_font) = window_data_entry.status_bar_font.take() {
-                    if !h_font.is_invalid() {
-                        log::debug!(
-                            "Deleting status bar font {:?} for WinID {:?}",
-                            h_font,
-                            window_id
-                        );
-                        unsafe {
-                            _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
-                        }
-                    }
-                }
-                super::controls::input_handler::cleanup(&mut window_data_entry);
+                window_data_entry.cleanup_status_bar_font();
+                window_data_entry.cleanup_input_background_colors();
                 log::debug!("Removed WindowId {:?} from active_windows.", window_id);
             } else {
                 log::warn!(

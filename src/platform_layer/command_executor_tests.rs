@@ -30,18 +30,7 @@ fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) 
     let internal_state_arc = Win32ApiInternalState::new("TestAppForExecutor".to_string()).unwrap();
     let window_id = internal_state_arc.generate_window_id();
 
-    let native_window_data = NativeWindowData {
-        this_window_hwnd: window_common::HWND_INVALID,
-        logical_window_id: window_id,
-        treeview_state: None,
-        control_hwnd_map: HashMap::new(),
-        menu_action_map: HashMap::new(),
-        next_menu_item_id_counter: 30000,
-        layout_rules: None,
-        label_severities: HashMap::new(),
-        input_bg_colors: HashMap::new(),
-        status_bar_font: None,
-    };
+    let native_window_data = NativeWindowData::new(window_id);
     (internal_state_arc, window_id, native_window_data)
 }
 #[cfg(test)]
@@ -89,12 +78,13 @@ mod tests {
         }
 
         assert_eq!(
-            native_window_data.menu_action_map.len(),
+            native_window_data.menu_action_count(),
             3,
             "Expected 3 actions in map: Load, Save As, Refresh"
         );
         assert_eq!(
-            native_window_data.next_menu_item_id_counter, 30003,
+            native_window_data.get_next_menu_item_id_counter(),
+            30003,
             "Menu item ID counter should advance by 3"
         );
 
@@ -102,7 +92,7 @@ mod tests {
         let mut found_save_as = false;
         let mut found_refresh = false;
 
-        for (id, action) in &native_window_data.menu_action_map {
+        for (id, action) in native_window_data.iter_menu_actions() {
             assert!(
                 *id >= 30000 && *id < 30003,
                 "Generated menu IDs should be in the expected range"

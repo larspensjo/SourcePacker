@@ -360,20 +360,7 @@ impl PlatformInterface {
         let window_id = self.internal_state.generate_unique_window_id();
 
         // Create a preliminary NativeWindowData. It will be fully populated after HWND creation.
-        let preliminary_native_data = window_common::NativeWindowData {
-            this_window_hwnd: window_common::HWND_INVALID, // HWND is not yet known
-            logical_window_id: window_id,
-            treeview_state: None, // TreeView specific state
-            control_hwnd_map: HashMap::new(),
-            // status_bar_current_text: String::new(), // Removed as per previous phase
-            // status_bar_current_severity: MessageSeverity::None, // Removed
-            menu_action_map: HashMap::new(),
-            next_menu_item_id_counter: 30000, // Initial value for menu item IDs
-            layout_rules: None,
-            label_severities: HashMap::new(), // For new status labels
-            input_bg_colors: HashMap::new(),
-            status_bar_font: None,            // Font for status bar labels
-        };
+        let preliminary_native_data = window_common::NativeWindowData::new(window_id);
 
         // Insert preliminary data before creating the native window.
         // This ensures that if WM_NCCREATE is processed for this window_id,
@@ -433,7 +420,7 @@ impl PlatformInterface {
         match self.internal_state.active_windows.write() {
             Ok(mut windows_map_guard) => {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    window_data.this_window_hwnd = hwnd; // Set the actual HWND
+                    window_data.set_hwnd(hwnd); // Set the actual HWND
                     log::debug!(
                         "Platform: Updated HWND in NativeWindowData for WindowId {:?}.",
                         window_id,

@@ -83,7 +83,7 @@ pub(crate) fn handle_create_label_command(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&label_id) {
+    if window_data.has_control(label_id) {
         log::warn!(
             "LabelHandler: Label with logical ID {} already exists for window {:?}.",
             label_id,
@@ -129,7 +129,7 @@ pub(crate) fn handle_create_label_command(
 
     // Apply custom font if this is a status bar label and font exists
     if class == LabelClass::StatusBar {
-        if let Some(h_font) = window_data.status_bar_font {
+        if let Some(h_font) = window_data.get_status_bar_font() {
             if !h_font.is_invalid() {
                 unsafe {
                     SendMessageW(
@@ -147,10 +147,8 @@ pub(crate) fn handle_create_label_command(
         }
     }
 
-    window_data.control_hwnd_map.insert(label_id, hwnd_label);
-    window_data
-        .label_severities
-        .insert(label_id, MessageSeverity::Information); // Default to Information
+    window_data.register_control_hwnd(label_id, hwnd_label);
+    window_data.set_label_severity(label_id, MessageSeverity::Information); // Default to Information
     log::debug!(
         "LabelHandler: Created label '{}' (LogicalID {}) for WinID {:?} with HWND {:?}",
         initial_text,
@@ -229,7 +227,7 @@ pub(crate) fn handle_update_label_text_command(
                 label_id, window_id
             )));
         }
-        window_data.label_severities.insert(label_id, severity);
+        window_data.set_label_severity(label_id, severity);
     } // Write lock released
 
     // Now make WinAPI calls without holding the lock
@@ -316,7 +314,7 @@ pub(crate) fn handle_wm_ctlcolorstatic(
         return None;
     }
 
-    if let Some(severity) = window_data.label_severities.get(&control_id_of_static) {
+    if let Some(severity) = window_data.get_label_severity(control_id_of_static) {
         log::trace!(
             "LabelHandler: Found severity {:?} for label ID {} (HWND {:?})",
             severity,

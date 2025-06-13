@@ -63,7 +63,7 @@ pub(crate) fn execute_define_layout(
     })?;
 
     // Store the rules
-    window_data.layout_rules = Some(rules);
+    window_data.define_layout(rules);
     log::debug!(
         "CommandExecutor: Stored layout rules for WinID {:?}",
         window_id
@@ -133,7 +133,7 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
                     window_id
                 ))
             })?
-            .this_window_hwnd
+            .get_hwnd()
     };
 
     if hwnd_target.is_invalid() {
@@ -212,8 +212,8 @@ pub(crate) fn execute_create_main_menu(
             ))
         })?;
 
-        hwnd_owner_opt = Some(window_data.this_window_hwnd);
-        if window_data.this_window_hwnd.is_invalid() {
+        hwnd_owner_opt = Some(window_data.get_hwnd());
+        if window_data.get_hwnd().is_invalid() {
             unsafe {
                 DestroyMenu(h_main_menu).unwrap_or_default();
             }
@@ -297,14 +297,7 @@ pub(crate) unsafe fn add_menu_item_recursive_impl(
     if item_config.children.is_empty() {
         // This is a command item
         if let Some(action) = item_config.action {
-            let generated_id = window_data.generate_menu_item_id();
-            window_data.menu_action_map.insert(generated_id, action);
-            log::debug!(
-                "CommandExecutor: Mapping menu action {:?} to ID {} for window {:?}",
-                action,
-                generated_id,
-                window_data.logical_window_id
-            );
+            let generated_id = window_data.register_menu_action(action);
             unsafe {
                 AppendMenuW(
                     parent_menu_handle,
@@ -504,7 +497,7 @@ pub(crate) fn execute_create_input(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&control_id) {
+    if window_data.has_control(control_id) {
         log::warn!(
             "CommandExecutor: Input with logical ID {} already exists for window {:?}",
             control_id,
@@ -527,7 +520,7 @@ pub(crate) fn execute_create_input(
                 id, window_id
             ))
         })?,
-        None => window_data.this_window_hwnd,
+        None => window_data.get_hwnd(),
     };
 
     if hwnd_parent.is_invalid() {
@@ -558,7 +551,7 @@ pub(crate) fn execute_create_input(
         )?
     };
 
-    window_data.control_hwnd_map.insert(control_id, hwnd_edit);
+    window_data.register_control_hwnd(control_id, hwnd_edit);
     log::debug!(
         "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
         control_id,
@@ -663,7 +656,7 @@ pub(crate) fn execute_set_input_background_color(
                 control_id, window_id
             ))
         })?;
-        super::controls::input_handler::set_input_background_color(window_data, control_id, color)?;
+        window_data.set_input_background_color(control_id, color)?;
     }
 
     unsafe {
@@ -772,7 +765,7 @@ pub(crate) fn execute_create_panel(
         ))
     })?;
 
-    if window_data.control_hwnd_map.contains_key(&panel_id) {
+    if window_data.has_control(panel_id) {
         log::warn!(
             "CommandExecutor: Panel with logical ID {} already exists for window {:?}.",
             panel_id,
@@ -792,7 +785,7 @@ pub(crate) fn execute_create_panel(
                 id, window_id
             ))
         })?,
-        None => window_data.this_window_hwnd, // Parent is the main window
+        None => window_data.get_hwnd(), // Parent is the main window
     };
 
     if hwnd_parent.is_invalid() {
@@ -827,7 +820,7 @@ pub(crate) fn execute_create_panel(
         let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
         SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
     }
-    window_data.control_hwnd_map.insert(panel_id, hwnd_panel);
+    window_data.register_control_hwnd(panel_id, hwnd_panel);
     log::debug!(
         "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
         panel_id,

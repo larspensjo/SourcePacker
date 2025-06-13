@@ -59,7 +59,7 @@ pub(crate) fn handle_create_button_command(
             ))
         })?;
 
-        if window_data.control_hwnd_map.contains_key(&control_id) {
+        if window_data.has_control(control_id) {
             log::warn!(
                 "ButtonHandler: Button with ID {} already exists for window {:?}.",
                 control_id,
@@ -71,7 +71,7 @@ pub(crate) fn handle_create_button_command(
             )));
         }
 
-        if window_data.this_window_hwnd.is_invalid() {
+        if window_data.get_hwnd().is_invalid() {
             log::error!(
                 "ButtonHandler: Parent HWND invalid for CreateButton (WinID: {:?})",
                 window_id
@@ -82,7 +82,7 @@ pub(crate) fn handle_create_button_command(
             )));
         }
 
-        hwnd_parent_for_creation = window_data.this_window_hwnd;
+        hwnd_parent_for_creation = window_data.get_hwnd();
         h_instance = internal_state.h_instance;
     }
 
@@ -112,7 +112,7 @@ pub(crate) fn handle_create_button_command(
     })?;
 
     if let Some(window_data) = windows_map.get_mut(&window_id) {
-        if window_data.control_hwnd_map.contains_key(&control_id) {
+        if window_data.has_control(control_id) {
             log::warn!(
                 "ButtonHandler: Control ID {} was created concurrently for window {:?}. Destroying new HWND.",
                 control_id,
@@ -126,7 +126,7 @@ pub(crate) fn handle_create_button_command(
                 control_id, window_id
             )));
         }
-        window_data.control_hwnd_map.insert(control_id, hwnd_button);
+        window_data.register_control_hwnd(control_id, hwnd_button);
         log::debug!(
             "ButtonHandler: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
             text,
