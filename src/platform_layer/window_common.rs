@@ -136,10 +136,6 @@ impl NativeWindowData {
         self.control_hwnd_map.contains_key(&control_id)
     }
 
-    pub(crate) fn control_hwnds(&self) -> &HashMap<i32, HWND> {
-        &self.control_hwnd_map
-    }
-
     pub(crate) fn has_treeview_state(&self) -> bool {
         self.treeview_state.is_some()
     }
@@ -148,11 +144,16 @@ impl NativeWindowData {
         self.treeview_state = Some(treeview_handler::TreeViewInternalState::new());
     }
 
-    pub(crate) fn take_treeview_state(&mut self) -> Option<treeview_handler::TreeViewInternalState> {
+    pub(crate) fn take_treeview_state(
+        &mut self,
+    ) -> Option<treeview_handler::TreeViewInternalState> {
         self.treeview_state.take()
     }
 
-    pub(crate) fn set_treeview_state(&mut self, state: Option<treeview_handler::TreeViewInternalState>) {
+    pub(crate) fn set_treeview_state(
+        &mut self,
+        state: Option<treeview_handler::TreeViewInternalState>,
+    ) {
         self.treeview_state = state;
     }
 
@@ -947,7 +948,7 @@ impl Win32ApiInternalState {
             None,
             client_rect,
             rules,
-            window_data.control_hwnds(),
+            &window_data.control_hwnd_map,
         );
     }
 
