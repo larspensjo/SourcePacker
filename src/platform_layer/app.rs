@@ -33,9 +33,9 @@ use std::sync::{
  */
 pub(crate) struct Win32ApiInternalState {
     h_instance: HINSTANCE,
-    active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
+    next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
-    pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
+    active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
     pub(crate) app_name_for_class: String,

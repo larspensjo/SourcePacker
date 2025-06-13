@@ -429,16 +429,16 @@ pub(crate) fn create_native_window(
 
     unsafe {
         let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),          // Optional extended window styles
-            &class_name_hstring,                 // Window class name
-            &HSTRING::from(title),               // Window title
-            WS_OVERLAPPEDWINDOW,                 // Common window style
-            CW_USEDEFAULT,                       // Default X position
-            CW_USEDEFAULT,                       // Default Y position
-            width,                               // Width
-            height,                              // Height
-            None,                                // Parent window (None for top-level)
-            None,                                // Menu (None for no default menu)
+            WINDOW_EX_STYLE::default(),            // Optional extended window styles
+            &class_name_hstring,                   // Window class name
+            &HSTRING::from(title),                 // Window title
+            WS_OVERLAPPEDWINDOW,                   // Common window style
+            CW_USEDEFAULT,                         // Default X position
+            CW_USEDEFAULT,                         // Default Y position
+            width,                                 // Width
+            height,                                // Height
+            None,                                  // Parent window (None for top-level)
+            None,                                  // Menu (None for no default menu)
             Some(internal_state_arc.h_instance()), // Application instance
             Some(Box::into_raw(creation_context) as *mut c_void), // lParam for WM_CREATE/WM_NCCREATE
         )?; // Returns Result<HWND, Error>, so ? operator handles error conversion
@@ -650,7 +650,7 @@ impl Win32ApiInternalState {
         // For now, we'll rely on treeview_state existing for the window and the notification code.
         let is_treeview_notification;
         {
-            let windows_guard = match self.active_windows.read() {
+            let windows_guard = match self.active_windows().read() {
                 Ok(g) => g,
                 Err(e) => {
                     log::error!(
@@ -750,7 +750,7 @@ impl Win32ApiInternalState {
             hwnd,
             window_id
         );
-        if let Ok(mut windows_map_guard) = self.active_windows.write() {
+        if let Ok(mut windows_map_guard) = self.active_windows().write() {
             if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                 window_data.ensure_status_bar_font();
             }
@@ -976,7 +976,7 @@ impl Win32ApiInternalState {
             "trigger_layout_recalculation called for WinID {:?}",
             window_id
         );
-        let active_windows_guard = match self.active_windows.read() {
+        let active_windows_guard = match self.active_windows().read() {
             Ok(g) => g,
             Err(e) => {
                 log::error!("Failed to get read lock for layout: {:?}", e);
@@ -1067,7 +1067,7 @@ impl Win32ApiInternalState {
         let notification_code = highord_from_wparam(wparam);
         if control_hwnd.0 == 0 {
             // Menu or accelerator
-            if let Ok(windows_guard) = self.active_windows.read() {
+            if let Ok(windows_guard) = self.active_windows().read() {
                 if let Some(window_data) = windows_guard.get(&window_id) {
                     if let Some(action) = window_data.get_menu_action(command_id) {
                         log::debug!(
@@ -1139,7 +1139,7 @@ impl Win32ApiInternalState {
             _ = KillTimer(Some(hwnd), timer_id.0 as usize);
         }
         let control_id = timer_id.0 as i32;
-        let hwnd_edit_opt = self.active_windows.read().ok().and_then(|g| {
+        let hwnd_edit_opt = self.active_windows().read().ok().and_then(|g| {
             g.get(&window_id)
                 .and_then(|wd| wd.get_control_hwnd(control_id))
         });
@@ -1166,7 +1166,7 @@ impl Win32ApiInternalState {
             "WM_DESTROY for WinID {:?}. Removing data and cleaning resources.",
             window_id
         );
-        if let Ok(mut windows_map_guard) = self.active_windows.write() {
+        if let Ok(mut windows_map_guard) = (self.active_windows()).write() {
             if let Some(mut window_data_entry) = windows_map_guard.remove(&window_id) {
                 window_data_entry.cleanup_status_bar_font();
                 window_data_entry.cleanup_input_background_colors();
@@ -1263,7 +1263,7 @@ pub(crate) fn show_window(
 ) -> PlatformResult<()> {
     log::debug!("Setting visibility for WinID {:?} to {}", window_id, show);
     let windows_guard = internal_state
-        .active_windows
+        .active_windows()
         .read()
         .map_err(|_| PlatformError::OperationFailed("Failed read lock for show_window".into()))?;
     let window_data = windows_guard.get(&window_id).ok_or_else(|| {
