@@ -742,7 +742,7 @@ pub(crate) fn execute_set_input_background_color(
                 control_id, window_id
             ))
         })?;
-        super::controls::input_handler::set_input_background_color(window_data, control_id, color)?;
+        window_data.set_input_background_color(control_id, color)?;
     }
 
     unsafe {

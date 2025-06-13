@@ -5,12 +5,11 @@
  */
 
 use crate::platform_layer::app::Win32ApiInternalState;
-use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::WindowId;
 use std::sync::Arc;
 use windows::Win32::{
-    Foundation::{COLORREF, GetLastError, HWND, LRESULT},
-    Graphics::Gdi::{CreateSolidBrush, DeleteObject, HBRUSH, SetBkColor},
+    Foundation::{COLORREF, HWND, LRESULT},
+    Graphics::Gdi::{HBRUSH, SetBkColor},
     UI::WindowsAndMessaging::GetDlgCtrlID,
 };
 
@@ -20,35 +19,6 @@ pub(crate) struct InputColorState {
     pub brush: HBRUSH,
 }
 
-pub(crate) fn set_input_background_color(
-    window_data: &mut crate::platform_layer::window_common::NativeWindowData,
-    control_id: i32,
-    color: Option<u32>,
-) -> PlatformResult<()> {
-    if let Some(existing) = window_data.input_bg_colors.remove(&control_id) {
-        unsafe {
-            let _ = DeleteObject(existing.brush.into());
-        }
-    }
-    if let Some(c) = color {
-        let colorref = COLORREF(c);
-        let brush = unsafe { CreateSolidBrush(colorref) };
-        if brush.is_invalid() {
-            return Err(PlatformError::OperationFailed(format!(
-                "CreateSolidBrush failed: {:?}",
-                unsafe { GetLastError() }
-            )));
-        }
-        window_data.input_bg_colors.insert(
-            control_id,
-            InputColorState {
-                color: colorref,
-                brush,
-            },
-        );
-    }
-    Ok(())
-}
 
 pub(crate) fn handle_wm_ctlcoloredit(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -62,7 +32,7 @@ pub(crate) fn handle_wm_ctlcoloredit(
     if control_id == 0 {
         return None;
     }
-    if let Some(state) = window_data.input_bg_colors.get(&control_id) {
+    if let Some(state) = window_data.get_input_background_color(control_id) {
         unsafe {
             SetBkColor(hdc_edit, state.color);
         }
@@ -71,10 +41,3 @@ pub(crate) fn handle_wm_ctlcoloredit(
     None
 }
 
-pub(crate) fn cleanup(window_data: &mut crate::platform_layer::window_common::NativeWindowData) {
-    for (_, state) in window_data.input_bg_colors.drain() {
-        unsafe {
-            let _ = DeleteObject(state.brush.into());
-        }
-    }
-}
