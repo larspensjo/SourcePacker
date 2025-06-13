@@ -64,7 +64,7 @@ pub(crate) fn handle_create_label_command(
         class,
     );
 
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+    let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
         log::error!(
             "LabelHandler: Failed to lock windows map for CreateLabel: {:?}",
             e
@@ -196,7 +196,7 @@ pub(crate) fn handle_update_label_text_command(
 
     // Scope for the write lock on window_map to update label_severities
     {
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "LabelHandler: Failed to lock windows map for UpdateLabelText: {:?}",
                 e
@@ -294,10 +294,10 @@ pub(crate) fn handle_wm_ctlcolorstatic(
         hwnd_static_ctrl
     );
 
-    // No need to lock internal_state.active_windows for read here if we get all necessary info from window_data first.
+    // No need to lock internal_state.active_windows() for read here if we get all necessary info from window_data first.
     // However, we need to access window_data.label_severities.
 
-    let windows_map_guard = internal_state.active_windows.read().ok()?;
+    let windows_map_guard = internal_state.active_windows().read().ok()?;
     let window_data = windows_map_guard.get(&window_id)?;
 
     // Get the control ID from the HWND of the static control.

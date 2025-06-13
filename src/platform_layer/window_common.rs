@@ -1237,7 +1237,7 @@ pub(crate) fn set_window_title(
     title: &str,
 ) -> PlatformResult<()> {
     log::debug!("Setting title for WinID {:?} to '{}'", window_id, title);
-    let windows_guard = internal_state.active_windows.read().map_err(|_| {
+    let windows_guard = internal_state.active_windows().read().map_err(|_| {
         PlatformError::OperationFailed("Failed read lock for set_window_title".into())
     })?;
     let window_data = windows_guard.get(&window_id).ok_or_else(|| {
@@ -1315,7 +1315,7 @@ pub(crate) fn destroy_native_window(
     );
     let hwnd_to_destroy: Option<HWND>;
     {
-        let windows_read_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_read_guard = internal_state.active_windows().read().map_err(|e| {
             PlatformError::OperationFailed(format!(
                 "Failed read lock (destroy_native_window): {}",
                 e

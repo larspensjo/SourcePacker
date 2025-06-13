@@ -41,7 +41,7 @@ pub(crate) fn execute_define_layout(
         rules.len()
     );
 
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+    let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
         log::error!(
             "CommandExecutor: Failed to lock windows map for execute_define_layout: {:?}",
             e
@@ -112,7 +112,7 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
     // custom message to the window. The window procedure will translate it into
     // `AppEvent::MainWindowUISetupComplete`.
     let hwnd_target = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_guard = internal_state.active_windows().read().map_err(|e| {
             log::error!(
                 "CommandExecutor: Failed to lock windows map to post UI setup complete: {:?}",
                 e
@@ -193,7 +193,7 @@ pub(crate) fn execute_create_main_menu(
 
     {
         // Scope for write lock
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e|{
+        let mut windows_map_guard = internal_state.active_windows().write().map_err(|e|{
             log::error!("CommandExecutor: Failed to lock windows map for main menu creation (data population): {:?}", e);
             PlatformError::OperationFailed("Failed to lock windows map for main menu creation (data population)".into())
         })?;
@@ -347,7 +347,7 @@ pub(crate) fn execute_set_control_enabled(
         control_id,
         enabled
     );
-    let windows_guard = internal_state.active_windows.read().map_err(|e|{
+    let windows_guard = internal_state.active_windows().read().map_err(|e|{
         log::error!("CommandExecutor: Failed to acquire read lock on windows map for SetControlEnabled: {:?}", e);
         PlatformError::OperationFailed("Failed to acquire read lock on windows map for SetControlEnabled".into())
     })?;
@@ -478,7 +478,7 @@ pub(crate) fn execute_create_input(
         control_id
     );
 
-    let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
+    let mut windows_guard = internal_state.active_windows().write().map_err(|e| {
         log::error!(
             "CommandExecutor: Failed to lock windows map for CreateInput: {:?}",
             e
@@ -571,7 +571,7 @@ pub(crate) fn execute_set_input_text(
     text: String,
 ) -> PlatformResult<()> {
     let hwnd_edit = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_guard = internal_state.active_windows().read().map_err(|e| {
             log::error!(
                 "CommandExecutor: Failed to lock windows map for SetInputText: {:?}",
                 e
@@ -628,7 +628,7 @@ pub(crate) fn execute_set_input_background_color(
 ) -> PlatformResult<()> {
     let hwnd_edit;
     {
-        let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_guard = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "CommandExecutor: Failed to lock windows map for SetInputBackgroundColor: {:?}",
                 e
@@ -746,7 +746,7 @@ pub(crate) fn execute_create_panel(
         parent_control_id
     );
 
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+    let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
         log::error!(
             "CommandExecutor: Failed to lock windows map for CreatePanel: {:?}",
             e

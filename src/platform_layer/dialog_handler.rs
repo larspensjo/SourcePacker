@@ -49,7 +49,7 @@ pub(crate) fn get_hwnd_owner(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<HWND> {
-    let windows_guard = internal_state.active_windows.read().map_err(|_| {
+    let windows_guard = internal_state.active_windows().read().map_err(|_| {
         PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
     })?;
     windows_guard

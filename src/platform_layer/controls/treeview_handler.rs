@@ -201,7 +201,7 @@ pub(crate) fn handle_create_treeview_command(
 
     // Phase 1: Acquire read lock, perform checks, and get necessary data for CreateWindowExW
     {
-        let windows_map_guard = internal_state.active_windows.read().map_err(|e|{
+        let windows_map_guard = internal_state.active_windows().read().map_err(|e|{
             log::error!("TreeViewHandler: Failed to lock windows map (read) for TreeView creation pre-check: {:?}", e);
             PlatformError::OperationFailed("Failed to lock windows map (read) for TreeView creation pre-check".into())
         })?;
@@ -269,7 +269,7 @@ pub(crate) fn handle_create_treeview_command(
 
     // Phase 3: Re-acquire write lock to update NativeWindowData
     {
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "TreeViewHandler: Failed to re-acquire write lock for TreeView creation post-update: {:?}",
                 e
@@ -346,7 +346,7 @@ pub(crate) fn populate_treeview(
 
     // Phase 1: Lock, get HWND, take tv_state
     {
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "TreeViewHandler: Failed to lock windows map for populate_treeview (phase 1): {:?}",
                 e
@@ -414,7 +414,7 @@ pub(crate) fn populate_treeview(
                 tv_state_actual.add_item_recursive_impl(hwnd_treeview, HTREEITEM(0), &item_desc)
             {
                 // Attempt to put state back on error
-                let mut windows_map_guard = internal_state.active_windows.write().map_err(|re_lock_err| {
+                let mut windows_map_guard = internal_state.active_windows().write().map_err(|re_lock_err| {
                     log::error!("TreeViewHandler: Failed to re-lock windows map for populate_treeview (error recovery): {:?}", re_lock_err);
                     // Original error `e` is more important, but log this too.
                     e.clone() // Return original error
@@ -449,7 +449,7 @@ pub(crate) fn populate_treeview(
 
     // Phase 3: Lock, put tv_state back
     {
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_map_guard = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "TreeViewHandler: Failed to lock windows map for populate_treeview (phase 3): {:?}",
                 e
@@ -500,7 +500,7 @@ pub(crate) fn update_treeview_item_visual_state(
 
     {
         // Read lock scope
-        let windows_guard = internal_state.active_windows.read().map_err(|e|{
+        let windows_guard = internal_state.active_windows().read().map_err(|e|{
             log::error!("TreeViewHandler: Failed to acquire read lock for windows map (update visual): {:?}",e);
             PlatformError::OperationFailed("Failed to acquire read lock for windows map (update visual)".into())
         })?;
@@ -617,7 +617,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
     );
 
     // Ensure TreeView state exists for this control_id
-    let windows_guard = match internal_state.active_windows.read() {
+    let windows_guard = match internal_state.active_windows().read() {
         Ok(g) => g,
         Err(e) => {
             log::error!(
@@ -676,7 +676,7 @@ pub(crate) fn handle_redraw_tree_item_command(
 
     {
         // Read lock scope
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_guard = internal_state.active_windows().read().map_err(|e| {
             log::error!("TreeViewHandler: Failed to acquire read lock on windows map for RedrawTreeItem: {:?}", e);
             PlatformError::OperationFailed("Failed to lock active_windows map for RedrawTreeItem".into())
         })?;
@@ -785,7 +785,7 @@ pub(crate) fn expand_visible_tree_items(
     );
 
     let hwnd_treeview = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_guard = internal_state.active_windows().read().map_err(|e| {
             log::error!(
                 "TreeViewHandler: Failed to lock windows map (expand_visible_tree_items): {:?}",
                 e
@@ -876,7 +876,7 @@ pub(crate) fn expand_all_tree_items(
     );
 
     let hwnd_treeview = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
+        let windows_guard = internal_state.active_windows().read().map_err(|e| {
             log::error!(
                 "TreeViewHandler: Failed to lock windows map (expand_all_tree_items): {:?}",
                 e
@@ -1186,7 +1186,7 @@ pub(crate) fn handle_wm_app_treeview_checkbox_clicked(
     );
 
     // Retrieve the HWND of the TreeView and its state
-    let windows_guard = internal_state.active_windows.read().ok()?;
+    let windows_guard = internal_state.active_windows().read().ok()?;
     let window_data = windows_guard.get(&window_id)?;
     let hwnd_treeview = window_data.get_control_hwnd(control_id_of_treeview)?;
 

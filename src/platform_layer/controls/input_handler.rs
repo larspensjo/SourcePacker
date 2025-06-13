@@ -26,7 +26,7 @@ pub(crate) fn handle_wm_ctlcoloredit(
     hdc_edit: windows::Win32::Graphics::Gdi::HDC,
     hwnd_edit: HWND,
 ) -> Option<LRESULT> {
-    let windows_map_guard = internal_state.active_windows.read().ok()?;
+    let windows_map_guard = internal_state.active_windows().read().ok()?;
     let window_data = windows_map_guard.get(&window_id)?;
     let control_id = unsafe { GetDlgCtrlID(hwnd_edit) };
     if control_id == 0 {

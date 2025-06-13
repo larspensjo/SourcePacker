@@ -33,7 +33,7 @@ use std::sync::{
  */
 pub(crate) struct Win32ApiInternalState {
     h_instance: HINSTANCE,
-    next_window_id_counter: AtomicUsize, // For generating unique WindowIds
+    active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     // Central registry for all active windows, mapping WindowId to its native state.
     pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
@@ -120,6 +120,16 @@ impl Win32ApiInternalState {
      */
     pub(crate) fn h_instance(&self) -> HINSTANCE {
         self.h_instance
+    }
+
+    /*
+     * Returns a reference to the map of active windows.
+     * External modules use this to acquire read or write locks on the map.
+     */
+    pub(crate) fn active_windows(
+        &self,
+    ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
+        &self.active_windows
     }
 
     /*

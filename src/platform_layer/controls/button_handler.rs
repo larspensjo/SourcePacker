@@ -40,7 +40,7 @@ pub(crate) fn handle_create_button_command(
     let hwnd_parent_for_creation: HWND;
     let h_instance: HINSTANCE;
     {
-        let mut windows_map = internal_state.active_windows.write().map_err(|e| {
+        let mut windows_map = internal_state.active_windows().write().map_err(|e| {
             log::error!(
                 "ButtonHandler: Failed to lock windows map for CreateButton: {:?}",
                 e
@@ -103,7 +103,7 @@ pub(crate) fn handle_create_button_command(
         )?
     };
 
-    let mut windows_map = internal_state.active_windows.write().map_err(|e| {
+    let mut windows_map = internal_state.active_windows().write().map_err(|e| {
         log::error!(
             "ButtonHandler: Failed to re-lock windows map after CreateButton: {:?}",
             e
