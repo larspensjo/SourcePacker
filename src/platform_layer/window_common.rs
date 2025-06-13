@@ -95,7 +95,7 @@ pub(crate) struct NativeWindowData {
     /// The current severity for each status label, keyed by its logical ID.
     label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
-    pub(crate) input_bg_colors:
+    input_bg_colors:
         HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     pub(crate) status_bar_font: Option<HFONT>,
 }
@@ -213,6 +213,57 @@ impl NativeWindowData {
 
     pub(crate) fn get_label_severity(&self, label_id: i32) -> Option<MessageSeverity> {
         self.label_severities.get(&label_id).copied()
+    }
+
+    pub(crate) fn set_input_background_color(
+        &mut self,
+        control_id: i32,
+        color: Option<u32>,
+    ) -> crate::platform_layer::error::Result<()> {
+        use crate::platform_layer::controls::input_handler::InputColorState;
+        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
+        use windows::Win32::Foundation::{COLORREF, GetLastError};
+
+        if let Some(existing) = self.input_bg_colors.remove(&control_id) {
+            unsafe {
+                let _ = DeleteObject(existing.brush.into());
+            }
+        }
+
+        if let Some(c) = color {
+            let colorref = COLORREF(c);
+            let brush = unsafe { CreateSolidBrush(colorref) };
+            if brush.is_invalid() {
+                return Err(crate::platform_layer::error::PlatformError::OperationFailed(
+                    format!("CreateSolidBrush failed: {:?}", unsafe { GetLastError() }),
+                ));
+            }
+            self.input_bg_colors.insert(
+                control_id,
+                InputColorState {
+                    color: colorref,
+                    brush,
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn get_input_background_color(
+        &self,
+        control_id: i32,
+    ) -> Option<&crate::platform_layer::controls::input_handler::InputColorState> {
+        self.input_bg_colors.get(&control_id)
+    }
+
+    pub(crate) fn cleanup_input_background_colors(&mut self) {
+        use windows::Win32::Graphics::Gdi::DeleteObject;
+        for (_, state) in self.input_bg_colors.drain() {
+            unsafe {
+                let _ = DeleteObject(state.brush.into());
+            }
+        }
     }
 }
 
@@ -1111,7 +1162,7 @@ impl Win32ApiInternalState {
                         }
                     }
                 }
-                super::controls::input_handler::cleanup(&mut window_data_entry);
+                window_data_entry.cleanup_input_background_colors();
                 log::debug!("Removed WindowId {:?} from active_windows.", window_id);
             } else {
                 log::warn!(
