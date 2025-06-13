@@ -33,7 +33,7 @@ use std::sync::{
  */
 pub(crate) struct Win32ApiInternalState {
     h_instance: HINSTANCE,
-    pub(crate) next_window_id_counter: AtomicUsize, // For generating unique WindowIds
+    next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
     pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
@@ -239,10 +239,7 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => super::controls::button_handler::handle_create_button_command(
-                self,
-                window_id,
-                control_id,
-                text,
+                self, window_id, control_id, text,
             ),
             PlatformCommand::CreateTreeView {
                 window_id,
@@ -290,20 +287,14 @@ impl Win32ApiInternalState {
             } => treeview_handler::handle_redraw_tree_item_command(
                 self, window_id, control_id, item_id,
             ),
-            PlatformCommand::ExpandVisibleTreeItems { window_id, control_id } => {
-                command_executor::execute_expand_visible_tree_items(
-                    self,
-                    window_id,
-                    control_id,
-                )
-            }
-            PlatformCommand::ExpandAllTreeItems { window_id, control_id } => {
-                command_executor::execute_expand_all_tree_items(
-                    self,
-                    window_id,
-                    control_id,
-                )
-            }
+            PlatformCommand::ExpandVisibleTreeItems {
+                window_id,
+                control_id,
+            } => command_executor::execute_expand_visible_tree_items(self, window_id, control_id),
+            PlatformCommand::ExpandAllTreeItems {
+                window_id,
+                control_id,
+            } => command_executor::execute_expand_all_tree_items(self, window_id, control_id),
             PlatformCommand::CreateInput {
                 window_id,
                 parent_control_id,
@@ -325,7 +316,9 @@ impl Win32ApiInternalState {
                 window_id,
                 control_id,
                 color,
-            } => command_executor::execute_set_input_background_color(self, window_id, control_id, color),
+            } => command_executor::execute_set_input_background_color(
+                self, window_id, control_id, color,
+            ),
         }
     }
 }
