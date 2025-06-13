@@ -92,8 +92,8 @@ pub(crate) struct NativeWindowData {
     next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
     layout_rules: Option<Vec<LayoutRule>>,
-    /// he current severity for each new status label, keyed by their logical ID.
-    pub(crate) label_severities: HashMap<i32, MessageSeverity>,
+    /// The current severity for each status label, keyed by its logical ID.
+    label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
     pub(crate) input_bg_colors:
         HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
@@ -204,6 +204,14 @@ impl NativeWindowData {
 
     pub(crate) fn has_layout_rules(&self) -> bool {
         self.layout_rules.is_some()
+    }
+
+    pub(crate) fn set_label_severity(&mut self, label_id: i32, severity: MessageSeverity) {
+        self.label_severities.insert(label_id, severity);
+    }
+
+    pub(crate) fn get_label_severity(&self, label_id: i32) -> Option<MessageSeverity> {
+        self.label_severities.get(&label_id).copied()
     }
 }
 

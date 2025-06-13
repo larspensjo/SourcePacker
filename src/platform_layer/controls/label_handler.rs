@@ -148,9 +148,7 @@ pub(crate) fn handle_create_label_command(
     }
 
     window_data.register_control_hwnd(label_id, hwnd_label);
-    window_data
-        .label_severities
-        .insert(label_id, MessageSeverity::Information); // Default to Information
+    window_data.set_label_severity(label_id, MessageSeverity::Information); // Default to Information
     log::debug!(
         "LabelHandler: Created label '{}' (LogicalID {}) for WinID {:?} with HWND {:?}",
         initial_text,
@@ -229,7 +227,7 @@ pub(crate) fn handle_update_label_text_command(
                 label_id, window_id
             )));
         }
-        window_data.label_severities.insert(label_id, severity);
+        window_data.set_label_severity(label_id, severity);
     } // Write lock released
 
     // Now make WinAPI calls without holding the lock
@@ -316,7 +314,7 @@ pub(crate) fn handle_wm_ctlcolorstatic(
         return None;
     }
 
-    if let Some(severity) = window_data.label_severities.get(&control_id_of_static) {
+    if let Some(severity) = window_data.get_label_severity(control_id_of_static) {
         log::trace!(
             "LabelHandler: Found severity {:?} for label ID {} (HWND {:?})",
             severity,
