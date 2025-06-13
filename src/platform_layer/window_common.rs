@@ -89,7 +89,7 @@ pub(crate) struct NativeWindowData {
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
-    pub(crate) next_menu_item_id_counter: i32,
+    next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
     pub(crate) layout_rules: Option<Vec<LayoutRule>>,
     /// he current severity for each new status label, keyed by their logical ID.
@@ -188,6 +188,10 @@ impl NativeWindowData {
 
     pub(crate) fn menu_action_count(&self) -> usize {
         self.menu_action_map.len()
+    }
+
+    pub(crate) fn get_next_menu_item_id_counter(&self) -> i32 {
+        self.next_menu_item_id_counter
     }
 }
 

@@ -83,7 +83,8 @@ mod tests {
             "Expected 3 actions in map: Load, Save As, Refresh"
         );
         assert_eq!(
-            native_window_data.next_menu_item_id_counter, 30003,
+            native_window_data.get_next_menu_item_id_counter(),
+            30003,
             "Menu item ID counter should advance by 3"
         );
 
