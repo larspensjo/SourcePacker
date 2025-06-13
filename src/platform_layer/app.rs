@@ -90,6 +90,48 @@ impl Win32ApiInternalState {
         WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
     }
 
+    // Provides safe, read-only access to a specific window's data.
+    // Handles locking and error checking.
+    pub(crate) fn with_window_data_read<F, R>(&self, window_id: WindowId, f: F) -> PlatformResult<R>
+    where
+        F: FnOnce(&window_common::NativeWindowData) -> PlatformResult<R>,
+    {
+        let windows_map = self.active_windows.read().map_err(|e| {
+            log::error!("Failed to acquire read lock on active_windows: {:?}", e);
+            PlatformError::OperationFailed("RwLock poisoned".into())
+        })?;
+
+        let window_data = windows_map.get(&window_id).ok_or_else(|| {
+            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
+            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+        })?;
+
+        f(window_data)
+    }
+
+    // Provides safe, writeable access to a specific window's data.
+    // Handles locking and error checking.
+    pub(crate) fn with_window_data_write<F, R>(
+        &self,
+        window_id: WindowId,
+        f: F,
+    ) -> PlatformResult<R>
+    where
+        F: FnOnce(&mut window_common::NativeWindowData) -> PlatformResult<R>,
+    {
+        let mut windows_map = self.active_windows.write().map_err(|e| {
+            log::error!("Failed to acquire write lock on active_windows: {:?}", e);
+            PlatformError::OperationFailed("RwLock poisoned".into())
+        })?;
+
+        let window_data = windows_map.get_mut(&window_id).ok_or_else(|| {
+            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
+            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+        })?;
+
+        f(window_data)
+    }
+
     /*
      * Called typically after a window is removed from the `active_windows` map
      * (e.g., during WM_DESTROY processing). If no windows remain active and a quit
