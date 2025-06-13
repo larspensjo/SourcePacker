@@ -95,8 +95,7 @@ pub(crate) struct NativeWindowData {
     /// The current severity for each status label, keyed by its logical ID.
     label_severities: HashMap<i32, MessageSeverity>,
     /// Background color state for input controls keyed by their logical ID.
-    input_bg_colors:
-        HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
+    input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     pub(crate) status_bar_font: Option<HFONT>,
 }
 
@@ -183,28 +182,23 @@ impl NativeWindowData {
         self.menu_action_map.get(&menu_id).copied()
     }
 
+    #[cfg(test)]
     pub(crate) fn iter_menu_actions(&self) -> impl Iterator<Item = (&i32, &MenuAction)> {
         self.menu_action_map.iter()
     }
 
+    #[cfg(test)]
     pub(crate) fn menu_action_count(&self) -> usize {
         self.menu_action_map.len()
     }
 
+    #[cfg(test)]
     pub(crate) fn get_next_menu_item_id_counter(&self) -> i32 {
         self.next_menu_item_id_counter
     }
 
     pub(crate) fn define_layout(&mut self, rules: Vec<LayoutRule>) {
         self.layout_rules = Some(rules);
-    }
-
-    pub(crate) fn get_layout_rules(&self) -> Option<&Vec<LayoutRule>> {
-        self.layout_rules.as_ref()
-    }
-
-    pub(crate) fn has_layout_rules(&self) -> bool {
-        self.layout_rules.is_some()
     }
 
     pub(crate) fn set_label_severity(&mut self, label_id: i32, severity: MessageSeverity) {
@@ -221,8 +215,8 @@ impl NativeWindowData {
         color: Option<u32>,
     ) -> crate::platform_layer::error::Result<()> {
         use crate::platform_layer::controls::input_handler::InputColorState;
-        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
         use windows::Win32::Foundation::{COLORREF, GetLastError};
+        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
 
         if let Some(existing) = self.input_bg_colors.remove(&control_id) {
             unsafe {
@@ -234,9 +228,12 @@ impl NativeWindowData {
             let colorref = COLORREF(c);
             let brush = unsafe { CreateSolidBrush(colorref) };
             if brush.is_invalid() {
-                return Err(crate::platform_layer::error::PlatformError::OperationFailed(
-                    format!("CreateSolidBrush failed: {:?}", unsafe { GetLastError() }),
-                ));
+                return Err(
+                    crate::platform_layer::error::PlatformError::OperationFailed(format!(
+                        "CreateSolidBrush failed: {:?}",
+                        unsafe { GetLastError() }
+                    )),
+                );
             }
             self.input_bg_colors.insert(
                 control_id,
@@ -971,7 +968,7 @@ impl Win32ApiInternalState {
             log::warn!("HWND invalid for layout: {:?}", window_id);
             return;
         }
-        let rules = match window_data.get_layout_rules() {
+        let rules = match window_data.layout_rules.as_ref() {
             Some(r) => r,
             None => {
                 log::debug!("No layout rules for WinID {:?}", window_id);
@@ -998,7 +995,7 @@ impl Win32ApiInternalState {
             window_id,
             None,
             client_rect,
-            rules,
+            &rules,
             &window_data.control_hwnd_map,
         );
     }
