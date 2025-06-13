@@ -546,7 +546,7 @@ pub(crate) fn execute_create_input(
             10,
             Some(hwnd_parent),
             Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             None,
         )?
     };
@@ -812,7 +812,7 @@ pub(crate) fn execute_create_panel(
             10, // Dummy position/size, layout rules will adjust
             Some(hwnd_parent),
             Some(HMENU(panel_id as *mut _)), // Use logical ID for the HMENU
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             None,
         )?
     };

@@ -32,7 +32,7 @@ use std::sync::{
  * TOOD: I think all member should be made private here. Instead, accessor functions should be provided.
  */
 pub(crate) struct Win32ApiInternalState {
-    pub(crate) h_instance: HINSTANCE,
+    h_instance: HINSTANCE,
     pub(crate) next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
     pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
@@ -112,6 +112,14 @@ impl Win32ApiInternalState {
             );
             unsafe { PostQuitMessage(0) };
         }
+    }
+
+    /*
+     * Retrieves the application's instance handle.
+     * Control and window creation functions use this value when calling Win32 APIs.
+     */
+    pub(crate) fn h_instance(&self) -> HINSTANCE {
+        self.h_instance
     }
 
     /*

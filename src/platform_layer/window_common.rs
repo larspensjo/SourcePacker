@@ -361,7 +361,7 @@ pub(crate) fn register_window_class(
     unsafe {
         let mut wc_test = WNDCLASSEXW::default();
         if GetClassInfoExW(
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             class_name_pcwstr,
             &mut wc_test,
         )
@@ -380,7 +380,7 @@ pub(crate) fn register_window_class(
             lpfnWndProc: Some(facade_wnd_proc_router),
             cbClsExtra: 0,
             cbWndExtra: 0,
-            hInstance: internal_state.h_instance,
+            hInstance: internal_state.h_instance(),
             hIcon: LoadIconW(None, IDI_APPLICATION)?,
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void),
@@ -439,7 +439,7 @@ pub(crate) fn create_native_window(
             height,                              // Height
             None,                                // Parent window (None for top-level)
             None,                                // Menu (None for no default menu)
-            Some(internal_state_arc.h_instance), // Application instance
+            Some(internal_state_arc.h_instance()), // Application instance
             Some(Box::into_raw(creation_context) as *mut c_void), // lParam for WM_CREATE/WM_NCCREATE
         )?; // Returns Result<HWND, Error>, so ? operator handles error conversion
 

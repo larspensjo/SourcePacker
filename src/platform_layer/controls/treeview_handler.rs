@@ -231,7 +231,7 @@ pub(crate) fn handle_create_treeview_command(
             )));
         }
         hwnd_parent_for_creation = window_data.get_hwnd();
-        h_instance_for_creation = internal_state.h_instance;
+        h_instance_for_creation = internal_state.h_instance();
 
         if hwnd_parent_for_creation.is_invalid() {
             log::warn!(

@@ -83,7 +83,7 @@ pub(crate) fn handle_create_button_command(
         }
 
         hwnd_parent_for_creation = window_data.get_hwnd();
-        h_instance = internal_state.h_instance;
+        h_instance = internal_state.h_instance();
     }
 
     let hwnd_button = unsafe {

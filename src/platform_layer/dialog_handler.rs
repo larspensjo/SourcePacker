@@ -557,7 +557,7 @@ pub(crate) fn handle_show_input_dialog_command(
     // Show the modal dialog.
     let dialog_result = unsafe {
         DialogBoxIndirectParamW(
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             template_bytes.as_ptr() as *const DLGTEMPLATE,
             Some(hwnd_owner),
             Some(input_dialog_proc),

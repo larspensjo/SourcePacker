@@ -122,7 +122,7 @@ pub(crate) fn handle_create_label_command(
             Some(windows::Win32::UI::WindowsAndMessaging::HMENU(
                 label_id as *mut _,
             )), // Use logical ID for the HMENU
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             None,
         )?
     };
