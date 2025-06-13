@@ -87,7 +87,7 @@ pub(crate) struct NativeWindowData {
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
     control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
-    pub(crate) menu_action_map: HashMap<i32, MenuAction>,
+    menu_action_map: HashMap<i32, MenuAction>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
     pub(crate) next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
@@ -176,6 +176,18 @@ impl NativeWindowData {
             self.logical_window_id
         );
         id
+    }
+
+    pub(crate) fn get_menu_action(&self, menu_id: i32) -> Option<MenuAction> {
+        self.menu_action_map.get(&menu_id).copied()
+    }
+
+    pub(crate) fn iter_menu_actions(&self) -> impl Iterator<Item = (&i32, &MenuAction)> {
+        self.menu_action_map.iter()
+    }
+
+    pub(crate) fn menu_action_count(&self) -> usize {
+        self.menu_action_map.len()
     }
 }
 
@@ -958,14 +970,14 @@ impl Win32ApiInternalState {
             // Menu or accelerator
             if let Ok(windows_guard) = self.active_windows.read() {
                 if let Some(window_data) = windows_guard.get(&window_id) {
-                    if let Some(action) = window_data.menu_action_map.get(&command_id) {
+                    if let Some(action) = window_data.get_menu_action(command_id) {
                         log::debug!(
                             "Menu action {:?} (ID {}) for WinID {:?}.",
                             action,
                             command_id,
                             window_id
                         );
-                        return Some(AppEvent::MenuActionClicked { action: *action });
+                        return Some(AppEvent::MenuActionClicked { action });
                     } else {
                         log::warn!(
                             "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",

@@ -78,7 +78,7 @@ mod tests {
         }
 
         assert_eq!(
-            native_window_data.menu_action_map.len(),
+            native_window_data.menu_action_count(),
             3,
             "Expected 3 actions in map: Load, Save As, Refresh"
         );
@@ -91,7 +91,7 @@ mod tests {
         let mut found_save_as = false;
         let mut found_refresh = false;
 
-        for (id, action) in &native_window_data.menu_action_map {
+        for (id, action) in native_window_data.iter_menu_actions() {
             assert!(
                 *id >= 30000 && *id < 30003,
                 "Generated menu IDs should be in the expected range"
