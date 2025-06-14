@@ -51,7 +51,7 @@ impl FileNode {
             is_dir,
             state: SelectionState::default(),
             children: Vec::new(),
-            checksum: checksum,
+            checksum,
         }
     }
 
@@ -82,7 +82,7 @@ impl FileNode {
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
         FileTokenDetails {
             checksum: self.checksum.clone(),
-            token_count: token_count,
+            token_count,
         }
     }
 
@@ -92,9 +92,9 @@ impl FileNode {
         children: Vec<TreeItemDescriptor>,
     ) -> TreeItemDescriptor {
         TreeItemDescriptor {
-            id: id,
+            id,
             is_folder: self.is_dir,
-            children: children,
+            children,
             text: self.name.clone(),
             state: match self.is_selected() {
                 true => CheckState::Checked,
@@ -183,7 +183,8 @@ impl FileNode {
         if !pattern.contains('*') && !pattern.contains('?') {
             pattern = format!("*{}*", pattern);
         }
-        let glob = glob::Pattern::new(&pattern).unwrap_or_else(|_| glob::Pattern::new("*").unwrap());
+        let glob =
+            glob::Pattern::new(&pattern).unwrap_or_else(|_| glob::Pattern::new("*").unwrap());
 
         fn recurse(
             nodes: &[FileNode],
@@ -208,7 +209,12 @@ impl FileNode {
             descriptors
         }
 
-        recurse(nodes, &glob, path_to_tree_item_id, next_tree_item_id_counter)
+        recurse(
+            nodes,
+            &glob,
+            path_to_tree_item_id,
+            next_tree_item_id_counter,
+        )
     }
 }
 

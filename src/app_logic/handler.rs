@@ -41,7 +41,7 @@ macro_rules! status_message {
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
                     control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
-                    text: text,
+                    text,
                     severity: $severity,
                 });
         }
@@ -227,11 +227,12 @@ impl MyAppLogic {
 
         ui_state.filter_no_match = no_match;
 
-        self.synchronous_command_queue.push_back(PlatformCommand::PopulateTreeView {
-            window_id,
-            control_id: ui_constants::ID_TREEVIEW_CTRL,
-            items: items_to_use,
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::PopulateTreeView {
+                window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL,
+                items: items_to_use,
+            });
     }
 
     /*
@@ -1110,8 +1111,7 @@ impl MyAppLogic {
         // child controls like the TreeView have completed their visual setup
         // (including attaching the state image list used for checkboxes) before
         // we insert items with a checked state.
-        self
-            .synchronous_command_queue
+        self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
 
         {
@@ -1133,8 +1133,6 @@ impl MyAppLogic {
         } else {
             app_error!(self, "{}", final_status_message);
         }
-
-
     }
 
     pub(crate) fn initiate_profile_selection_or_creation(&mut self, window_id: WindowId) {
@@ -1609,10 +1607,11 @@ impl MyAppLogic {
         };
         self.synchronous_command_queue.push_back(color_cmd);
 
-        self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
-            window_id,
-            control_id: ui_constants::ID_TREEVIEW_CTRL,
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ExpandAllTreeItems {
+                window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL,
+            });
     }
 
     fn handle_filter_clear_requested(&mut self, window_id: WindowId) {
@@ -1624,23 +1623,26 @@ impl MyAppLogic {
             }
         };
         ui_state_mut.filter_text = None;
-        self.synchronous_command_queue.push_back(PlatformCommand::SetInputText {
-            window_id,
-            control_id: ui_constants::FILTER_INPUT_ID,
-            text: String::new(),
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::SetInputText {
+                window_id,
+                control_id: ui_constants::FILTER_INPUT_ID,
+                text: String::new(),
+            });
         let _ = ui_state_mut; // release borrow before repopulating
         self.repopulate_tree_view(window_id);
-        self.synchronous_command_queue.push_back(PlatformCommand::SetInputBackgroundColor {
-            window_id,
-            control_id: ui_constants::FILTER_INPUT_ID,
-            color: None,
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::SetInputBackgroundColor {
+                window_id,
+                control_id: ui_constants::FILTER_INPUT_ID,
+                color: None,
+            });
 
-        self.synchronous_command_queue.push_back(PlatformCommand::ExpandAllTreeItems {
-            window_id,
-            control_id: ui_constants::ID_TREEVIEW_CTRL,
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ExpandAllTreeItems {
+                window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL,
+            });
     }
 }
 
@@ -1781,7 +1783,6 @@ impl PlatformEventHandler for MyAppLogic {
             ),
         }
     }
-
 }
 
 impl UiStateProvider for MyAppLogic {
