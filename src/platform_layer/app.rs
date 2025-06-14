@@ -36,9 +36,9 @@ pub(crate) struct Win32ApiInternalState {
     next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
     active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
-    pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
+    application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
-    pub(crate) app_name_for_class: String,
+    app_name_for_class: String,
     is_quitting: AtomicUsize, // 0 = false, 1 = true
 }
 
@@ -63,6 +63,16 @@ impl Win32ApiInternalState {
         &self,
     ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
         &self.active_windows
+    }
+
+    pub(crate) fn application_event_handler(
+        &self,
+    ) -> &Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>> {
+        &self.application_event_handler
+    }
+
+    pub(crate) fn app_name_for_class(&self) -> &str {
+        &self.app_name_for_class
     }
 
     /*
@@ -614,7 +624,7 @@ impl PlatformInterface {
     ) -> PlatformResult<()> {
         *self
             .internal_state
-            .application_event_handler
+            .application_event_handler()
             .lock()
             .map_err(|e| {
                 log::error!(
@@ -717,7 +727,7 @@ impl PlatformInterface {
             log::error!("Platform: Failed to lock application logic for on_quit call.");
         }
         // Clear the event handler reference
-        match self.internal_state.application_event_handler.lock() {
+        match self.internal_state.application_event_handler().lock() {
             Ok(mut guard) => *guard = None,
             Err(e) => {
                 log::error!(

@@ -354,7 +354,7 @@ pub(crate) fn register_window_class(
 ) -> PlatformResult<()> {
     let class_name_hstring = HSTRING::from(format!(
         "{}_PlatformWindowClass",
-        internal_state.app_name_for_class
+        internal_state.app_name_for_class()
     ));
     let class_name_pcwstr = PCWSTR(class_name_hstring.as_ptr());
 
@@ -369,7 +369,7 @@ pub(crate) fn register_window_class(
         {
             log::debug!(
                 "Platform: Window class '{}' already registered.",
-                internal_state.app_name_for_class
+                internal_state.app_name_for_class()
             );
             return Ok(());
         }
@@ -399,7 +399,7 @@ pub(crate) fn register_window_class(
         } else {
             log::debug!(
                 "Platform: Window class '{}' registered successfully.",
-                internal_state.app_name_for_class
+                internal_state.app_name_for_class()
             );
             Ok(())
         }
@@ -419,7 +419,7 @@ pub(crate) fn create_native_window(
 ) -> PlatformResult<HWND> {
     let class_name_hstring = HSTRING::from(format!(
         "{}_PlatformWindowClass",
-        internal_state_arc.app_name_for_class
+        internal_state_arc.app_name_for_class()
     ));
 
     let creation_context = Box::new(WindowCreationContext {
@@ -517,7 +517,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> LRESULT {
         let event_handler_opt = self
-            .application_event_handler
+            .application_event_handler()
             .lock()
             .unwrap()
             .as_ref()

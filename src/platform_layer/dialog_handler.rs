@@ -154,7 +154,7 @@ where
     // Construct and send the event to the application logic.
     let event = event_constructor(window_id, path_result);
     if let Some(handler_arc) = internal_state
-        .application_event_handler
+        .application_event_handler()
         .lock()
         .unwrap()
         .as_ref()
@@ -281,7 +281,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
     };
 
     if let Some(handler_arc) = internal_state
-        .application_event_handler
+        .application_event_handler()
         .lock()
         .unwrap()
         .as_ref()
@@ -593,7 +593,7 @@ pub(crate) fn handle_show_input_dialog_command(
     };
 
     if let Some(handler_arc) = internal_state
-        .application_event_handler
+        .application_event_handler()
         .lock()
         .unwrap()
         .as_ref()
@@ -710,7 +710,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
             path: None,
         };
         if let Some(handler_arc) = internal_state
-            .application_event_handler
+            .application_event_handler()
             .lock()
             .unwrap()
             .as_ref()
@@ -728,7 +728,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
         path: path_result,
     };
     if let Some(handler_arc) = internal_state
-        .application_event_handler
+        .application_event_handler()
         .lock()
         .unwrap()
         .as_ref()
