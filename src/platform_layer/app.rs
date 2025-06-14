@@ -69,15 +69,7 @@ impl Win32ApiInternalState {
         &self.active_windows
     }
 
-    pub(crate) fn application_event_handler(
-        &self,
-    ) -> &Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>> {
-        &self.application_event_handler
-    }
-
-    pub(crate) fn ui_state_provider(
-        &self,
-    ) -> &Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>> {
+    pub(crate) fn ui_state_provider(&self) -> &Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>> {
         &self.ui_state_provider
     }
 
@@ -89,7 +81,7 @@ impl Win32ApiInternalState {
      * Creates a new instance of `Win32ApiInternalState`.
      * Initializes COM, common controls, and retrieves the application instance handle.
      */
-    fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
+    pub(crate) fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
         unsafe {
             let hr = CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
             if hr.is_err()
@@ -668,17 +660,13 @@ impl PlatformInterface {
                 PlatformError::OperationFailed("Failed to set application event handler".into())
             })? = Some(Arc::downgrade(&event_handler_param));
 
-        *self
-            .internal_state
-            .ui_state_provider
-            .lock()
-            .map_err(|e| {
-                log::error!(
-                    "Platform: Failed to lock ui_state_provider to set it: {:?}",
-                    e
-                );
-                PlatformError::OperationFailed("Failed to set ui_state_provider".into())
-            })? = Some(Arc::downgrade(&ui_state_provider_param));
+        *self.internal_state.ui_state_provider.lock().map_err(|e| {
+            log::error!(
+                "Platform: Failed to lock ui_state_provider to set it: {:?}",
+                e
+            );
+            PlatformError::OperationFailed("Failed to set ui_state_provider".into())
+        })? = Some(Arc::downgrade(&ui_state_provider_param));
 
         log::debug!(
             "Platform: run() called. Processing {} initial UI commands before event loop.",

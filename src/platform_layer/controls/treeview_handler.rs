@@ -12,7 +12,7 @@
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::{
-    AppEvent, CheckState, UiStateProvider, TreeItemDescriptor, TreeItemId, WindowId,
+    AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId,
 };
 
 use windows::{
@@ -37,7 +37,7 @@ use windows::{
 };
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // Constants from window_common, now perhaps better placed here or in a shared consts module if widely used.
 // TODO: This shouldn't be hardcoded. Create some mecchanism for this.
