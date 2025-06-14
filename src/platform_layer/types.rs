@@ -389,10 +389,18 @@ pub trait PlatformEventHandler: Send + Sync + 'static {
     // This is called by the platform layer's run loop.
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand>;
 
-    /*
-     * Queries if a specific tree item is currently in the "New" state.
-     * The platform layer uses this during custom drawing to determine if the
-     * "New" visual indicator (e.g., a blue circle) should be rendered for the item.
-     */
+}
+
+/// Provides synchronous access to UI state needed by the platform layer.
+///
+/// This trait allows the platform layer to query the application logic for
+/// specific pieces of information without sending events. Currently it only
+/// exposes the ability to check if a tree item should be drawn with the "new"
+/// indicator.
+pub trait UiStateProvider: Send + Sync + 'static {
+    /// Queries if a specific tree item is currently in the "New" state.
+    /// The platform layer uses this during custom drawing to determine if the
+    /// "New" visual indicator (e.g., a blue circle) should be rendered for the
+    /// item.
     fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool;
 }

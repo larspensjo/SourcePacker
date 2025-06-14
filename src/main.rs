@@ -14,8 +14,8 @@ mod platform_layer {
 
     pub use types::{
         AppEvent, CheckState, DockStyle, LabelClass, LayoutRule, MenuAction,
-        MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemDescriptor,
-        TreeItemId, WindowConfig, WindowId,
+        MessageSeverity, PlatformCommand, PlatformEventHandler, UiStateProvider,
+        TreeItemDescriptor, TreeItemId, WindowConfig, WindowId,
     };
 }
 
@@ -144,7 +144,11 @@ fn main() -> PlatformResult<()> {
     );
 
     // Pass the initial commands to the run loop for execution
-    let run_result = platform_interface.main_event_loop(app_event_handler, initial_commands);
+    let run_result = platform_interface.main_event_loop(
+        app_event_handler.clone(),
+        app_event_handler,
+        initial_commands,
+    );
 
     match run_result {
         Ok(()) => log::debug!("Application exited cleanly."),

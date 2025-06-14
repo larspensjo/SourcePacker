@@ -5,7 +5,7 @@ use crate::core::{
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
-    WindowId, types::MenuAction,
+    UiStateProvider, WindowId, types::MenuAction,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -1782,13 +1782,9 @@ impl PlatformEventHandler for MyAppLogic {
         }
     }
 
-    /*
-     * Queries if a specific tree item should display the "New" indicator.
-     * For files, this means the file's state is `SelectionState::New`.
-     * For folders, this means the folder itself or any of its descendant files
-     * are in the `SelectionState::New` state.
-     * It looks up the path for the item_id, then queries ProfileRuntimeDataOperations.
-     */
+}
+
+impl UiStateProvider for MyAppLogic {
     fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool {
         let ui_state = match &self.ui_state {
             Some(s) if s.window_id == window_id => s,

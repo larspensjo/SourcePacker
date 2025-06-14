@@ -3,7 +3,9 @@ use super::controls::treeview_handler;
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::AppEvent;
-use super::types::{PlatformCommand, PlatformEventHandler, WindowConfig, WindowId};
+use super::types::{
+    PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig, WindowId,
+};
 use super::window_common;
 
 use windows::{
@@ -38,6 +40,7 @@ pub(crate) struct Win32ApiInternalState {
     // Central registry for all active windows, mapping WindowId to its native state.
     active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
+    ui_state_provider: Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>>,
     // The application name, used for window class registration.
     app_name_for_class: String,
     is_quitting: AtomicUsize, // 0 = false, 1 = true
@@ -70,6 +73,12 @@ impl Win32ApiInternalState {
         &self,
     ) -> &Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>> {
         &self.application_event_handler
+    }
+
+    pub(crate) fn ui_state_provider(
+        &self,
+    ) -> &Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>> {
+        &self.ui_state_provider
     }
 
     pub(crate) fn app_name_for_class(&self) -> &str {
@@ -110,6 +119,7 @@ impl Win32ApiInternalState {
                 next_window_id_counter: AtomicUsize::new(1),
                 active_windows: RwLock::new(HashMap::new()),
                 application_event_handler: Mutex::new(None),
+                ui_state_provider: Mutex::new(None),
                 app_name_for_class,
                 is_quitting: AtomicUsize::new(0),
             }))
@@ -643,6 +653,7 @@ impl PlatformInterface {
     pub fn main_event_loop(
         &self,
         event_handler_param: Arc<Mutex<dyn PlatformEventHandler>>,
+        ui_state_provider_param: Arc<Mutex<dyn UiStateProvider>>,
         initial_commands_to_execute: Vec<PlatformCommand>,
     ) -> PlatformResult<()> {
         *self
@@ -656,6 +667,18 @@ impl PlatformInterface {
                 );
                 PlatformError::OperationFailed("Failed to set application event handler".into())
             })? = Some(Arc::downgrade(&event_handler_param));
+
+        *self
+            .internal_state
+            .ui_state_provider
+            .lock()
+            .map_err(|e| {
+                log::error!(
+                    "Platform: Failed to lock ui_state_provider to set it: {:?}",
+                    e
+                );
+                PlatformError::OperationFailed("Failed to set ui_state_provider".into())
+            })? = Some(Arc::downgrade(&ui_state_provider_param));
 
         log::debug!(
             "Platform: run() called. Processing {} initial UI commands before event loop.",
@@ -755,6 +778,16 @@ impl PlatformInterface {
             Err(e) => {
                 log::error!(
                     "Platform: Failed to lock application_event_handler to clear it (poisoned): {:?}",
+                    e
+                );
+            }
+        }
+        // Clear the ui state provider reference
+        match self.internal_state.ui_state_provider.lock() {
+            Ok(mut guard) => *guard = None,
+            Err(e) => {
+                log::error!(
+                    "Platform: Failed to lock ui_state_provider to clear it (poisoned): {:?}",
                     e
                 );
             }
