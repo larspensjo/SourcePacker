@@ -1122,11 +1122,9 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Handles WM_DESTROY: Cleans up resources and removes window data.
-     * Note: This function CANNOT use `with_window_data_write` because its purpose
-     * is to REMOVE the entry from the map, which is a map-level operation, not
-     * a data-level one. This is one of the few places where direct locking
-     * of `active_windows` is still necessary and appropriate.
+     * Handles WM_DESTROY: Delegates to a helper for resource cleanup and data
+     * removal, checks if the application should quit, and generates the final
+     * WindowDestroyed event.
      */
     fn handle_wm_destroy(
         self: &Arc<Self>,
@@ -1136,27 +1134,19 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> Option<AppEvent> {
         log::debug!(
-            "WM_DESTROY for WinID {:?}. Removing data and cleaning resources.",
+            "WM_DESTROY received for WinID {:?}. Initiating cleanup.",
             window_id
         );
-        if let Ok(mut windows_map_guard) = (self.active_windows()).write() {
-            if let Some(mut window_data_entry) = windows_map_guard.remove(&window_id) {
-                window_data_entry.cleanup_status_bar_font();
-                window_data_entry.cleanup_input_background_colors();
-                log::debug!("Removed WindowId {:?} from active_windows.", window_id);
-            } else {
-                log::warn!(
-                    "WindowId {:?} not found in active_windows during WM_DESTROY.",
-                    window_id
-                );
-            }
-        } else {
-            log::error!(
-                "Failed write lock for active_windows in WM_DESTROY for WinID {:?}.",
-                window_id
-            );
-        }
+
+        // Delegate the complex task of locking, removing, and cleaning up GDI
+        // resources to the dedicated helper method. This keeps the window
+        // procedure clean and focused on message flow.
+        self.remove_window_data(window_id);
+
+        // After removing the window, check if it was the last one.
         self.check_if_should_quit_after_window_close();
+
+        // Notify the application logic that the window is gone.
         Some(AppEvent::WindowDestroyed { window_id })
     }
 

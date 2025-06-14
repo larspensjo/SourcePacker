@@ -44,6 +44,31 @@ pub(crate) struct Win32ApiInternalState {
 
 impl Win32ApiInternalState {
     /*
+     * Generates a new unique `WindowId`.
+     */
+    pub(crate) fn generate_unique_window_id(&self) -> WindowId {
+        WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /*
+     * Retrieves the application's instance handle.
+     * Control and window creation functions use this value when calling Win32 APIs.
+     */
+    pub(crate) fn h_instance(&self) -> HINSTANCE {
+        self.h_instance
+    }
+
+    /*
+     * Returns a reference to the map of active windows.
+     * External modules use this to acquire read or write locks on the map.
+     */
+    pub(crate) fn active_windows(
+        &self,
+    ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
+        &self.active_windows
+    }
+
+    /*
      * Creates a new instance of `Win32ApiInternalState`.
      * Initializes COM, common controls, and retrieves the application instance handle.
      */
@@ -84,10 +109,32 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Generates a new unique `WindowId`.
+     * Removes the data for a given window ID from the active windows map.
+     * This is a map-level operation that acquires a write lock, removes the
+     * entry, and then calls the necessary cleanup functions on the removed data
+     * to release any associated GDI resources.
      */
-    pub(crate) fn generate_unique_window_id(&self) -> WindowId {
-        WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
+    pub(crate) fn remove_window_data(&self, window_id: WindowId) {
+        let mut windows_map_guard = match self.active_windows.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                log::error!(
+                    "Failed to acquire write lock to remove WinID {:?}: {:?}",
+                    window_id,
+                    e
+                );
+                return; // Exit if the lock is poisoned.
+            }
+        };
+
+        if let Some(mut removed_data) = windows_map_guard.remove(&window_id) {
+            // Perform cleanup on the GDI objects owned by the window data.
+            removed_data.cleanup_status_bar_font();
+            removed_data.cleanup_input_background_colors();
+            log::debug!("Removed and cleaned up data for WindowId {:?}.", window_id);
+        } else {
+            log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
+        }
     }
 
     // Provides safe, read-only access to a specific window's data.
@@ -154,24 +201,6 @@ impl Win32ApiInternalState {
             );
             unsafe { PostQuitMessage(0) };
         }
-    }
-
-    /*
-     * Retrieves the application's instance handle.
-     * Control and window creation functions use this value when calling Win32 APIs.
-     */
-    pub(crate) fn h_instance(&self) -> HINSTANCE {
-        self.h_instance
-    }
-
-    /*
-     * Returns a reference to the map of active windows.
-     * External modules use this to acquire read or write locks on the map.
-     */
-    pub(crate) fn active_windows(
-        &self,
-    ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
-        &self.active_windows
     }
 
     /*
