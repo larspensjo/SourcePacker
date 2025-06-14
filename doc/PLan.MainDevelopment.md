@@ -36,6 +36,9 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 
 # Phase 3: Enhancements & UX Improvements
 
+## P3.2: Quick search visual enhancement
+*   When doing a quick search, the text matching should be highlighted.
+
 ## P3.3: File Content Viewer (preview)
 *   Add a read-only text control. `[UiContentViewerPanelReadOnlyV1]`
 *   Load selected file's content into the viewer.
