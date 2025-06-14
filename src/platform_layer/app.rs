@@ -2,6 +2,7 @@ use super::command_executor;
 use super::controls::treeview_handler;
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
+use super::types::AppEvent;
 use super::types::{PlatformCommand, PlatformEventHandler, WindowConfig, WindowId};
 use super::window_common;
 
@@ -36,9 +37,9 @@ pub(crate) struct Win32ApiInternalState {
     next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
     active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
-    pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
+    application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
-    pub(crate) app_name_for_class: String,
+    app_name_for_class: String,
     is_quitting: AtomicUsize, // 0 = false, 1 = true
 }
 
@@ -63,6 +64,16 @@ impl Win32ApiInternalState {
         &self,
     ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
         &self.active_windows
+    }
+
+    pub(crate) fn application_event_handler(
+        &self,
+    ) -> &Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>> {
+        &self.application_event_handler
+    }
+
+    pub(crate) fn app_name_for_class(&self) -> &str {
+        &self.app_name_for_class
     }
 
     /*
@@ -102,6 +113,28 @@ impl Win32ApiInternalState {
                 app_name_for_class,
                 is_quitting: AtomicUsize::new(0),
             }))
+        }
+    }
+
+    // Sends an AppEvent to the registered application event handler.
+    // This centralizes the logic for locking, upgrading the weak reference,
+    // and calling the handler.
+    pub(crate) fn send_event(self: &Arc<Self>, event: AppEvent) {
+        let event_handler_opt = self
+            .application_event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|weak_handler| weak_handler.upgrade());
+
+        if let Some(handler_arc) = event_handler_opt {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                handler_guard.handle_event(event);
+            } else {
+                log::error!("Platform: Failed to lock event handler to send event.");
+            }
+        } else {
+            log::warn!("Platform: Event handler not available to send event.");
         }
     }
 

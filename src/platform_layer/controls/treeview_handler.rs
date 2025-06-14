@@ -639,10 +639,9 @@ pub(crate) fn expand_all_tree_items(
  * item indicator (a blue circle) next to items identified as new by the application logic.
  */
 pub(crate) fn handle_nm_customdraw(
-    _internal_state: &Arc<Win32ApiInternalState>,
+    internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     lparam_nmcustomdraw: LPARAM, // This is NMTVCUSTOMDRAW*
-    event_handler_opt: Option<&Arc<Mutex<dyn PlatformEventHandler>>>,
     control_id_of_treeview: i32,
 ) -> LRESULT {
     let nmtvcd = unsafe { &*(lparam_nmcustomdraw.0 as *const NMTVCUSTOMDRAW) };
@@ -658,6 +657,12 @@ pub(crate) fn handle_nm_customdraw(
         }
         CDDS_ITEMPREPAINT => {
             let tree_item_id = TreeItemId(nmtvcd.nmcd.lItemlParam.0 as u64);
+            let event_handler_opt = internal_state
+                .application_event_handler()
+                .lock()
+                .unwrap()
+                .as_ref()
+                .and_then(|weak_handler| weak_handler.upgrade());
             if let Some(handler_arc) = event_handler_opt {
                 if let Ok(handler_guard) = handler_arc.lock() {
                     if handler_guard.is_tree_item_new(window_id, tree_item_id) {

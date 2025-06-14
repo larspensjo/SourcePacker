@@ -354,7 +354,7 @@ pub(crate) fn register_window_class(
 ) -> PlatformResult<()> {
     let class_name_hstring = HSTRING::from(format!(
         "{}_PlatformWindowClass",
-        internal_state.app_name_for_class
+        internal_state.app_name_for_class()
     ));
     let class_name_pcwstr = PCWSTR(class_name_hstring.as_ptr());
 
@@ -369,7 +369,7 @@ pub(crate) fn register_window_class(
         {
             log::debug!(
                 "Platform: Window class '{}' already registered.",
-                internal_state.app_name_for_class
+                internal_state.app_name_for_class()
             );
             return Ok(());
         }
@@ -399,7 +399,7 @@ pub(crate) fn register_window_class(
         } else {
             log::debug!(
                 "Platform: Window class '{}' registered successfully.",
-                internal_state.app_name_for_class
+                internal_state.app_name_for_class()
             );
             Ok(())
         }
@@ -419,7 +419,7 @@ pub(crate) fn create_native_window(
 ) -> PlatformResult<HWND> {
     let class_name_hstring = HSTRING::from(format!(
         "{}_PlatformWindowClass",
-        internal_state_arc.app_name_for_class
+        internal_state_arc.app_name_for_class()
     ));
 
     let creation_context = Box::new(WindowCreationContext {
@@ -516,13 +516,6 @@ impl Win32ApiInternalState {
         lparam: LPARAM,
         window_id: WindowId,
     ) -> LRESULT {
-        let event_handler_opt = self
-            .application_event_handler
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|weak_handler| weak_handler.upgrade());
-
         let mut event_to_send: Option<AppEvent> = None;
         let mut lresult_override: Option<LRESULT> = None;
 
@@ -555,13 +548,8 @@ impl Win32ApiInternalState {
                 lresult_override = Some(self.handle_wm_paint(hwnd, wparam, lparam, window_id));
             }
             WM_NOTIFY => {
-                (event_to_send, lresult_override) = self._handle_wm_notify_dispatch(
-                    hwnd,
-                    wparam,
-                    lparam,
-                    window_id,
-                    event_handler_opt.as_ref(),
-                );
+                (event_to_send, lresult_override) =
+                    self._handle_wm_notify_dispatch(hwnd, wparam, lparam, window_id);
             }
             WM_APP_TREEVIEW_CHECKBOX_CLICKED => {
                 event_to_send = treeview_handler::handle_wm_app_treeview_checkbox_clicked(
@@ -598,21 +586,7 @@ impl Win32ApiInternalState {
         }
 
         if let Some(event) = event_to_send {
-            if let Some(handler_arc) = event_handler_opt {
-                if let Ok(mut handler_guard) = handler_arc.lock() {
-                    handler_guard.handle_event(event);
-                } else {
-                    log::error!(
-                        "Platform: Failed to lock event handler for event {:?}.",
-                        event
-                    );
-                }
-            } else {
-                log::warn!(
-                    "Platform: Event handler not available for event {:?}.",
-                    event
-                );
-            }
+            self.send_event(event);
         }
 
         if let Some(lresult) = lresult_override {
@@ -634,7 +608,6 @@ impl Win32ApiInternalState {
         _wparam_original: WPARAM,
         lparam_original: LPARAM,
         window_id: WindowId,
-        event_handler_opt: Option<&Arc<Mutex<dyn PlatformEventHandler>>>,
     ) -> (Option<AppEvent>, Option<LRESULT>) {
         let nmhdr_ptr = lparam_original.0 as *const NMHDR;
         if nmhdr_ptr.is_null() {
@@ -660,7 +633,6 @@ impl Win32ApiInternalState {
                         self,
                         window_id,
                         lparam_original,
-                        event_handler_opt,
                         control_id_from_notify,
                     );
                     return (None, Some(lresult));
