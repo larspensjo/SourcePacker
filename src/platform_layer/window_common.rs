@@ -11,7 +11,7 @@
  */
 use super::{
     app::Win32ApiInternalState,
-    controls::{input_handler, label_handler, treeview_handler},
+    controls::{button_handler, input_handler, label_handler, treeview_handler},
     error::{PlatformError, Result as PlatformResult},
     types::{
         AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformEventHandler,
@@ -361,7 +361,7 @@ pub(crate) fn register_window_class(
     unsafe {
         let mut wc_test = WNDCLASSEXW::default();
         if GetClassInfoExW(
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             class_name_pcwstr,
             &mut wc_test,
         )
@@ -380,7 +380,7 @@ pub(crate) fn register_window_class(
             lpfnWndProc: Some(facade_wnd_proc_router),
             cbClsExtra: 0,
             cbWndExtra: 0,
-            hInstance: internal_state.h_instance,
+            hInstance: internal_state.h_instance(),
             hIcon: LoadIconW(None, IDI_APPLICATION)?,
             hCursor: LoadCursorW(None, IDC_ARROW)?,
             hbrBackground: HBRUSH((COLOR_WINDOW.0 + 1) as *mut c_void),
@@ -429,17 +429,17 @@ pub(crate) fn create_native_window(
 
     unsafe {
         let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),          // Optional extended window styles
-            &class_name_hstring,                 // Window class name
-            &HSTRING::from(title),               // Window title
-            WS_OVERLAPPEDWINDOW,                 // Common window style
-            CW_USEDEFAULT,                       // Default X position
-            CW_USEDEFAULT,                       // Default Y position
-            width,                               // Width
-            height,                              // Height
-            None,                                // Parent window (None for top-level)
-            None,                                // Menu (None for no default menu)
-            Some(internal_state_arc.h_instance), // Application instance
+            WINDOW_EX_STYLE::default(),            // Optional extended window styles
+            &class_name_hstring,                   // Window class name
+            &HSTRING::from(title),                 // Window title
+            WS_OVERLAPPEDWINDOW,                   // Common window style
+            CW_USEDEFAULT,                         // Default X position
+            CW_USEDEFAULT,                         // Default Y position
+            width,                                 // Width
+            height,                                // Height
+            None,                                  // Parent window (None for top-level)
+            None,                                  // Menu (None for no default menu)
+            Some(internal_state_arc.h_instance()), // Application instance
             Some(Box::into_raw(creation_context) as *mut c_void), // lParam for WM_CREATE/WM_NCCREATE
         )?; // Returns Result<HWND, Error>, so ? operator handles error conversion
 
@@ -644,41 +644,12 @@ impl Win32ApiInternalState {
         let nmhdr = unsafe { &*nmhdr_ptr };
         let control_id_from_notify = nmhdr.idFrom as i32;
 
-        // Check if this notification is from a TreeView control associated with this window.
-        // This requires looking up the control by its ID and checking its class or type if needed,
-        // or simply assuming based on notification codes like NM_CUSTOMDRAW if they are unique enough.
-        // For now, we'll rely on treeview_state existing for the window and the notification code.
-        let is_treeview_notification;
-        {
-            let windows_guard = match self.active_windows.read() {
-                Ok(g) => g,
-                Err(e) => {
-                    log::error!(
-                        "Platform: Failed to get read lock in _handle_wm_notify_dispatch: {:?}",
-                        e
-                    );
-                    return (None, None);
-                }
-            };
-            let window_data = match windows_guard.get(&window_id) {
-                Some(wd) => wd,
-                None => {
-                    log::warn!(
-                        "Platform: WindowData not found for WinID {:?} in _handle_wm_notify_dispatch.",
-                        window_id
-                    );
-                    return (None, None);
-                }
-            };
-            // A simple check: does this window have treeview_state?
-            // And is the notification coming from the control ID stored for that treeview?
-            // For now, assume if treeview_state exists, this NM_CUSTOMDRAW or NM_CLICK could be for it.
-            // A more robust check would be to see if nmhdr.hwndFrom matches the stored TreeView HWND.
-            is_treeview_notification = window_data.has_treeview_state()
-                && window_data.get_control_hwnd(control_id_from_notify) == Some(nmhdr.hwndFrom);
-        }
+        let is_treeview_notification = self.with_window_data_read(window_id, |window_data| {
+            Ok(window_data.has_treeview_state()
+                && window_data.get_control_hwnd(control_id_from_notify) == Some(nmhdr.hwndFrom))
+        });
 
-        if is_treeview_notification {
+        if let Ok(true) = is_treeview_notification {
             match nmhdr.code {
                 NM_CUSTOMDRAW => {
                     log::trace!(
@@ -723,11 +694,11 @@ impl Win32ApiInternalState {
                     );
                 }
             }
-        } else {
-            log::trace!(
-                "WM_NOTIFY code {} from ControlID {} is not identified as a TreeView notification.",
-                nmhdr.code,
-                control_id_from_notify
+        } else if is_treeview_notification.is_err() {
+            log::error!(
+                "Failed to access window data for WM_NOTIFY in WinID {:?}: {:?}",
+                window_id,
+                is_treeview_notification.unwrap_err()
             );
         }
         (None, None)
@@ -735,8 +706,7 @@ impl Win32ApiInternalState {
 
     /*
      * Handles the WM_CREATE message for a window.
-     * Minimal responsibilities now, mainly for setting up things like custom fonts
-     * if they are window-wide and not control-specific.
+     * Ensures window-wide resources like custom fonts are created.
      */
     fn handle_wm_create(
         self: &Arc<Self>,
@@ -750,40 +720,55 @@ impl Win32ApiInternalState {
             hwnd,
             window_id
         );
-        if let Ok(mut windows_map_guard) = self.active_windows.write() {
-            if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                window_data.ensure_status_bar_font();
-            }
+        if let Err(e) = self.with_window_data_write(window_id, |window_data| {
+            window_data.ensure_status_bar_font();
+            Ok(())
+        }) {
+            log::error!(
+                "Failed to access window data during WM_CREATE for WinID {:?}: {:?}",
+                window_id,
+                e
+            );
         }
     }
 
     /*
      * Applies layout rules recursively for a parent and its children.
+     * This function is the core of the layout engine. It iterates through the
+     * layout rules for a given parent, calculates the position and size for
+     * each child control based on its docking style, and then recurses for
+     * any children that are themselves containers.
      */
     fn apply_layout_rules_for_children(
         self: &Arc<Self>,
         window_id: WindowId,
         parent_id_for_layout: Option<i32>,
         parent_rect: RECT,
-        all_window_rules: &[LayoutRule],
-        all_controls_map: &HashMap<i32, HWND>,
+        window_data: &NativeWindowData,
     ) {
         log::trace!(
             "Applying layout for parent_id {:?}, rect: {:?}",
             parent_id_for_layout,
             parent_rect
         );
+
+        let all_window_rules = match &window_data.layout_rules {
+            Some(rules) => rules,
+            None => return, // No rules to apply
+        };
+
         let mut child_rules: Vec<&LayoutRule> = all_window_rules
             .iter()
             .filter(|r| r.parent_control_id == parent_id_for_layout)
             .collect();
         child_rules.sort_by_key(|r| r.order);
+
         let mut current_available_rect = parent_rect;
         let mut fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
         let mut proportional_fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
 
         for rule in &child_rules {
-            let control_hwnd_opt = all_controls_map.get(&rule.control_id).copied();
+            let control_hwnd_opt = window_data.control_hwnd_map.get(&rule.control_id).copied();
             if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
                 log::warn!(
                     "Layout: HWND for control ID {} not found or invalid.",
@@ -846,8 +831,7 @@ impl Win32ApiInternalState {
                             window_id,
                             Some(rule.control_id),
                             panel_client_rect,
-                            all_window_rules,
-                            all_controls_map,
+                            window_data,
                         );
                     }
                 }
@@ -913,8 +897,7 @@ impl Win32ApiInternalState {
                                 window_id,
                                 Some(rule.control_id),
                                 panel_client_rect_prop,
-                                all_window_rules,
-                                all_controls_map,
+                                window_data,
                             );
                         }
                     }
@@ -961,8 +944,7 @@ impl Win32ApiInternalState {
                     window_id,
                     Some(rule.control_id),
                     panel_client_rect_fill,
-                    all_window_rules,
-                    all_controls_map,
+                    window_data,
                 );
             }
         }
@@ -976,54 +958,39 @@ impl Win32ApiInternalState {
             "trigger_layout_recalculation called for WinID {:?}",
             window_id
         );
-        let active_windows_guard = match self.active_windows.read() {
-            Ok(g) => g,
-            Err(e) => {
-                log::error!("Failed to get read lock for layout: {:?}", e);
-                return;
+
+        if let Err(e) = self.with_window_data_read(window_id, |window_data| {
+            if window_data.get_hwnd().is_invalid() {
+                log::warn!("HWND invalid for layout: {:?}", window_id);
+                return Ok(()); // Not an error, just can't do anything.
             }
-        };
-        let window_data = match active_windows_guard.get(&window_id) {
-            Some(d) => d,
-            None => {
-                log::warn!("WindowData not found for layout: {:?}", window_id);
-                return;
-            }
-        };
-        if window_data.this_window_hwnd.is_invalid() {
-            log::warn!("HWND invalid for layout: {:?}", window_id);
-            return;
-        }
-        let rules = match window_data.layout_rules.as_ref() {
-            Some(r) => r,
-            None => {
+            if window_data.layout_rules.is_none() {
                 log::debug!("No layout rules for WinID {:?}", window_id);
-                return;
+                return Ok(());
             }
-        };
-        if rules.is_empty() {
-            log::debug!("Empty layout rules for WinID {:?}", window_id);
-            return;
+
+            let mut client_rect = RECT::default();
+            if unsafe { GetClientRect(window_data.get_hwnd(), &mut client_rect) }.is_err() {
+                log::error!("GetClientRect failed for layout: {:?}", unsafe {
+                    GetLastError()
+                });
+                return Ok(());
+            }
+
+            log::trace!(
+                "Applying layout with client_rect: {:?}, for WinID {:?}",
+                client_rect,
+                window_id
+            );
+            self.apply_layout_rules_for_children(window_id, None, client_rect, window_data);
+            Ok(())
+        }) {
+            log::error!(
+                "Failed to access window data for layout recalculation of WinID {:?}: {:?}",
+                window_id,
+                e
+            );
         }
-        let mut client_rect = RECT::default();
-        if unsafe { GetClientRect(window_data.this_window_hwnd, &mut client_rect) }.is_err() {
-            log::error!("GetClientRect failed for layout: {:?}", unsafe {
-                GetLastError()
-            });
-            return;
-        }
-        log::trace!(
-            "Applying layout with client_rect: {:?}, for WinID {:?}",
-            client_rect,
-            window_id
-        );
-        self.apply_layout_rules_for_children(
-            window_id,
-            None,
-            client_rect,
-            &rules,
-            &window_data.control_hwnd_map,
-        );
     }
 
     /*
@@ -1067,37 +1034,35 @@ impl Win32ApiInternalState {
         let notification_code = highord_from_wparam(wparam);
         if control_hwnd.0 == 0 {
             // Menu or accelerator
-            if let Ok(windows_guard) = self.active_windows.read() {
-                if let Some(window_data) = windows_guard.get(&window_id) {
-                    if let Some(action) = window_data.get_menu_action(command_id) {
-                        log::debug!(
-                            "Menu action {:?} (ID {}) for WinID {:?}.",
-                            action,
-                            command_id,
-                            window_id
-                        );
-                        return Some(AppEvent::MenuActionClicked { action });
-                    } else {
-                        log::warn!(
-                            "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
-                            command_id,
-                            window_id
-                        );
-                    }
-                } else {
-                    log::warn!(
-                        "WindowData not found for WinID {:?} in WM_COMMAND (Menu/Accel).",
+            let menu_action_result =
+                self.with_window_data_read(window_id, |wd| Ok(wd.get_menu_action(command_id)));
+
+            match menu_action_result {
+                Ok(Some(action)) => {
+                    log::debug!(
+                        "Menu action {:?} (ID {}) for WinID {:?}.",
+                        action,
+                        command_id,
                         window_id
                     );
+                    return Some(AppEvent::MenuActionClicked { action });
                 }
-            } else {
-                log::error!("Failed read lock for menu_action_map in WM_COMMAND (Menu/Accel).");
+                Ok(None) => log::warn!(
+                    "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
+                    command_id,
+                    window_id
+                ),
+                Err(e) => log::error!(
+                    "Failed to access window data for WM_COMMAND (Menu/Accel) in WinID {:?}: {:?}",
+                    window_id,
+                    e
+                ),
             }
         } else {
-            // Control
+            // Control notification
             let hwnd_control = HWND(control_hwnd.0 as *mut std::ffi::c_void);
             if notification_code == BN_CLICKED as i32 {
-                return Some(super::controls::button_handler::handle_bn_clicked(
+                return Some(button_handler::handle_bn_clicked(
                     window_id,
                     command_id,
                     hwnd_control,
@@ -1139,11 +1104,15 @@ impl Win32ApiInternalState {
             _ = KillTimer(Some(hwnd), timer_id.0 as usize);
         }
         let control_id = timer_id.0 as i32;
-        let hwnd_edit_opt = self.active_windows.read().ok().and_then(|g| {
-            g.get(&window_id)
-                .and_then(|wd| wd.get_control_hwnd(control_id))
+
+        let hwnd_edit_result = self.with_window_data_read(window_id, |window_data| {
+            window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                log::warn!("Control not found for timer ID {}", control_id);
+                PlatformError::InvalidHandle("Control not found for timer".into())
+            })
         });
-        if let Some(hwnd_edit) = hwnd_edit_opt {
+
+        if let Ok(hwnd_edit) = hwnd_edit_result {
             let mut buf: [u16; 256] = [0; 256];
             let len = unsafe { GetWindowTextW(hwnd_edit, &mut buf) } as usize;
             let text = String::from_utf16_lossy(&buf[..len]);
@@ -1153,7 +1122,9 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Handles WM_DESTROY: Cleans up resources and removes window data.
+     * Handles WM_DESTROY: Delegates to a helper for resource cleanup and data
+     * removal, checks if the application should quit, and generates the final
+     * WindowDestroyed event.
      */
     fn handle_wm_destroy(
         self: &Arc<Self>,
@@ -1163,27 +1134,19 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> Option<AppEvent> {
         log::debug!(
-            "WM_DESTROY for WinID {:?}. Removing data and cleaning resources.",
+            "WM_DESTROY received for WinID {:?}. Initiating cleanup.",
             window_id
         );
-        if let Ok(mut windows_map_guard) = self.active_windows.write() {
-            if let Some(mut window_data_entry) = windows_map_guard.remove(&window_id) {
-                window_data_entry.cleanup_status_bar_font();
-                window_data_entry.cleanup_input_background_colors();
-                log::debug!("Removed WindowId {:?} from active_windows.", window_id);
-            } else {
-                log::warn!(
-                    "WindowId {:?} not found in active_windows during WM_DESTROY.",
-                    window_id
-                );
-            }
-        } else {
-            log::error!(
-                "Failed write lock for active_windows in WM_DESTROY for WinID {:?}.",
-                window_id
-            );
-        }
+
+        // Delegate the complex task of locking, removing, and cleaning up GDI
+        // resources to the dedicated helper method. This keeps the window
+        // procedure clean and focused on message flow.
+        self.remove_window_data(window_id);
+
+        // After removing the window, check if it was the last one.
         self.check_if_should_quit_after_window_close();
+
+        // Notify the application logic that the window is gone.
         Some(AppEvent::WindowDestroyed { window_id })
     }
 
@@ -1237,23 +1200,17 @@ pub(crate) fn set_window_title(
     title: &str,
 ) -> PlatformResult<()> {
     log::debug!("Setting title for WinID {:?} to '{}'", window_id, title);
-    let windows_guard = internal_state.active_windows.read().map_err(|_| {
-        PlatformError::OperationFailed("Failed read lock for set_window_title".into())
-    })?;
-    let window_data = windows_guard.get(&window_id).ok_or_else(|| {
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for set_window_title",
-            window_id
-        ))
-    })?;
-    if window_data.this_window_hwnd.is_invalid() {
-        return Err(PlatformError::InvalidHandle(format!(
-            "HWND for WinID {:?} invalid in set_window_title",
-            window_id
-        )));
-    }
-    unsafe { SetWindowTextW(window_data.this_window_hwnd, &HSTRING::from(title))? };
-    Ok(())
+    internal_state.with_window_data_read(window_id, |window_data| {
+        let hwnd = window_data.get_hwnd();
+        if hwnd.is_invalid() {
+            return Err(PlatformError::InvalidHandle(format!(
+                "HWND for WinID {:?} is invalid in set_window_title",
+                window_id
+            )));
+        }
+        unsafe { SetWindowTextW(hwnd, &HSTRING::from(title))? };
+        Ok(())
+    })
 }
 
 pub(crate) fn show_window(
@@ -1262,25 +1219,18 @@ pub(crate) fn show_window(
     show: bool,
 ) -> PlatformResult<()> {
     log::debug!("Setting visibility for WinID {:?} to {}", window_id, show);
-    let windows_guard = internal_state
-        .active_windows
-        .read()
-        .map_err(|_| PlatformError::OperationFailed("Failed read lock for show_window".into()))?;
-    let window_data = windows_guard.get(&window_id).ok_or_else(|| {
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for show_window",
-            window_id
-        ))
-    })?;
-    if window_data.this_window_hwnd.is_invalid() {
-        return Err(PlatformError::InvalidHandle(format!(
-            "HWND for WinID {:?} invalid in show_window",
-            window_id
-        )));
-    }
-    let cmd = if show { SW_SHOW } else { SW_HIDE };
-    unsafe { _ = ShowWindow(window_data.this_window_hwnd, cmd) };
-    Ok(())
+    internal_state.with_window_data_read(window_id, |window_data| {
+        let hwnd = window_data.get_hwnd();
+        if hwnd.is_invalid() {
+            return Err(PlatformError::InvalidHandle(format!(
+                "HWND for WinID {:?} is invalid in show_window",
+                window_id
+            )));
+        }
+        let cmd = if show { SW_SHOW } else { SW_HIDE };
+        unsafe { _ = ShowWindow(hwnd, cmd) };
+        Ok(())
+    })
 }
 
 /*
@@ -1313,21 +1263,12 @@ pub(crate) fn destroy_native_window(
         "Attempting to destroy native window for WinID {:?}",
         window_id
     );
-    let hwnd_to_destroy: Option<HWND>;
-    {
-        let windows_read_guard = internal_state.active_windows.read().map_err(|e| {
-            PlatformError::OperationFailed(format!(
-                "Failed read lock (destroy_native_window): {}",
-                e
-            ))
-        })?;
-        hwnd_to_destroy = windows_read_guard
-            .get(&window_id)
-            .map(|data| data.this_window_hwnd);
-    }
 
-    if let Some(hwnd) = hwnd_to_destroy {
-        if !hwnd.is_invalid() {
+    let hwnd_to_destroy =
+        internal_state.with_window_data_read(window_id, |window_data| Ok(window_data.get_hwnd()));
+
+    match hwnd_to_destroy {
+        Ok(hwnd) if !hwnd.is_invalid() => {
             log::debug!(
                 "Calling DestroyWindow for HWND {:?} (WinID {:?})",
                 hwnd,
@@ -1336,9 +1277,9 @@ pub(crate) fn destroy_native_window(
             unsafe {
                 if DestroyWindow(hwnd).is_err() {
                     let last_error = GetLastError();
+                    // Don't error out if the handle is already invalid (e.g., already destroyed).
                     if last_error.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
                         log::error!("DestroyWindow for HWND {:?} failed: {:?}", hwnd, last_error);
-                        // Optionally return error: PlatformError::OperationFailed(format!("DestroyWindow failed: {:?}", last_error))
                     } else {
                         log::debug!(
                             "DestroyWindow for HWND {:?} reported invalid handle (already destroyed?).",
@@ -1352,14 +1293,19 @@ pub(crate) fn destroy_native_window(
                     );
                 }
             }
-        } else {
+        }
+        Ok(_) => {
+            // HWND is invalid
             log::warn!(
                 "HWND for WinID {:?} was invalid before DestroyWindow call.",
                 window_id
             );
         }
-    } else {
-        log::warn!("WinID {:?} not found for destroy_native_window.", window_id);
-    }
+        Err(_) => {
+            // WindowId not found
+            log::warn!("WinID {:?} not found for destroy_native_window.", window_id);
+        }
+    };
+    // This function's purpose is to *try* to destroy, so don't bubble up "not found" as an error.
     Ok(())
 }

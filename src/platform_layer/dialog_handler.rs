@@ -45,22 +45,30 @@ pub(crate) fn pathbuf_from_buf(buffer: &[u16]) -> PathBuf {
     PathBuf::from(path_os_string)
 }
 
+/*
+ * Retrieves the owner HWND for a given WindowId.
+ * This is a helper function that uses the with_window_data_read pattern to
+ * safely access the native window handle, encapsulating the locking and
+ * error handling logic.
+ */
 pub(crate) fn get_hwnd_owner(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<HWND> {
-    let windows_guard = internal_state.active_windows.read().map_err(|_| {
-        PlatformError::OperationFailed("Failed to acquire read lock on windows map".into())
-    })?;
-    windows_guard
-        .get(&window_id)
-        .map(|data| data.get_hwnd())
-        .ok_or_else(|| {
-            PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for get_hwnd_owner",
+    internal_state.with_window_data_read(window_id, |window_data| {
+        let hwnd = window_data.get_hwnd();
+        if hwnd.is_invalid() {
+            log::warn!(
+                "get_hwnd_owner found an invalid HWND for WindowId {:?}",
                 window_id
-            ))
-        })
+            );
+            return Err(PlatformError::InvalidHandle(format!(
+                "HWND for WindowId {:?} is invalid",
+                window_id
+            )));
+        }
+        Ok(hwnd)
+    })
 }
 
 /*
@@ -86,7 +94,7 @@ where
     FEvent: FnOnce(WindowId, Option<PathBuf>) -> AppEvent,
 {
     // Retrieve the owner HWND for the dialog.
-    let hwnd_owner = get_hwnd_owner(internal_state, window_id)?; // get_hwnd_owner is in Win32ApiInternalState
+    let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
 
     // Prepare buffer for the file path.
     let mut file_buffer: Vec<u16> = vec![0; 2048]; // Buffer for the path.
@@ -557,7 +565,7 @@ pub(crate) fn handle_show_input_dialog_command(
     // Show the modal dialog.
     let dialog_result = unsafe {
         DialogBoxIndirectParamW(
-            Some(internal_state.h_instance),
+            Some(internal_state.h_instance()),
             template_bytes.as_ptr() as *const DLGTEMPLATE,
             Some(hwnd_owner),
             Some(input_dialog_proc),

@@ -116,7 +116,7 @@ mod tests {
     fn test_expand_visible_tree_items_returns_error() {
         let (internal_state, window_id, native_window_data) = setup_test_env();
         {
-            let mut guard = internal_state.active_windows.write().unwrap();
+            let mut guard = internal_state.active_windows().write().unwrap();
             guard.insert(window_id, native_window_data);
         }
 
@@ -132,7 +132,7 @@ mod tests {
     fn test_expand_all_tree_items_returns_error() {
         let (internal_state, window_id, native_window_data) = setup_test_env();
         {
-            let mut guard = internal_state.active_windows.write().unwrap();
+            let mut guard = internal_state.active_windows().write().unwrap();
             guard.insert(window_id, native_window_data);
         }
 

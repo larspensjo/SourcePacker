@@ -26,9 +26,8 @@ use windows::{
 
 /*
  * Executes the `DefineLayout` command.
- * This function retrieves the `NativeWindowData` for the given `window_id`
- * and stores the provided `layout_rules` within it. These rules will later
- * be used by the `WM_SIZE` handler to position controls.
+ * This function stores the provided `layout_rules` within the specified window's
+ * data and then triggers a layout recalculation to apply the new rules.
  */
 pub(crate) fn execute_define_layout(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -36,42 +35,15 @@ pub(crate) fn execute_define_layout(
     rules: Vec<LayoutRule>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_define_layout for WinID {:?}, with {} rules.",
-        window_id,
-        rules.len()
-    );
-
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
-        log::error!(
-            "CommandExecutor: Failed to lock windows map for execute_define_layout: {:?}",
-            e
-        );
-        PlatformError::OperationFailed(
-            "Failed to lock windows map for execute_define_layout".into(),
-        )
-    })?;
-
-    let window_data = windows_map_guard.get_mut(&window_id).ok_or_else(|| {
-        log::warn!(
-            "CommandExecutor: WindowId {:?} not found for execute_define_layout storage.",
-            window_id
-        );
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for execute_define_layout storage",
-            window_id
-        ))
-    })?;
-
-    // Store the rules
-    window_data.define_layout(rules);
-    log::debug!(
-        "CommandExecutor: Stored layout rules for WinID {:?}",
+        "CommandExecutor: Storing {} layout rules for WinID {:?}.",
+        rules.len(),
         window_id
     );
 
-    // Explicitly drop the write guard before calling trigger_layout_recalculation,
-    // as trigger_layout_recalculation will take its own read lock.
-    drop(windows_map_guard);
+    internal_state.with_window_data_write(window_id, |window_data| {
+        window_data.define_layout(rules);
+        Ok(())
+    })?;
 
     // Now trigger the layout recalculation.
     internal_state.trigger_layout_recalculation(window_id);
@@ -108,33 +80,8 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
         window_id
     );
 
-    // Defer the event until the Win32 message loop is running by posting a
-    // custom message to the window. The window procedure will translate it into
-    // `AppEvent::MainWindowUISetupComplete`.
-    let hwnd_target = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
-            log::error!(
-                "CommandExecutor: Failed to lock windows map to post UI setup complete: {:?}",
-                e
-            );
-            PlatformError::OperationFailed(
-                "Failed to lock windows map to post UI setup complete".into(),
-            )
-        })?;
-        windows_guard
-            .get(&window_id)
-            .ok_or_else(|| {
-                log::warn!(
-                    "CommandExecutor: WindowId {:?} not found to post UI setup complete.",
-                    window_id
-                );
-                PlatformError::InvalidHandle(format!(
-                    "WindowId {:?} not found to post UI setup complete",
-                    window_id
-                ))
-            })?
-            .get_hwnd()
-    };
+    let hwnd_target = internal_state
+        .with_window_data_read(window_id, |window_data| Ok(window_data.get_hwnd()))?;
 
     if hwnd_target.is_invalid() {
         log::warn!(
@@ -189,100 +136,46 @@ pub(crate) fn execute_create_main_menu(
         window_id
     );
     let h_main_menu = unsafe { CreateMenu()? };
-    let hwnd_owner_opt: Option<HWND>;
 
-    {
-        // Scope for write lock
-        let mut windows_map_guard = internal_state.active_windows.write().map_err(|e|{
-            log::error!("CommandExecutor: Failed to lock windows map for main menu creation (data population): {:?}", e);
-            PlatformError::OperationFailed("Failed to lock windows map for main menu creation (data population)".into())
-        })?;
-
-        let window_data = windows_map_guard.get_mut(&window_id).ok_or_else(|| {
-            unsafe {
-                DestroyMenu(h_main_menu).unwrap_or_default();
-            }
+    let hwnd_owner = internal_state.with_window_data_write(window_id, |window_data| {
+        let hwnd = window_data.get_hwnd();
+        if hwnd.is_invalid() {
             log::warn!(
-                "CommandExecutor: WindowId {:?} not found for CreateMainMenu (data population).",
-                window_id
-            );
-            PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for CreateMainMenu (data population)",
-                window_id
-            ))
-        })?;
-
-        hwnd_owner_opt = Some(window_data.get_hwnd());
-        if window_data.get_hwnd().is_invalid() {
-            unsafe {
-                DestroyMenu(h_main_menu).unwrap_or_default();
-            }
-            log::warn!(
-                "CommandExecutor: HWND not yet valid for WindowId {:?} during menu data population.",
+                "CommandExecutor: HWND not yet valid for WindowId {:?} during menu creation.",
                 window_id
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND not yet valid for WindowId {:?} during menu data population",
+                "HWND not yet valid for WindowId {:?} during menu creation",
                 window_id
             )));
         }
-        for item_config in menu_items {
-            // This helper function is now part of menu_handler or command_executor itself
-            // For now, let's assume it's still here or move it if refactoring menu_handler next.
-            // Keeping it here for now for minimal change to this file beyond TreeView.
-            unsafe { add_menu_item_recursive_impl(h_main_menu, &item_config, window_data)? };
+        for item_config in &menu_items {
+            // This helper recursively populates the menu and registers actions in window_data
+            unsafe { add_menu_item_recursive_impl(h_main_menu, item_config, window_data)? };
         }
-    } // Write lock released
+        Ok(hwnd)
+    })?;
 
-    if let Some(hwnd_owner) = hwnd_owner_opt {
-        if !hwnd_owner.is_invalid() {
-            if unsafe { SetMenu(hwnd_owner, Some(h_main_menu)) }.is_err() {
-                let last_error = unsafe { GetLastError() };
-                unsafe {
-                    DestroyMenu(h_main_menu).unwrap_or_default();
-                }
-                log::error!(
-                    "CommandExecutor: SetMenu failed for main menu on WindowId {:?}: {:?}",
-                    window_id,
-                    last_error
-                );
-                return Err(PlatformError::OperationFailed(format!(
-                    "SetMenu failed for main menu on WindowId {:?}: {:?}",
-                    window_id, last_error
-                )));
-            }
-            log::debug!(
-                "CommandExecutor: Main menu created and set for WindowId {:?}",
-                window_id
-            );
-            Ok(())
-        } else {
-            unsafe {
-                DestroyMenu(h_main_menu).unwrap_or_default();
-            }
-            log::warn!(
-                "CommandExecutor: Owner HWND was invalid before SetMenu for WinID {:?}",
-                window_id
-            );
-            Err(PlatformError::InvalidHandle(format!(
-                "Owner HWND was invalid before SetMenu for WinID {:?}",
-                window_id
-            )))
-        }
-    } else {
-        // Should not happen if window_data was found and HWND was valid
+    if unsafe { SetMenu(hwnd_owner, Some(h_main_menu)) }.is_err() {
+        let last_error = unsafe { GetLastError() };
         unsafe {
             DestroyMenu(h_main_menu).unwrap_or_default();
         }
         log::error!(
-            "CommandExecutor: hwnd_owner_opt was None after lock release for WinID {:?}",
-            window_id
+            "CommandExecutor: SetMenu failed for main menu on WindowId {:?}: {:?}",
+            window_id,
+            last_error
         );
-        Err(PlatformError::OperationFailed(format!(
-            "hwnd_owner_opt was None after lock release for WinID {:?}",
-            window_id
-        )))
+        return Err(PlatformError::OperationFailed(format!(
+            "SetMenu failed for main menu on WindowId {:?}: {:?}",
+            window_id, last_error
+        )));
     }
+    log::debug!(
+        "CommandExecutor: Main menu created and set for WindowId {:?}",
+        window_id
+    );
+    Ok(())
 }
 
 /*
@@ -347,32 +240,18 @@ pub(crate) fn execute_set_control_enabled(
         control_id,
         enabled
     );
-    let windows_guard = internal_state.active_windows.read().map_err(|e|{
-        log::error!("CommandExecutor: Failed to acquire read lock on windows map for SetControlEnabled: {:?}", e);
-        PlatformError::OperationFailed("Failed to acquire read lock on windows map for SetControlEnabled".into())
-    })?;
-
-    let window_data = windows_guard.get(&window_id).ok_or_else(|| {
-        log::warn!(
-            "CommandExecutor: WindowId {:?} not found for SetControlEnabled.",
-            window_id
-        );
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for SetControlEnabled",
-            window_id
-        ))
-    })?;
-
-    let hwnd_ctrl = window_data.get_control_hwnd(control_id).ok_or_else(|| {
-        log::warn!(
-            "CommandExecutor: Control ID {} not found in window {:?} for SetControlEnabled.",
-            control_id,
-            window_id
-        );
-        PlatformError::InvalidHandle(format!(
-            "Control ID {} not found in window {:?} for SetControlEnabled",
-            control_id, window_id
-        ))
+    let hwnd_ctrl = internal_state.with_window_data_read(window_id, |window_data| {
+        window_data.get_control_hwnd(control_id).ok_or_else(|| {
+            log::warn!(
+                "CommandExecutor: Control ID {} not found in window {:?} for SetControlEnabled.",
+                control_id,
+                window_id
+            );
+            PlatformError::InvalidHandle(format!(
+                "Control ID {} not found in window {:?} for SetControlEnabled",
+                control_id, window_id
+            ))
+        })
     })?;
 
     if unsafe { EnableWindow(hwnd_ctrl, enabled) }.as_bool() == false {
@@ -478,87 +357,71 @@ pub(crate) fn execute_create_input(
         control_id
     );
 
-    let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
-        log::error!(
-            "CommandExecutor: Failed to lock windows map for CreateInput: {:?}",
-            e
-        );
-        PlatformError::OperationFailed("Failed to lock windows map for CreateInput".into())
-    })?;
-
-    let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
-        log::warn!(
-            "CommandExecutor: WindowId {:?} not found for CreateInput",
-            window_id
-        );
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for CreateInput",
-            window_id
-        ))
-    })?;
-
-    if window_data.has_control(control_id) {
-        log::warn!(
-            "CommandExecutor: Input with logical ID {} already exists for window {:?}",
-            control_id,
-            window_id
-        );
-        return Err(PlatformError::OperationFailed(format!(
-            "Input with logical ID {} already exists for window {:?}",
-            control_id, window_id
-        )));
-    }
-
-    let hwnd_parent = match parent_control_id {
-        Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+    internal_state.with_window_data_write(window_id, |window_data| {
+        if window_data.has_control(control_id) {
             log::warn!(
+                "CommandExecutor: Input with logical ID {} already exists for window {:?}",
+                control_id,
+                window_id
+            );
+            return Err(PlatformError::OperationFailed(format!(
+                "Input with logical ID {} already exists for window {:?}",
+                control_id, window_id
+            )));
+        }
+
+        let hwnd_parent = match parent_control_id {
+            Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+                log::warn!(
                 "CommandExecutor: Parent control with ID {} not found for CreateInput in WinID {:?}",
                 id, window_id
             );
-            PlatformError::InvalidHandle(format!(
-                "Parent control with ID {} not found for CreateInput in WinID {:?}",
-                id, window_id
-            ))
-        })?,
-        None => window_data.get_hwnd(),
-    };
+                PlatformError::InvalidHandle(format!(
+                    "Parent control with ID {} not found for CreateInput in WinID {:?}",
+                    id, window_id
+                ))
+            })?,
+            None => window_data.get_hwnd(),
+        };
 
-    if hwnd_parent.is_invalid() {
-        log::error!(
-            "CommandExecutor: Parent HWND invalid for CreateInput (WinID {:?})",
-            window_id
+        if hwnd_parent.is_invalid() {
+            log::error!(
+                "CommandExecutor: Parent HWND invalid for CreateInput (WinID {:?})",
+                window_id
+            );
+            return Err(PlatformError::InvalidHandle(format!(
+                "Parent HWND invalid for CreateInput (WinID {:?})",
+                window_id
+            )));
+        }
+
+        let h_instance = internal_state.h_instance();
+        let hwnd_edit = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                WC_EDITW,
+                &HSTRING::from(initial_text.as_str()),
+                WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                0,
+                0,
+                10,
+                10,
+                Some(hwnd_parent),
+                Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
+                Some(h_instance),
+                None,
+            )?
+        };
+
+        window_data.register_control_hwnd(control_id, hwnd_edit);
+        log::debug!(
+            "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
+            control_id,
+            window_id,
+            hwnd_edit
         );
-        return Err(PlatformError::InvalidHandle(format!(
-            "Parent HWND invalid for CreateInput (WinID {:?})",
-            window_id
-        )));
-    }
-
-    let hwnd_edit = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE(0),
-            WC_EDITW,
-            &HSTRING::from(initial_text.as_str()),
-            WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
-            0,
-            0,
-            10,
-            10,
-            Some(hwnd_parent),
-            Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
-            Some(internal_state.h_instance),
-            None,
-        )?
-    };
-
-    window_data.register_control_hwnd(control_id, hwnd_edit);
-    log::debug!(
-        "CommandExecutor: Created input field (ID {}) for WinID {:?} with HWND {:?}",
-        control_id,
-        window_id,
-        hwnd_edit
-    );
-    Ok(())
+        Ok(())
+    })
 }
 
 /*
@@ -570,24 +433,7 @@ pub(crate) fn execute_set_input_text(
     control_id: i32,
     text: String,
 ) -> PlatformResult<()> {
-    let hwnd_edit = {
-        let windows_guard = internal_state.active_windows.read().map_err(|e| {
-            log::error!(
-                "CommandExecutor: Failed to lock windows map for SetInputText: {:?}",
-                e
-            );
-            PlatformError::OperationFailed("Failed to lock windows map".into())
-        })?;
-        let window_data = windows_guard.get(&window_id).ok_or_else(|| {
-            log::warn!(
-                "CommandExecutor: WindowId {:?} not found for SetInputText",
-                window_id
-            );
-            PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for SetInputText",
-                window_id
-            ))
-        })?;
+    let hwnd_edit = internal_state.with_window_data_read(window_id, |window_data| {
         window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
                 "CommandExecutor: Control ID {} not found for SetInputText in WinID {:?}",
@@ -598,8 +444,8 @@ pub(crate) fn execute_set_input_text(
                 "Control ID {} not found for SetInputText in WinID {:?}",
                 control_id, window_id
             ))
-        })?
-    };
+        })
+    })?;
 
     unsafe {
         SetWindowTextW(hwnd_edit, &HSTRING::from(text.as_str())).map_err(|e| {
@@ -626,26 +472,12 @@ pub(crate) fn execute_set_input_background_color(
     control_id: i32,
     color: Option<u32>,
 ) -> PlatformResult<()> {
-    let hwnd_edit;
-    {
-        let mut windows_guard = internal_state.active_windows.write().map_err(|e| {
-            log::error!(
-                "CommandExecutor: Failed to lock windows map for SetInputBackgroundColor: {:?}",
-                e
-            );
-            PlatformError::OperationFailed("Failed to lock windows map".into())
-        })?;
-        let window_data = windows_guard.get_mut(&window_id).ok_or_else(|| {
-            log::warn!(
-                "CommandExecutor: WindowId {:?} not found for SetInputBackgroundColor",
-                window_id
-            );
-            PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for SetInputBackgroundColor",
-                window_id
-            ))
-        })?;
-        hwnd_edit = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+    let hwnd_edit = internal_state.with_window_data_write(window_id, |window_data| {
+        // Store the new color state, this also handles cleanup of old GDI objects.
+        window_data.set_input_background_color(control_id, color)?;
+
+        // Return the HWND for invalidation.
+        window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
                 "CommandExecutor: Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
                 control_id,
@@ -655,10 +487,10 @@ pub(crate) fn execute_set_input_background_color(
                 "Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
                 control_id, window_id
             ))
-        })?;
-        window_data.set_input_background_color(control_id, color)?;
-    }
+        })
+    })?;
 
+    // Trigger a repaint for the new color to take effect.
     unsafe {
         _ = InvalidateRect(Some(hwnd_edit), None, true);
     }
@@ -746,86 +578,70 @@ pub(crate) fn execute_create_panel(
         parent_control_id
     );
 
-    let mut windows_map_guard = internal_state.active_windows.write().map_err(|e| {
-        log::error!(
-            "CommandExecutor: Failed to lock windows map for CreatePanel: {:?}",
-            e
-        );
-        PlatformError::OperationFailed("Failed to lock windows map for CreatePanel".into())
-    })?;
+    internal_state.with_window_data_write(window_id, |window_data| {
+        if window_data.has_control(panel_id) {
+            log::warn!(
+                "CommandExecutor: Panel with logical ID {} already exists for window {:?}.",
+                panel_id,
+                window_id
+            );
+            return Err(PlatformError::OperationFailed(format!(
+                "Panel with logical ID {} already exists for window {:?}",
+                panel_id, window_id
+            )));
+        }
 
-    let window_data = windows_map_guard.get_mut(&window_id).ok_or_else(|| {
-        log::warn!(
-            "CommandExecutor: WindowId {:?} not found for CreatePanel.",
-            window_id
-        );
-        PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found for CreatePanel",
-            window_id
-        ))
-    })?;
+        let hwnd_parent = match parent_control_id {
+            Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+                log::warn!("CommandExecutor: Parent control with logical ID {} not found for CreatePanel in WinID {:?}", id, window_id);
+                PlatformError::InvalidHandle(format!(
+                    "Parent control with logical ID {} not found for CreatePanel in WinID {:?}",
+                    id, window_id
+                ))
+            })?,
+            None => window_data.get_hwnd(), // Parent is the main window
+        };
 
-    if window_data.has_control(panel_id) {
-        log::warn!(
-            "CommandExecutor: Panel with logical ID {} already exists for window {:?}.",
+        if hwnd_parent.is_invalid() {
+            log::error!(
+                "CommandExecutor: Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
+                window_id,
+                parent_control_id
+            );
+            return Err(PlatformError::InvalidHandle(format!(
+                "Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
+                window_id, parent_control_id
+            )));
+        }
+
+        let h_instance = internal_state.h_instance();
+        let hwnd_panel = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0), // Or WS_EX_CONTROLPARENT if it should manage tab order for children
+                super::window_common::WC_STATIC, // Using a STATIC control as a simple panel container
+                None,               // No text for a simple panel
+                WS_CHILD | WS_VISIBLE, // Basic styles for a panel
+                0,
+                0,
+                10,
+                10, // Dummy position/size, layout rules will adjust
+                Some(hwnd_parent),
+                Some(HMENU(panel_id as *mut _)), // Use logical ID for the HMENU
+                Some(h_instance),
+                None,
+            )?
+        };
+        unsafe {
+            let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
+            SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
+        }
+        window_data.register_control_hwnd(panel_id, hwnd_panel);
+        log::debug!(
+            "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
             panel_id,
-            window_id
-        );
-        return Err(PlatformError::OperationFailed(format!(
-            "Panel with logical ID {} already exists for window {:?}",
-            panel_id, window_id
-        )));
-    }
-
-    let hwnd_parent = match parent_control_id {
-        Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
-            log::warn!("CommandExecutor: Parent control with logical ID {} not found for CreatePanel in WinID {:?}", id, window_id);
-            PlatformError::InvalidHandle(format!(
-                "Parent control with logical ID {} not found for CreatePanel in WinID {:?}",
-                id, window_id
-            ))
-        })?,
-        None => window_data.get_hwnd(), // Parent is the main window
-    };
-
-    if hwnd_parent.is_invalid() {
-        log::error!(
-            "CommandExecutor: Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
             window_id,
-            parent_control_id
+            hwnd_panel
         );
-        return Err(PlatformError::InvalidHandle(format!(
-            "Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
-            window_id, parent_control_id
-        )));
-    }
-
-    let hwnd_panel = unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE(0), // Or WS_EX_CONTROLPARENT if it should manage tab order for children
-            super::window_common::WC_STATIC, // Using a STATIC control as a simple panel container
-            None,               // No text for a simple panel
-            WS_CHILD | WS_VISIBLE, // Basic styles for a panel
-            0,
-            0,
-            10,
-            10, // Dummy position/size, layout rules will adjust
-            Some(hwnd_parent),
-            Some(HMENU(panel_id as *mut _)), // Use logical ID for the HMENU
-            Some(internal_state.h_instance),
-            None,
-        )?
-    };
-    unsafe {
-        let prev = SetWindowLongPtrW(hwnd_panel, GWLP_WNDPROC, forwarding_panel_proc as isize);
-        SetWindowLongPtrW(hwnd_panel, GWLP_USERDATA, prev);
-    }
-    window_data.register_control_hwnd(panel_id, hwnd_panel);
-    log::debug!(
-        "CommandExecutor: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
-        panel_id,
-        window_id,
-        hwnd_panel
-    );
-    Ok(())
+        Ok(())
+    })
 }

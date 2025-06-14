@@ -7,7 +7,7 @@ use super::window_common;
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE},
+        Foundation::{GetLastError, HINSTANCE, HWND},
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
         UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
@@ -32,10 +32,10 @@ use std::sync::{
  * TOOD: I think all member should be made private here. Instead, accessor functions should be provided.
  */
 pub(crate) struct Win32ApiInternalState {
-    pub(crate) h_instance: HINSTANCE,
-    pub(crate) next_window_id_counter: AtomicUsize, // For generating unique WindowIds
+    h_instance: HINSTANCE,
+    next_window_id_counter: AtomicUsize, // For generating unique WindowIds
     // Central registry for all active windows, mapping WindowId to its native state.
-    pub(crate) active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
+    active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // The application name, used for window class registration.
     pub(crate) app_name_for_class: String,
@@ -43,6 +43,28 @@ pub(crate) struct Win32ApiInternalState {
 }
 
 impl Win32ApiInternalState {
+    /*
+     * Generates a new unique `WindowId`.
+     */
+    pub(crate) fn generate_unique_window_id(&self) -> WindowId {
+        WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /*
+     * Retrieves the application's instance handle.
+     * Control and window creation functions use this value when calling Win32 APIs.
+     */
+    pub(crate) fn h_instance(&self) -> HINSTANCE {
+        self.h_instance
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_windows(
+        &self,
+    ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
+        &self.active_windows
+    }
+
     /*
      * Creates a new instance of `Win32ApiInternalState`.
      * Initializes COM, common controls, and retrieves the application instance handle.
@@ -84,10 +106,133 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Generates a new unique `WindowId`.
+     * Removes the data for a given window ID from the active windows map.
+     * This is a map-level operation that acquires a write lock, removes the
+     * entry, and then calls the necessary cleanup functions on the removed data
+     * to release any associated GDI resources.
      */
-    pub(crate) fn generate_unique_window_id(&self) -> WindowId {
-        WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
+    pub(crate) fn remove_window_data(&self, window_id: WindowId) {
+        let mut windows_map_guard = match self.active_windows.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                log::error!(
+                    "Failed to acquire write lock to remove WinID {:?}: {:?}",
+                    window_id,
+                    e
+                );
+                return; // Exit if the lock is poisoned.
+            }
+        };
+
+        if let Some(mut removed_data) = windows_map_guard.remove(&window_id) {
+            // Perform cleanup on the GDI objects owned by the window data.
+            removed_data.cleanup_status_bar_font();
+            removed_data.cleanup_input_background_colors();
+            log::debug!("Removed and cleaned up data for WindowId {:?}.", window_id);
+        } else {
+            log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
+        }
+    }
+    /*
+     * A specialized helper for mutating the TreeView's internal state.
+     * This function safely takes the TreeView state out of the `NativeWindowData`,
+     * executes the provided closure on it *without* holding the main window map lock,
+     * and then puts the (potentially modified) state back. This is critical for
+     * long-running operations like populating the tree, as it prevents deadlocks
+     * and avoids blocking other UI commands.
+     */
+    pub(crate) fn with_treeview_state_mut<F>(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        f: F,
+    ) -> PlatformResult<()>
+    where
+        F: FnOnce(HWND, &mut treeview_handler::TreeViewInternalState) -> PlatformResult<()>,
+    {
+        // Phase 1: Lock, get HWND, and take the treeview state out.
+        let (hwnd_treeview, mut taken_tv_state) =
+        self.with_window_data_write(window_id, |window_data| {
+            let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "TreeView HWND not found for control ID {}",
+                    control_id
+                ))
+            })?;
+
+            // Take the state. If it doesn't exist, create a new one for the operation.
+            let state = window_data.take_treeview_state().unwrap_or_else(|| {
+                log::warn!(
+                    "TreeView state was None for WinID {:?}/ControlID {}. Creating new for operation.",
+                    window_id,
+                    control_id
+                );
+                treeview_handler::TreeViewInternalState::new()
+            });
+
+            Ok((hwnd, state))
+        })?;
+
+        // Phase 2: Perform the long-running operation on the state without holding the map lock.
+        let result = f(hwnd_treeview, &mut taken_tv_state);
+
+        // Phase 3: Lock again to put the state back, regardless of whether the operation succeeded.
+        // This ensures the state is never lost.
+        if let Err(e) = self.with_window_data_write(window_id, |window_data| {
+            window_data.set_treeview_state(Some(taken_tv_state));
+            Ok(())
+        }) {
+            log::error!(
+                "CRITICAL: Failed to put back TreeView state for WinID {:?}. State may be lost. Error: {:?}",
+                window_id,
+                e
+            );
+        }
+
+        // Return the original result from the operation.
+        result
+    }
+
+    // Provides safe, read-only access to a specific window's data.
+    // Handles locking and error checking.
+    pub(crate) fn with_window_data_read<F, R>(&self, window_id: WindowId, f: F) -> PlatformResult<R>
+    where
+        F: FnOnce(&window_common::NativeWindowData) -> PlatformResult<R>,
+    {
+        let windows_map = self.active_windows.read().map_err(|e| {
+            log::error!("Failed to acquire read lock on active_windows: {:?}", e);
+            PlatformError::OperationFailed("RwLock poisoned".into())
+        })?;
+
+        let window_data = windows_map.get(&window_id).ok_or_else(|| {
+            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
+            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+        })?;
+
+        f(window_data)
+    }
+
+    // Provides safe, writeable access to a specific window's data.
+    // Handles locking and error checking.
+    pub(crate) fn with_window_data_write<F, R>(
+        &self,
+        window_id: WindowId,
+        f: F,
+    ) -> PlatformResult<R>
+    where
+        F: FnOnce(&mut window_common::NativeWindowData) -> PlatformResult<R>,
+    {
+        let mut windows_map = self.active_windows.write().map_err(|e| {
+            log::error!("Failed to acquire write lock on active_windows: {:?}", e);
+            PlatformError::OperationFailed("RwLock poisoned".into())
+        })?;
+
+        let window_data = windows_map.get_mut(&window_id).ok_or_else(|| {
+            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
+            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+        })?;
+
+        f(window_data)
     }
 
     /*
@@ -231,10 +376,7 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => super::controls::button_handler::handle_create_button_command(
-                self,
-                window_id,
-                control_id,
-                text,
+                self, window_id, control_id, text,
             ),
             PlatformCommand::CreateTreeView {
                 window_id,
@@ -282,20 +424,14 @@ impl Win32ApiInternalState {
             } => treeview_handler::handle_redraw_tree_item_command(
                 self, window_id, control_id, item_id,
             ),
-            PlatformCommand::ExpandVisibleTreeItems { window_id, control_id } => {
-                command_executor::execute_expand_visible_tree_items(
-                    self,
-                    window_id,
-                    control_id,
-                )
-            }
-            PlatformCommand::ExpandAllTreeItems { window_id, control_id } => {
-                command_executor::execute_expand_all_tree_items(
-                    self,
-                    window_id,
-                    control_id,
-                )
-            }
+            PlatformCommand::ExpandVisibleTreeItems {
+                window_id,
+                control_id,
+            } => command_executor::execute_expand_visible_tree_items(self, window_id, control_id),
+            PlatformCommand::ExpandAllTreeItems {
+                window_id,
+                control_id,
+            } => command_executor::execute_expand_all_tree_items(self, window_id, control_id),
             PlatformCommand::CreateInput {
                 window_id,
                 parent_control_id,
@@ -317,7 +453,9 @@ impl Win32ApiInternalState {
                 window_id,
                 control_id,
                 color,
-            } => command_executor::execute_set_input_background_color(self, window_id, control_id, color),
+            } => command_executor::execute_set_input_background_color(
+                self, window_id, control_id, color,
+            ),
         }
     }
 }

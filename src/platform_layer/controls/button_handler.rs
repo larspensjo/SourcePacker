@@ -10,9 +10,10 @@ use crate::platform_layer::types::{AppEvent, WindowId};
 
 use std::sync::Arc;
 use windows::Win32::{
-    Foundation::{HINSTANCE, HWND},
+    Foundation::HWND,
     UI::WindowsAndMessaging::{
-        BS_PUSHBUTTON, CreateWindowExW, HMENU, WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_VISIBLE,
+        BS_PUSHBUTTON, CreateWindowExW, DestroyWindow, HMENU, WINDOW_EX_STYLE, WINDOW_STYLE,
+        WS_CHILD, WS_VISIBLE,
     },
 };
 use windows::core::{HSTRING, PCWSTR};
@@ -22,7 +23,13 @@ const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 /*
  * Creates a native push button and registers the resulting HWND in the
  * window's `NativeWindowData`. Fails if the window or control ID are
- * invalid or already in use.
+ * invalid or already in use. This function uses a read-create-write pattern
+ * to minimize lock contention on the global window map.
+ *
+ * First, it acquires a read lock to verify that the control doesn't already
+ * exist and to get the parent HWND. Then, it creates the native button
+ * control without holding any locks. Finally, it acquires a write lock briefly
+ * to register the new control, checking for race conditions.
  */
 pub(crate) fn handle_create_button_command(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -37,55 +44,38 @@ pub(crate) fn handle_create_button_command(
         text
     );
 
-    let hwnd_parent_for_creation: HWND;
-    let h_instance: HINSTANCE;
-    {
-        let mut windows_map = internal_state.active_windows.write().map_err(|e| {
-            log::error!(
-                "ButtonHandler: Failed to lock windows map for CreateButton: {:?}",
-                e
-            );
-            PlatformError::OperationFailed("Failed to lock windows map for CreateButton".into())
+    // Phase 1: Read-only pre-checks.
+    // Get the parent HWND for creation while holding only a read lock.
+    let hwnd_parent_for_creation =
+        internal_state.with_window_data_read(window_id, |window_data| {
+            if window_data.has_control(control_id) {
+                log::warn!(
+                    "ButtonHandler: Button with ID {} already exists for window {:?}.",
+                    control_id,
+                    window_id
+                );
+                return Err(PlatformError::OperationFailed(format!(
+                    "Button with ID {} already exists for window {:?}",
+                    control_id, window_id
+                )));
+            }
+
+            let hwnd_parent = window_data.get_hwnd();
+            if hwnd_parent.is_invalid() {
+                log::error!(
+                    "ButtonHandler: Parent HWND invalid for CreateButton (WinID: {:?})",
+                    window_id
+                );
+                return Err(PlatformError::InvalidHandle(format!(
+                    "Parent HWND invalid for CreateButton (WinID: {:?})",
+                    window_id
+                )));
+            }
+            Ok(hwnd_parent)
         })?;
 
-        let window_data = windows_map.get_mut(&window_id).ok_or_else(|| {
-            log::warn!(
-                "ButtonHandler: WindowId {:?} not found for CreateButton.",
-                window_id
-            );
-            PlatformError::InvalidHandle(format!(
-                "WindowId {:?} not found for CreateButton",
-                window_id
-            ))
-        })?;
-
-        if window_data.has_control(control_id) {
-            log::warn!(
-                "ButtonHandler: Button with ID {} already exists for window {:?}.",
-                control_id,
-                window_id
-            );
-            return Err(PlatformError::OperationFailed(format!(
-                "Button with ID {} already exists for window {:?}",
-                control_id, window_id
-            )));
-        }
-
-        if window_data.get_hwnd().is_invalid() {
-            log::error!(
-                "ButtonHandler: Parent HWND invalid for CreateButton (WinID: {:?})",
-                window_id
-            );
-            return Err(PlatformError::InvalidHandle(format!(
-                "Parent HWND invalid for CreateButton (WinID: {:?})",
-                window_id
-            )));
-        }
-
-        hwnd_parent_for_creation = window_data.get_hwnd();
-        h_instance = internal_state.h_instance;
-    }
-
+    // Phase 2: Create the native control without holding any locks.
+    let h_instance = internal_state.h_instance();
     let hwnd_button = unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -103,15 +93,10 @@ pub(crate) fn handle_create_button_command(
         )?
     };
 
-    let mut windows_map = internal_state.active_windows.write().map_err(|e| {
-        log::error!(
-            "ButtonHandler: Failed to re-lock windows map after CreateButton: {:?}",
-            e
-        );
-        PlatformError::OperationFailed("Failed to re-lock windows map after CreateButton".into())
-    })?;
-
-    if let Some(window_data) = windows_map.get_mut(&window_id) {
+    // Phase 3: Acquire a write lock only to register the new HWND.
+    internal_state.with_window_data_write(window_id, |window_data| {
+        // Re-check for a race condition where another thread created the control
+        // while we were not holding a lock.
         if window_data.has_control(control_id) {
             log::warn!(
                 "ButtonHandler: Control ID {} was created concurrently for window {:?}. Destroying new HWND.",
@@ -119,13 +104,15 @@ pub(crate) fn handle_create_button_command(
                 window_id
             );
             unsafe {
-                windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok();
+                // Safely ignore error if window is already gone.
+                DestroyWindow(hwnd_button).ok();
             }
             return Err(PlatformError::OperationFailed(format!(
-                "Button with ID {} already exists for window {:?}",
+                "Button with ID {} was created concurrently for window {:?}",
                 control_id, window_id
             )));
         }
+
         window_data.register_control_hwnd(control_id, hwnd_button);
         log::debug!(
             "ButtonHandler: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
@@ -134,20 +121,8 @@ pub(crate) fn handle_create_button_command(
             window_id,
             hwnd_button
         );
-    } else {
-        log::warn!(
-            "ButtonHandler: WindowId {:?} disappeared before button insert. Destroying HWND.",
-            window_id
-        );
-        unsafe {
-            windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd_button).ok();
-        }
-        return Err(PlatformError::InvalidHandle(format!(
-            "WindowId {:?} not found after CreateButton",
-            window_id
-        )));
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /*
