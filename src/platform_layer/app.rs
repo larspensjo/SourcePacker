@@ -46,6 +46,10 @@ pub(crate) struct Win32ApiInternalState {
     is_quitting: AtomicUsize, // 0 = false, 1 = true
 }
 
+// SAFETY: All fields are Send + Sync or wrapped in thread-safe containers, and trait objects are required to be Send + Sync.
+unsafe impl Send for Win32ApiInternalState {}
+unsafe impl Sync for Win32ApiInternalState {}
+
 impl Win32ApiInternalState {
     /*
      * Generates a new unique `WindowId`.
@@ -560,7 +564,7 @@ impl PlatformInterface {
         let hwnd = match window_common::create_native_window(
             &self.internal_state, // Pass Arc<Win32ApiInternalState>
             window_id,            // Pass the generated WindowId
-            &config.title,
+            config.title,
             config.width,
             config.height,
         ) {
@@ -716,41 +720,45 @@ impl PlatformInterface {
 
                 // Then process OS messages
                 let result = GetMessageW(&mut msg, None, 0, 0);
-                if result.0 > 0 {
-                    // Regular message
-                    let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                } else if result.0 == 0 {
-                    // WM_QUIT
-                    log::debug!(
-                        "Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop."
-                    );
-                    break;
-                } else {
-                    // Error from GetMessageW (result.0 == -1)
-                    let last_error = GetLastError();
-                    log::error!(
-                        "Platform: GetMessageW failed with return -1. LastError: {:?}",
-                        last_error
-                    );
-                    // Check if we should break despite error (e.g., if quitting and no windows)
-                    let should_still_break =
-                        self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
-                            && self
-                                .internal_state
-                                .active_windows
-                                .read()
-                                .is_ok_and(|g| g.is_empty());
-                    if should_still_break {
+                match result.0 {
+                    n if n > 0 => {
+                        // Regular message
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                    0 => {
+                        // WM_QUIT
                         log::debug!(
-                            "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
+                            "Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop."
                         );
                         break;
                     }
-                    return Err(PlatformError::OperationFailed(format!(
-                        "GetMessageW failed: {}",
-                        windows::core::Error::from_win32() // Converts last error to windows::core::Error
-                    )));
+                    _ => {
+                        // Error from GetMessageW (result.0 == -1)
+                        let last_error = GetLastError();
+                        log::error!(
+                            "Platform: GetMessageW failed with return -1. LastError: {:?}",
+                            last_error
+                        );
+                        // Check if we should break despite error (e.g., if quitting and no windows)
+                        let should_still_break =
+                            self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
+                                && self
+                                    .internal_state
+                                    .active_windows
+                                    .read()
+                                    .is_ok_and(|g| g.is_empty());
+                        if should_still_break {
+                            log::debug!(
+                                "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
+                            );
+                            break;
+                        }
+                        return Err(PlatformError::OperationFailed(format!(
+                            "GetMessageW failed: {}",
+                            windows::core::Error::from_win32() // Converts last error to windows::core::Error
+                        )));
+                    }
                 }
             }
         }

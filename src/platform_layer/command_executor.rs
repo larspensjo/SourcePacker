@@ -254,7 +254,7 @@ pub(crate) fn execute_set_control_enabled(
         })
     })?;
 
-    if unsafe { EnableWindow(hwnd_ctrl, enabled) }.as_bool() == false {
+    if unsafe { !EnableWindow(hwnd_ctrl, enabled) }.as_bool() {
         // EnableWindow returns non-zero if previously disabled, zero if previously enabled.
         // It doesn't directly indicate error unless GetLastError is checked,
         // but for this operation, we usually assume it succeeds if HWND is valid.
@@ -552,7 +552,7 @@ unsafe extern "system" fn forwarding_panel_proc(
 
         let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if prev != 0 {
-            let prev_proc: WNDPROC = std::mem::transmute(prev as isize);
+            let prev_proc: WNDPROC = std::mem::transmute(prev);
             return CallWindowProcW(prev_proc, hwnd, msg, wparam, lparam);
         }
         DefWindowProcW(hwnd, msg, wparam, lparam)

@@ -710,7 +710,6 @@ impl Win32ApiInternalState {
      */
     fn apply_layout_rules_for_children(
         self: &Arc<Self>,
-        window_id: WindowId,
         parent_id_for_layout: Option<i32>,
         parent_rect: RECT,
         window_data: &NativeWindowData,
@@ -797,7 +796,6 @@ impl Win32ApiInternalState {
                             bottom: item_height,
                         };
                         self.apply_layout_rules_for_children(
-                            window_id,
                             Some(rule.control_id),
                             panel_client_rect,
                             window_data,
@@ -863,7 +861,6 @@ impl Win32ApiInternalState {
                                 bottom: final_height,
                             };
                             self.apply_layout_rules_for_children(
-                                window_id,
                                 Some(rule.control_id),
                                 panel_client_rect_prop,
                                 window_data,
@@ -910,7 +907,6 @@ impl Win32ApiInternalState {
                     bottom: fill_height,
                 };
                 self.apply_layout_rules_for_children(
-                    window_id,
                     Some(rule.control_id),
                     panel_client_rect_fill,
                     window_data,
@@ -951,7 +947,7 @@ impl Win32ApiInternalState {
                 client_rect,
                 window_id
             );
-            self.apply_layout_rules_for_children(window_id, None, client_rect, window_data);
+            self.apply_layout_rules_for_children(None, client_rect, window_data);
             Ok(())
         }) {
             log::error!(

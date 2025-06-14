@@ -826,8 +826,7 @@ pub(crate) fn handle_nm_click(
         return;
     }
     let mut client_pt_for_hittest = screen_pt_of_click;
-    if unsafe { ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest) }.as_bool() == false
-    {
+    if unsafe { !ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest) }.as_bool() {
         return;
     }
 

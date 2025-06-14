@@ -1540,7 +1540,7 @@ impl MyAppLogic {
         let initial_dir_for_dialog = current_archive_path_opt
             .as_ref()
             .and_then(|ap| ap.parent().map(PathBuf::from))
-            .or_else(|| Some(current_root_path));
+            .or(Some(current_root_path));
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {

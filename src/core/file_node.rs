@@ -10,17 +10,12 @@ use crate::platform_layer::{CheckState, TreeItemDescriptor, TreeItemId};
  * Derives Serialize and Deserialize for potential future use if this enum is directly part of a complex state
  * (though current Profile doesn't serialize it directly). Default is added for convenience.
  */
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SelectionState {
     Selected,
     Deselected,
+    #[default]
     New,
-}
-
-impl Default for SelectionState {
-    fn default() -> Self {
-        SelectionState::New
-    }
 }
 
 /*
