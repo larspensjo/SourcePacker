@@ -300,7 +300,7 @@ impl MyAppLogic {
             status
         );
 
-        ui_state_mut.current_archive_status_for_ui = Some(status.clone());
+        ui_state_mut.current_archive_status_for_ui = Some(status);
 
         let plain_status_string = Self::archive_status_to_plain_string(&status);
         let archive_label_text = format!("Archive: {}", plain_status_string);
@@ -357,7 +357,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id == window_id)
         {
             return;
         }
@@ -369,7 +369,7 @@ impl MyAppLogic {
         if self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id == window_id)
         {
             log::debug!(
                 "AppLogic: Main window (ID: {:?}) destroyed notification received. Clearing UI state.",
@@ -684,7 +684,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id == window_id)
         {
             log::warn!(
                 "FileOpenProfileDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
@@ -1086,7 +1086,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .map_or(false, |s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id == window_id),
             "Mismatched window ID or no UI state for _activate_profile_and_show_window"
         );
 
@@ -1140,7 +1140,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .map_or(false, |s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id == window_id),
             "initiate_profile_selection_or_creation called with mismatching window ID or no UI state."
         );
 
@@ -1195,7 +1195,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id == window_id)
         {
             log::debug!(
                 "ProfileSelectionDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
@@ -1364,7 +1364,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .map_or(false, |s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id == window_id)
         {
             log::warn!(
                 "InputDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
@@ -1488,7 +1488,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .map_or(false, |s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id == window_id),
             "_update_window_title_with_profile_and_archive called with mismatching window ID or no UI state."
         );
 
@@ -1540,7 +1540,7 @@ impl MyAppLogic {
         let initial_dir_for_dialog = current_archive_path_opt
             .as_ref()
             .and_then(|ap| ap.parent().map(PathBuf::from))
-            .or_else(|| Some(current_root_path));
+            .or(Some(current_root_path));
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {

@@ -514,7 +514,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         );
 
         Profile {
-            name: self.profile_name.clone().unwrap_or_else(String::new),
+            name: self.profile_name.clone().unwrap_or_default(),
             root_folder: self.root_path_for_scan.clone(),
             selected_paths: selected_paths_for_profile,
             deselected_paths: deselected_paths_for_profile,

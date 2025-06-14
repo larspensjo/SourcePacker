@@ -1,27 +1,27 @@
-#[cfg(test)]
-mod handler_tests {
-    use crate::app_logic::handler::*;
-    use crate::app_logic::ui_constants;
+#![cfg(test)]
 
-    use crate::core::{
-        ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
-        FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
-        ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
-        TokenCounterOperations, file_node::FileTokenDetails,
-    };
-    use crate::platform_layer::{
-        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-        UiStateProvider, TreeItemId, WindowId, types::MenuAction,
-    };
+use crate::app_logic::handler::*;
+use crate::app_logic::ui_constants;
 
-    use std::collections::{HashMap, HashSet};
-    use std::io::{self};
-    use std::path::{Path, PathBuf};
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    };
-    use std::time::SystemTime;
+use crate::core::{
+    ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
+    FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
+    ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
+    TokenCounterOperations, file_node::FileTokenDetails,
+};
+use crate::platform_layer::{
+    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
+    UiStateProvider, TreeItemId, WindowId, types::MenuAction,
+};
+
+use std::collections::{HashMap, HashSet};
+use std::io::{self};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+};
+use std::time::SystemTime;
 
     /*
      * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
@@ -255,7 +255,7 @@ mod handler_tests {
                 .push((selected_paths.clone(), deselected_paths.clone()));
             // Basic simulation for mock:
             fn apply_recursive(
-                nodes: &mut Vec<FileNode>,
+                nodes: &mut [FileNode],
                 selected: &HashSet<PathBuf>,
                 deselected: &HashSet<PathBuf>,
             ) {
@@ -314,7 +314,7 @@ mod handler_tests {
 
             let mut actual_changes = Vec::new();
             fn update_recursive(
-                nodes: &mut Vec<FileNode>,
+                nodes: &mut [FileNode],
                 target_path: &Path,
                 new_sel_state: SelectionState,
                 changes: &mut Vec<(PathBuf, SelectionState)>,
@@ -335,14 +335,14 @@ mod handler_tests {
                         break;
                     }
                     // If the target_path is a descendant of the current node.is_dir, recurse
-                    if node.is_dir() && target_path.starts_with(node.path()) {
-                        if update_recursive(&mut node.children, target_path, new_sel_state, changes)
-                        {
-                            found_target = true; // Found in children
-                            // Potentially update parent's state based on children if needed by NodeStateApplicator logic
-                            // For this mock, we'll skip complex parent state updates.
-                            break;
-                        }
+                    if node.is_dir()
+                        && target_path.starts_with(node.path())
+                        && update_recursive(&mut node.children, target_path, new_sel_state, changes)
+                    {
+                        found_target = true; // Found in children
+                        // Potentially update parent's state based on children if needed by NodeStateApplicator logic
+                        // For this mock, we'll skip complex parent state updates.
+                        break;
                     }
                 }
                 found_target
@@ -450,7 +450,7 @@ mod handler_tests {
             self.create_profile_snapshot_calls
                 .fetch_add(1, Ordering::Relaxed);
             let mut profile = Profile::new(
-                self.profile_name.clone().unwrap_or_else(String::new),
+                self.profile_name.clone().unwrap_or_default(),
                 self.root_path_for_scan.clone(),
             );
             profile.archive_path = self.archive_path.clone();
@@ -868,7 +868,7 @@ mod handler_tests {
                 .unwrap()
                 .as_ref()
                 .map(|s| s.clone())
-                .map_err(|e| clone_io_error(e))
+                .map_err(clone_io_error)
         }
         fn check_status(
             &self,
@@ -879,7 +879,7 @@ mod handler_tests {
                 archive_path_opt.map(|p| p.to_path_buf()),
                 file_nodes_tree.to_vec(),
             ));
-            self.check_archive_status_result.lock().unwrap().clone()
+            *self.check_archive_status_result.lock().unwrap()
         }
         fn save(&self, path: &Path, content: &str) -> io::Result<()> {
             self.save_archive_content_calls
@@ -891,7 +891,7 @@ mod handler_tests {
                 .unwrap()
                 .as_ref()
                 .map(|_| ())
-                .map_err(|e| clone_io_error(e))
+                .map_err(clone_io_error)
         }
         fn get_file_timestamp(&self, path: &Path) -> io::Result<SystemTime> {
             self.get_file_timestamp_calls
@@ -1289,7 +1289,7 @@ mod handler_tests {
             .set_snapshot_nodes_for_mock(vec![]); // Ensure snapshot nodes are empty for this part
 
         let archive_error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::NotFound));
-        mock_archiver_arc.set_check_archive_status_result(archive_error_status.clone());
+        mock_archiver_arc.set_check_archive_status_result(archive_error_status);
 
         // Act
         let event = AppEvent::FileOpenProfileDialogCompleted {
@@ -1468,7 +1468,7 @@ mod handler_tests {
         // Case 1: ArchiveStatus is an error
         let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));
         let expected_dedicated_error_text = "Archive: Error: PermissionDenied.".to_string();
-        mock_archiver.set_check_archive_status_result(error_status.clone());
+        mock_archiver.set_check_archive_status_result(error_status);
 
         // Act 1
         logic.update_current_archive_status();
@@ -1520,7 +1520,7 @@ mod handler_tests {
         // Case 2: ArchiveStatus is informational (e.g., UpToDate)
         let info_status = ArchiveStatus::UpToDate;
         let expected_dedicated_info_text = "Archive: Up to date.".to_string();
-        mock_archiver.set_check_archive_status_result(info_status.clone());
+        mock_archiver.set_check_archive_status_result(info_status);
 
         // Act 2
         logic.update_current_archive_status();
@@ -2394,7 +2394,6 @@ mod handler_tests {
         assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
         assert!(find_command(&cmds, |cmd| matches!(cmd,
             PlatformCommand::SetInputBackgroundColor { window_id: wid, control_id, color }
-                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && matches!(color, Some(_))
+                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && color.is_some()
         )).is_some(), "Expected color change for no match");
     }
-}
