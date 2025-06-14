@@ -517,7 +517,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> LRESULT {
         let event_handler_opt = self
-            .application_event_handler
+            .application_event_handler()
             .lock()
             .unwrap()
             .as_ref()

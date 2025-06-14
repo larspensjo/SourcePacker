@@ -121,7 +121,7 @@ where
         lpstrFile: windows::core::PWSTR(file_buffer.as_mut_ptr()),
         nMaxFile: file_buffer.len() as u32,
         lpstrFilter: PCWSTR(filter_utf16.as_ptr()),
-        lpstrTitle: PCWSTR(title_hstring.as_ptr()),
+        .application_event_handler()
         lpstrInitialDir: initial_dir_pcwstr,
         Flags: OFN_EXPLORER | specific_flags, // Base flags + dialog-specific flags.
         ..Default::default()
@@ -248,7 +248,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
 ) -> PlatformResult<()> {
     log::debug!(
         "DialogHandler (STUB): Showing Profile Selection Dialog. Title: '{}', Prompt: '{}', Emphasize Create: {}, Profiles: {:?}",
-        title,
+        .application_event_handler()
         prompt,
         emphasize_create_new,
         available_profiles
@@ -560,7 +560,7 @@ pub(crate) fn handle_show_input_dialog_command(
 
     // Build the dialog template in memory.
     let mut template_bytes = Vec::<u8>::new();
-    build_input_dialog_template(&mut template_bytes, &title, &dialog_data.prompt_text)?;
+        .application_event_handler()
 
     // Show the modal dialog.
     let dialog_result = unsafe {
@@ -677,8 +677,8 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
 
             if file_dialog.Show(Some(hwnd_owner)).is_ok() {
                 if let Ok(shell_item) = file_dialog.GetResult() {
-                    if let Ok(pwstr_path) = shell_item.GetDisplayName(SIGDN_FILESYSPATH) {
-                        let path_string = pwstr_path.to_string().unwrap_or_default();
+            .application_event_handler()
+        .application_event_handler()
                         CoTaskMemFree(Some(pwstr_path.as_ptr() as *const c_void));
                         if !path_string.is_empty() {
                             path_result = Some(PathBuf::from(path_string));

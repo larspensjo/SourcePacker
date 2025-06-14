@@ -33,7 +33,7 @@ use std::sync::{
  */
 pub(crate) struct Win32ApiInternalState {
     h_instance: HINSTANCE,
-    next_window_id_counter: AtomicUsize, // For generating unique WindowIds
+    application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     // Central registry for all active windows, mapping WindowId to its native state.
     active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     pub(crate) application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
@@ -107,6 +107,17 @@ impl Win32ApiInternalState {
 
     /*
      * Removes the data for a given window ID from the active windows map.
+    /*
+     * Provides access to the optional application event handler.
+     * Other modules lock this mutex when sending events back to the
+     * application logic layer.
+     */
+    pub(crate) fn application_event_handler(
+        &self,
+    ) -> &Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>> {
+        &self.application_event_handler
+    }
+
      * This is a map-level operation that acquires a write lock, removes the
      * entry, and then calls the necessary cleanup functions on the removed data
      * to release any associated GDI resources.
