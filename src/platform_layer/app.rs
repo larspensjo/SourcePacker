@@ -58,10 +58,7 @@ impl Win32ApiInternalState {
         self.h_instance
     }
 
-    /*
-     * Returns a reference to the map of active windows.
-     * External modules use this to acquire read or write locks on the map.
-     */
+    #[cfg(test)]
     pub(crate) fn active_windows(
         &self,
     ) -> &RwLock<HashMap<WindowId, window_common::NativeWindowData>> {
