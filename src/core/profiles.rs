@@ -350,7 +350,7 @@ mod profile_tests {
                     if path.is_file()
                         && path
                             .extension()
-                            .map_or(false, |ext| ext == PROFILE_FILE_EXTENSION)
+                            .is_some_and(|ext| ext == PROFILE_FILE_EXTENSION)
                     {
                         if let Some(stem) = path.file_stem() {
                             profile_names.push(stem.to_string_lossy().into_owned());
@@ -381,7 +381,7 @@ mod profile_tests {
                     .expect("Pre-test cleanup failed for profile dir");
             }
             // Also remove base if it's empty now, or path_utils will just return it
-            if fs::read_dir(&base_dir).map_or(false, |mut i| i.next().is_none()) {
+            if fs::read_dir(&base_dir).is_ok_and(|mut i| i.next().is_none()) {
                 fs::remove_dir(&base_dir).expect("Pre-test cleanup failed for base dir");
             }
         }

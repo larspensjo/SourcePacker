@@ -353,16 +353,16 @@ unsafe extern "system" fn input_dialog_proc(
                     unsafe {
                         EndDialog(hdlg, IDOK.0 as isize).unwrap_or_default();
                     }
-                    return TRUE.0 as isize;
+                    TRUE.0 as isize
                 }
                 x if x == IDCANCEL.0 as u16 => {
                     let dialog_data_ptr =
                         unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) } as *mut InputDialogData;
                     if !dialog_data_ptr.is_null() {
-                        unsafe { (&mut *dialog_data_ptr).success = false };
+                        unsafe { (*dialog_data_ptr).success = false };
                     }
                     unsafe { EndDialog(hdlg, IDCANCEL.0 as isize).unwrap_or_default() };
-                    return TRUE.0 as isize;
+                    TRUE.0 as isize
                 }
                 _ => FALSE.0 as isize, // Message not processed.
             }

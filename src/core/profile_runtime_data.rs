@@ -514,7 +514,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         );
 
         Profile {
-            name: self.profile_name.clone().unwrap_or_else(String::new),
+            name: self.profile_name.clone().unwrap_or_default(),
             root_folder: self.root_path_for_scan.clone(),
             selected_paths: selected_paths_for_profile,
             deselected_paths: deselected_paths_for_profile,
@@ -607,6 +607,7 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::{NamedTempFile, tempdir};
 
+type ApplyProfileCall = (HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>);
     /*
      * This module contains unit tests for `ProfileRuntimeData` and its implementation
      * of `ProfileRuntimeDataOperations`. It focuses on testing session state management,
@@ -667,7 +668,7 @@ mod tests {
 
     struct MockStateManager {
         apply_profile_to_tree_calls:
-            Mutex<Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)>>,
+            Mutex<Vec<ApplyProfileCall>>,
         update_folder_selection_calls: Mutex<Vec<(PathBuf, SelectionState)>>,
     }
 
@@ -681,7 +682,7 @@ mod tests {
 
         fn get_apply_profile_to_tree_calls(
             &self,
-        ) -> Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)> {
+        ) -> Vec<ApplyProfileCall> {
             self.apply_profile_to_tree_calls.lock().unwrap().clone()
         }
         fn get_update_folder_selection_calls(&self) -> Vec<(PathBuf, SelectionState)> {
