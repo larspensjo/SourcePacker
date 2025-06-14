@@ -2,6 +2,7 @@ use super::command_executor;
 use super::controls::treeview_handler;
 use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
+use super::types::AppEvent;
 use super::types::{PlatformCommand, PlatformEventHandler, WindowConfig, WindowId};
 use super::window_common;
 
@@ -112,6 +113,28 @@ impl Win32ApiInternalState {
                 app_name_for_class,
                 is_quitting: AtomicUsize::new(0),
             }))
+        }
+    }
+
+    // Sends an AppEvent to the registered application event handler.
+    // This centralizes the logic for locking, upgrading the weak reference,
+    // and calling the handler.
+    pub(crate) fn send_event(self: &Arc<Self>, event: AppEvent) {
+        let event_handler_opt = self
+            .application_event_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(|weak_handler| weak_handler.upgrade());
+
+        if let Some(handler_arc) = event_handler_opt {
+            if let Ok(mut handler_guard) = handler_arc.lock() {
+                handler_guard.handle_event(event);
+            } else {
+                log::error!("Platform: Failed to lock event handler to send event.");
+            }
+        } else {
+            log::warn!("Platform: Event handler not available to send event.");
         }
     }
 
@@ -624,7 +647,7 @@ impl PlatformInterface {
     ) -> PlatformResult<()> {
         *self
             .internal_state
-            .application_event_handler()
+            .application_event_handler
             .lock()
             .map_err(|e| {
                 log::error!(
@@ -727,7 +750,7 @@ impl PlatformInterface {
             log::error!("Platform: Failed to lock application logic for on_quit call.");
         }
         // Clear the event handler reference
-        match self.internal_state.application_event_handler().lock() {
+        match self.internal_state.application_event_handler.lock() {
             Ok(mut guard) => *guard = None,
             Err(e) => {
                 log::error!(

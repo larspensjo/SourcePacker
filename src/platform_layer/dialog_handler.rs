@@ -153,21 +153,7 @@ where
 
     // Construct and send the event to the application logic.
     let event = event_constructor(window_id, path_result);
-    if let Some(handler_arc) = internal_state
-        .application_event_handler()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|wh| wh.upgrade())
-    {
-        if let Ok(mut handler_guard) = handler_arc.lock() {
-            handler_guard.handle_event(event);
-        } else {
-            log::error!("DialogHandler: Failed to lock event handler after dialog completion.");
-        }
-    } else {
-        log::error!("DialogHandler: Event handler not available after dialog completion.");
-    }
+    internal_state.send_event(event);
     Ok(())
 }
 
@@ -280,25 +266,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
         user_cancelled: cancelled,
     };
 
-    if let Some(handler_arc) = internal_state
-        .application_event_handler()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|wh| wh.upgrade())
-    {
-        if let Ok(mut handler_guard) = handler_arc.lock() {
-            handler_guard.handle_event(event);
-        } else {
-            log::error!(
-                "DialogHandler: Failed to lock event handler for ProfileSelectionDialogCompleted."
-            );
-        }
-    } else {
-        log::error!(
-            "DialogHandler: Event handler not available for ProfileSelectionDialogCompleted."
-        );
-    }
+    internal_state.send_event(event);
     Ok(())
 }
 
@@ -592,23 +560,7 @@ pub(crate) fn handle_show_input_dialog_command(
         context_tag,
     };
 
-    if let Some(handler_arc) = internal_state
-        .application_event_handler()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|wh| wh.upgrade())
-    {
-        if let Ok(mut handler_guard) = handler_arc.lock() {
-            handler_guard.handle_event(event);
-        } else {
-            log::error!(
-                "DialogHandler: Failed to lock event handler for GenericInputDialogCompleted."
-            );
-        }
-    } else {
-        log::error!("DialogHandler: Event handler not available for GenericInputDialogCompleted.");
-    }
+    internal_state.send_event(event);
     Ok(())
 }
 
@@ -709,17 +661,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
             window_id,
             path: None,
         };
-        if let Some(handler_arc) = internal_state
-            .application_event_handler()
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|wh| wh.upgrade())
-        {
-            if let Ok(mut handler_guard) = handler_arc.lock() {
-                handler_guard.handle_event(event);
-            }
-        }
+        internal_state.send_event(event);
         return Err(PlatformError::OperationFailed(err_msg));
     }
 
@@ -727,22 +669,6 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
         window_id,
         path: path_result,
     };
-    if let Some(handler_arc) = internal_state
-        .application_event_handler()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|wh| wh.upgrade())
-    {
-        if let Ok(mut handler_guard) = handler_arc.lock() {
-            handler_guard.handle_event(event);
-        } else {
-            log::error!(
-                "DialogHandler: Failed to lock event handler for FolderPickerDialogCompleted."
-            );
-        }
-    } else {
-        log::error!("DialogHandler: Event handler not available for FolderPickerDialogCompleted.");
-    }
+    internal_state.send_event(event);
     Ok(())
 }
