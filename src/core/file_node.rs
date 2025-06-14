@@ -297,7 +297,7 @@ mod tests {
         let n = FileNode::new_test(p.clone(), "foo".into(), false);
         assert_eq!(n.path(), p.as_path());
         assert_eq!(n.name(), "foo");
-        assert_eq!(n.is_dir(), false);
+        assert!(!n.is_dir());
         assert_eq!(n.state, SelectionState::New);
         assert!(n.children.is_empty());
     }
@@ -381,7 +381,7 @@ mod tests {
         // Dir 1
         assert_eq!(descriptors[1].text, "dir1");
         assert_eq!(descriptors[1].id, TreeItemId(101));
-        assert_eq!(descriptors[1].is_folder, true);
+        assert!(descriptors[1].is_folder);
         assert_eq!(descriptors[1].state, CheckState::Unchecked); // New/Deselected map to Unchecked
         assert_eq!(
             path_to_id_map.get(&PathBuf::from("/dir1")),

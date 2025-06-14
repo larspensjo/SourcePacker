@@ -143,7 +143,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             let path = entry.path().to_path_buf();
             // Use file_name from DirEntry as it's relative to its parent.
             let name = entry.file_name().to_string_lossy().into_owned();
-            let is_dir = entry.file_type().map_or(false, |ft| ft.is_dir());
+            let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
 
             let checksum_str;
             if !is_dir {
@@ -211,7 +211,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
     }
 }
 
-fn sort_file_nodes_recursively(nodes: &mut Vec<FileNode>) {
+fn sort_file_nodes_recursively(nodes: &mut [FileNode]) {
     nodes.sort_by(|a, b| {
         if a.is_dir() && !b.is_dir() {
             std::cmp::Ordering::Less
@@ -418,7 +418,10 @@ mod tests {
             nodes.iter().map(|n| n.name()).collect::<Vec<_>>()
         );
 
-        let src_node = nodes.iter().find(|n| n.name() == "src" && n.is_dir()).unwrap();
+        let src_node = nodes
+            .iter()
+            .find(|n| n.name() == "src" && n.is_dir())
+            .unwrap();
         assert_eq!(
             src_node.children.len(),
             3,

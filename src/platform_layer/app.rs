@@ -740,7 +740,7 @@ impl PlatformInterface {
                                 .internal_state
                                 .active_windows
                                 .read()
-                                .map_or(false, |g| g.is_empty());
+                                .is_ok_and(|g| g.is_empty());
                     if should_still_break {
                         log::debug!(
                             "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."

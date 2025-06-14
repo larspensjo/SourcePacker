@@ -10,8 +10,8 @@ mod handler_tests {
         TokenCounterOperations, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
-        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-        UiStateProvider, TreeItemId, WindowId, types::MenuAction,
+        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
+        UiStateProvider, WindowId, types::MenuAction,
     };
 
     use std::collections::{HashMap, HashSet};
@@ -335,14 +335,14 @@ mod handler_tests {
                         break;
                     }
                     // If the target_path is a descendant of the current node.is_dir, recurse
-                    if node.is_dir() && target_path.starts_with(node.path()) {
-                        if update_recursive(&mut node.children, target_path, new_sel_state, changes)
-                        {
-                            found_target = true; // Found in children
-                            // Potentially update parent's state based on children if needed by NodeStateApplicator logic
-                            // For this mock, we'll skip complex parent state updates.
-                            break;
-                        }
+                    if node.is_dir()
+                        && target_path.starts_with(node.path())
+                        && update_recursive(&mut node.children, target_path, new_sel_state, changes)
+                    {
+                        found_target = true; // Found in children
+                        // Potentially update parent's state based on children if needed by NodeStateApplicator logic
+                        // For this mock, we'll skip complex parent state updates.
+                        break;
                     }
                 }
                 found_target
@@ -450,7 +450,7 @@ mod handler_tests {
             self.create_profile_snapshot_calls
                 .fetch_add(1, Ordering::Relaxed);
             let mut profile = Profile::new(
-                self.profile_name.clone().unwrap_or_else(String::new),
+                self.profile_name.clone().unwrap_or_default(),
                 self.root_path_for_scan.clone(),
             );
             profile.archive_path = self.archive_path.clone();
@@ -1051,10 +1051,7 @@ mod handler_tests {
         )
     }
 
-    fn find_command<'a, F>(
-        cmds: &'a [PlatformCommand],
-        mut predicate: F,
-    ) -> Option<&'a PlatformCommand>
+    fn find_command<F>(cmds: &[PlatformCommand], mut predicate: F) -> Option<&PlatformCommand>
     where
         F: FnMut(&PlatformCommand) -> bool,
     {
@@ -1062,10 +1059,7 @@ mod handler_tests {
     }
 
     // Helper to find multiple commands matching a predicate
-    fn find_commands<'a, F>(
-        cmds: &'a [PlatformCommand],
-        mut predicate: F,
-    ) -> Vec<&'a PlatformCommand>
+    fn find_commands<F>(cmds: &[PlatformCommand], mut predicate: F) -> Vec<&PlatformCommand>
     where
         F: FnMut(&PlatformCommand) -> bool,
     {
@@ -1289,7 +1283,7 @@ mod handler_tests {
             .set_snapshot_nodes_for_mock(vec![]); // Ensure snapshot nodes are empty for this part
 
         let archive_error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::NotFound));
-        mock_archiver_arc.set_check_archive_status_result(archive_error_status.clone());
+        mock_archiver_arc.set_check_archive_status_result(archive_error_status);
 
         // Act
         let event = AppEvent::FileOpenProfileDialogCompleted {
@@ -1468,7 +1462,7 @@ mod handler_tests {
         // Case 1: ArchiveStatus is an error
         let error_status = ArchiveStatus::ErrorChecking(Some(io::ErrorKind::PermissionDenied));
         let expected_dedicated_error_text = "Archive: Error: PermissionDenied.".to_string();
-        mock_archiver.set_check_archive_status_result(error_status.clone());
+        mock_archiver.set_check_archive_status_result(error_status);
 
         // Act 1
         logic.update_current_archive_status();
@@ -1520,7 +1514,7 @@ mod handler_tests {
         // Case 2: ArchiveStatus is informational (e.g., UpToDate)
         let info_status = ArchiveStatus::UpToDate;
         let expected_dedicated_info_text = "Archive: Up to date.".to_string();
-        mock_archiver.set_check_archive_status_result(info_status.clone());
+        mock_archiver.set_check_archive_status_result(info_status);
 
         // Act 2
         logic.update_current_archive_status();
@@ -2221,10 +2215,14 @@ mod handler_tests {
             .is_some(),
             "PopulateTreeView command should be enqueued after submitting text."
         );
-        assert!(find_command(&cmds_after_submit, |cmd| matches!(cmd,
-            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
-                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandAllTreeItems after submitting filter text");
+        assert!(
+            find_command(&cmds_after_submit, |cmd| matches!(cmd,
+                PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                    if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+            ))
+            .is_some(),
+            "Expected ExpandAllTreeItems after submitting filter text"
+        );
 
         // Act 2: Submit empty filter text (clearing the filter)
         logic.handle_event(AppEvent::FilterTextSubmitted {
@@ -2246,10 +2244,14 @@ mod handler_tests {
             .is_some(),
             "PopulateTreeView command should be enqueued after clearing filter."
         );
-        assert!(find_command(&cmds_after_clear, |cmd| matches!(cmd,
-            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
-                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandAllTreeItems after clearing filter text");
+        assert!(
+            find_command(&cmds_after_clear, |cmd| matches!(cmd,
+                PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                    if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+            ))
+            .is_some(),
+            "Expected ExpandAllTreeItems after clearing filter text"
+        );
     }
 
     #[test]
@@ -2296,10 +2298,14 @@ mod handler_tests {
             populate_cmd.is_some(),
             "Expected PopulateTreeView command after filtering"
         );
-        assert!(find_command(&cmds, |cmd| matches!(cmd,
-            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
-                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandAllTreeItems after filtering");
+        assert!(
+            find_command(&cmds, |cmd| matches!(cmd,
+                PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                    if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+            ))
+            .is_some(),
+            "Expected ExpandAllTreeItems after filtering"
+        );
         if let Some(PlatformCommand::PopulateTreeView { items, .. }) = populate_cmd {
             assert_eq!(items.len(), 1);
             assert_eq!(items[0].text, "dir1");
@@ -2354,21 +2360,37 @@ mod handler_tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "abc".into() });
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "abc".into(),
+        });
         logic.test_drain_commands();
 
-        logic.handle_event(AppEvent::ButtonClicked { window_id, control_id: ui_constants::FILTER_CLEAR_BUTTON_ID });
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
+        });
         let cmds = logic.test_drain_commands();
 
         assert!(logic.test_get_filter_text().is_none());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
+        assert!(
+            find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::PopulateTreeView { .. }
+            ))
+            .is_some()
+        );
         assert!(find_command(&cmds, |cmd| matches!(cmd,
             PlatformCommand::SetInputText { window_id: wid, control_id, text } if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && text.is_empty()
         )).is_some(), "Expected SetInputText to clear filter input");
-        assert!(find_command(&cmds, |cmd| matches!(cmd,
-            PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
-                if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandAllTreeItems command after clearing filter");
+        assert!(
+            find_command(&cmds, |cmd| matches!(cmd,
+                PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
+                    if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
+            ))
+            .is_some(),
+            "Expected ExpandAllTreeItems command after clearing filter"
+        );
     }
 
     #[test]
@@ -2378,23 +2400,42 @@ mod handler_tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        let nodes = vec![FileNode::new_test(PathBuf::from("/root/match.txt"), "match.txt".into(), false)];
-        mock_app_session.lock().unwrap().set_snapshot_nodes_for_mock(nodes);
+        let nodes = vec![FileNode::new_test(
+            PathBuf::from("/root/match.txt"),
+            "match.txt".into(),
+            false,
+        )];
+        mock_app_session
+            .lock()
+            .unwrap()
+            .set_snapshot_nodes_for_mock(nodes);
 
         // Act 1: apply matching filter
-        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "match".into() });
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "match".into(),
+        });
         let _ = logic.test_drain_commands();
 
         // Act 2: apply non-matching filter
-        logic.handle_event(AppEvent::FilterTextSubmitted { window_id, text: "none".into() });
+        logic.handle_event(AppEvent::FilterTextSubmitted {
+            window_id,
+            text: "none".into(),
+        });
         let cmds = logic.test_drain_commands();
 
         // Assert
         assert!(logic.test_get_filter_text().is_some());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { .. })).is_some());
+        assert!(
+            find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::PopulateTreeView { .. }
+            ))
+            .is_some()
+        );
         assert!(find_command(&cmds, |cmd| matches!(cmd,
             PlatformCommand::SetInputBackgroundColor { window_id: wid, control_id, color }
-                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && matches!(color, Some(_))
+                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && color.is_some()
         )).is_some(), "Expected color change for no match");
     }
 }
