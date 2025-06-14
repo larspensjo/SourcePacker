@@ -7,7 +7,7 @@ use super::window_common;
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE},
+        Foundation::{GetLastError, HINSTANCE, HWND},
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
         UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
@@ -135,6 +135,65 @@ impl Win32ApiInternalState {
         } else {
             log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
         }
+    }
+    /*
+     * A specialized helper for mutating the TreeView's internal state.
+     * This function safely takes the TreeView state out of the `NativeWindowData`,
+     * executes the provided closure on it *without* holding the main window map lock,
+     * and then puts the (potentially modified) state back. This is critical for
+     * long-running operations like populating the tree, as it prevents deadlocks
+     * and avoids blocking other UI commands.
+     */
+    pub(crate) fn with_treeview_state_mut<F>(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        f: F,
+    ) -> PlatformResult<()>
+    where
+        F: FnOnce(HWND, &mut treeview_handler::TreeViewInternalState) -> PlatformResult<()>,
+    {
+        // Phase 1: Lock, get HWND, and take the treeview state out.
+        let (hwnd_treeview, mut taken_tv_state) =
+        self.with_window_data_write(window_id, |window_data| {
+            let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "TreeView HWND not found for control ID {}",
+                    control_id
+                ))
+            })?;
+
+            // Take the state. If it doesn't exist, create a new one for the operation.
+            let state = window_data.take_treeview_state().unwrap_or_else(|| {
+                log::warn!(
+                    "TreeView state was None for WinID {:?}/ControlID {}. Creating new for operation.",
+                    window_id,
+                    control_id
+                );
+                treeview_handler::TreeViewInternalState::new()
+            });
+
+            Ok((hwnd, state))
+        })?;
+
+        // Phase 2: Perform the long-running operation on the state without holding the map lock.
+        let result = f(hwnd_treeview, &mut taken_tv_state);
+
+        // Phase 3: Lock again to put the state back, regardless of whether the operation succeeded.
+        // This ensures the state is never lost.
+        if let Err(e) = self.with_window_data_write(window_id, |window_data| {
+            window_data.set_treeview_state(Some(taken_tv_state));
+            Ok(())
+        }) {
+            log::error!(
+                "CRITICAL: Failed to put back TreeView state for WinID {:?}. State may be lost. Error: {:?}",
+                window_id,
+                e
+            );
+        }
+
+        // Return the original result from the operation.
+        result
     }
 
     // Provides safe, read-only access to a specific window's data.
