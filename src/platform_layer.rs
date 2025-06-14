@@ -10,5 +10,5 @@ pub use app::PlatformInterface;
 pub use error::Result as PlatformResult;
 pub use types::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
-    TreeItemDescriptor, TreeItemId, WindowConfig, WindowId,
+    UiStateProvider, TreeItemDescriptor, TreeItemId, WindowConfig, WindowId,
 };

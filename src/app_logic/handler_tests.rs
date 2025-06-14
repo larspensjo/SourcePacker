@@ -10,8 +10,8 @@ mod handler_tests {
         TokenCounterOperations, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
-        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
-        WindowId, types::MenuAction,
+        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler,
+        UiStateProvider, TreeItemId, WindowId, types::MenuAction,
     };
 
     use std::collections::{HashMap, HashSet};

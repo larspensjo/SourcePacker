@@ -13,10 +13,7 @@ use super::{
     app::Win32ApiInternalState,
     controls::{button_handler, input_handler, label_handler, treeview_handler},
     error::{PlatformError, Result as PlatformResult},
-    types::{
-        AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, PlatformEventHandler,
-        WindowId,
-    },
+    types::{AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, WindowId},
 };
 
 use windows::{
@@ -39,7 +36,7 @@ use windows::{
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // TOOD: Control IDs used by dialog_handler, kept here for visibility if dialog_handler needs them
 // but ideally, they should be private to dialog_handler or within a shared constants scope for dialogs.

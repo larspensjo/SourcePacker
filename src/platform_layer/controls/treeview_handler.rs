@@ -12,7 +12,7 @@
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::{
-    AppEvent, CheckState, PlatformEventHandler, TreeItemDescriptor, TreeItemId, WindowId,
+    AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId,
 };
 
 use windows::{
@@ -37,7 +37,7 @@ use windows::{
 };
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // Constants from window_common, now perhaps better placed here or in a shared consts module if widely used.
 // TODO: This shouldn't be hardcoded. Create some mecchanism for this.
@@ -657,13 +657,13 @@ pub(crate) fn handle_nm_customdraw(
         }
         CDDS_ITEMPREPAINT => {
             let tree_item_id = TreeItemId(nmtvcd.nmcd.lItemlParam.0 as u64);
-            let event_handler_opt = internal_state
-                .application_event_handler()
+            let provider_opt = internal_state
+                .ui_state_provider()
                 .lock()
                 .unwrap()
                 .as_ref()
                 .and_then(|weak_handler| weak_handler.upgrade());
-            if let Some(handler_arc) = event_handler_opt {
+            if let Some(handler_arc) = provider_opt {
                 if let Ok(handler_guard) = handler_arc.lock() {
                     if handler_guard.is_tree_item_new(window_id, tree_item_id) {
                         return LRESULT(CDRF_NOTIFYPOSTPAINT as isize);

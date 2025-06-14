@@ -13,9 +13,9 @@ mod platform_layer {
     pub mod types;
 
     pub use types::{
-        AppEvent, CheckState, DockStyle, LabelClass, LayoutRule, MenuAction,
-        MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemDescriptor,
-        TreeItemId, WindowConfig, WindowId,
+        AppEvent, CheckState, DockStyle, LabelClass, LayoutRule, MenuAction, MessageSeverity,
+        PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId, UiStateProvider,
+        WindowConfig, WindowId,
     };
 }
 
@@ -143,8 +143,16 @@ fn main() -> PlatformResult<()> {
         "Starting platform event loop. Initial app logic commands will be queued by MainWindowUISetupComplete event."
     );
 
-    // Pass the initial commands to the run loop for execution
-    let run_result = platform_interface.main_event_loop(app_event_handler, initial_commands);
+    /*
+     * Pass the initial commands to the run loop for execution
+     * The 'app_event_handler' fulfills both traits PlatformEventHandler and UiStateProvider.
+     * Cloning it is fine, as it is an Arc<>.
+     */
+    let run_result = platform_interface.main_event_loop(
+        app_event_handler.clone(),
+        app_event_handler,
+        initial_commands,
+    );
 
     match run_result {
         Ok(()) => log::debug!("Application exited cleanly."),
