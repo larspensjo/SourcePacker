@@ -702,220 +702,6 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Applies layout rules recursively for a parent and its children.
-     * This function is the core of the layout engine. It iterates through the
-     * layout rules for a given parent, calculates the position and size for
-     * each child control based on its docking style, and then recurses for
-     * any children that are themselves containers.
-     */
-    fn apply_layout_rules_for_children(
-        self: &Arc<Self>,
-        parent_id_for_layout: Option<i32>,
-        parent_rect: RECT,
-        window_data: &NativeWindowData,
-    ) {
-        log::trace!(
-            "Applying layout for parent_id {:?}, rect: {:?}",
-            parent_id_for_layout,
-            parent_rect
-        );
-
-        let all_window_rules = match &window_data.layout_rules {
-            Some(rules) => rules,
-            None => return, // No rules to apply
-        };
-
-        let mut child_rules: Vec<&LayoutRule> = all_window_rules
-            .iter()
-            .filter(|r| r.parent_control_id == parent_id_for_layout)
-            .collect();
-        child_rules.sort_by_key(|r| r.order);
-
-        let mut current_available_rect = parent_rect;
-        let mut fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
-        let mut proportional_fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
-
-        for rule in &child_rules {
-            let control_hwnd_opt = window_data.control_hwnd_map.get(&rule.control_id).copied();
-            if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
-                log::warn!(
-                    "Layout: HWND for control ID {} not found or invalid.",
-                    rule.control_id
-                );
-                continue;
-            }
-            let control_hwnd = control_hwnd_opt.unwrap();
-            match rule.dock_style {
-                DockStyle::Top | DockStyle::Bottom | DockStyle::Left | DockStyle::Right => {
-                    let mut item_rect = RECT {
-                        left: current_available_rect.left + rule.margin.3,
-                        top: current_available_rect.top + rule.margin.0,
-                        right: current_available_rect.right - rule.margin.1,
-                        bottom: current_available_rect.bottom - rule.margin.2,
-                    };
-                    let size = rule.fixed_size.unwrap_or(0);
-                    match rule.dock_style {
-                        DockStyle::Top => {
-                            item_rect.bottom = item_rect.top + size;
-                            current_available_rect.top = item_rect.bottom + rule.margin.2;
-                        }
-                        DockStyle::Bottom => {
-                            item_rect.top = item_rect.bottom - size;
-                            current_available_rect.bottom = item_rect.top - rule.margin.0;
-                        }
-                        DockStyle::Left => {
-                            item_rect.right = item_rect.left + size;
-                            current_available_rect.left = item_rect.right + rule.margin.1;
-                        }
-                        DockStyle::Right => {
-                            item_rect.left = item_rect.right - size;
-                            current_available_rect.right = item_rect.left - rule.margin.3;
-                        }
-                        _ => unreachable!(),
-                    }
-                    let item_width = (item_rect.right - item_rect.left).max(0);
-                    let item_height = (item_rect.bottom - item_rect.top).max(0);
-                    unsafe {
-                        _ = MoveWindow(
-                            control_hwnd,
-                            item_rect.left,
-                            item_rect.top,
-                            item_width,
-                            item_height,
-                            true,
-                        );
-                    }
-                    if all_window_rules
-                        .iter()
-                        .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
-                    {
-                        let panel_client_rect = RECT {
-                            left: 0,
-                            top: 0,
-                            right: item_width,
-                            bottom: item_height,
-                        };
-                        self.apply_layout_rules_for_children(
-                            Some(rule.control_id),
-                            panel_client_rect,
-                            window_data,
-                        );
-                    }
-                }
-                DockStyle::Fill => {
-                    fill_candidates.push((rule, control_hwnd));
-                }
-                DockStyle::ProportionalFill { .. } => {
-                    proportional_fill_candidates.push((rule, control_hwnd));
-                }
-                DockStyle::None => {}
-            }
-        }
-        if !proportional_fill_candidates.is_empty() {
-            let total_width_for_proportional =
-                (current_available_rect.right - current_available_rect.left).max(0);
-            let total_height_for_proportional =
-                (current_available_rect.bottom - current_available_rect.top).max(0);
-            let total_weight: f32 = proportional_fill_candidates
-                .iter()
-                .map(|(r, _)| {
-                    if let DockStyle::ProportionalFill { weight } = r.dock_style {
-                        weight
-                    } else {
-                        0.0
-                    }
-                })
-                .sum();
-            if total_weight > 0.0 {
-                let mut current_x = current_available_rect.left;
-                for (rule, control_hwnd) in proportional_fill_candidates {
-                    if let DockStyle::ProportionalFill { weight } = rule.dock_style {
-                        let proportion = weight / total_weight;
-                        let item_width_allocation =
-                            (total_width_for_proportional as f32 * proportion) as i32;
-                        let final_x = current_x + rule.margin.3;
-                        let final_y = current_available_rect.top + rule.margin.0;
-                        let final_width =
-                            (item_width_allocation - rule.margin.3 - rule.margin.1).max(0);
-                        let final_height =
-                            (total_height_for_proportional - rule.margin.0 - rule.margin.2).max(0);
-                        unsafe {
-                            _ = MoveWindow(
-                                control_hwnd,
-                                final_x,
-                                final_y,
-                                final_width,
-                                final_height,
-                                true,
-                            );
-                        }
-                        current_x += item_width_allocation;
-                        if all_window_rules
-                            .iter()
-                            .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
-                        {
-                            let panel_client_rect_prop = RECT {
-                                left: 0,
-                                top: 0,
-                                right: final_width,
-                                bottom: final_height,
-                            };
-                            self.apply_layout_rules_for_children(
-                                Some(rule.control_id),
-                                panel_client_rect_prop,
-                                window_data,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        if let Some((rule, control_hwnd)) = fill_candidates.first() {
-            if fill_candidates.len() > 1 {
-                log::warn!(
-                    "Layout: Multiple Fill controls for parent_id {:?}. Using first (ID {}).",
-                    parent_id_for_layout,
-                    rule.control_id
-                );
-            }
-            let fill_rect = RECT {
-                left: current_available_rect.left + rule.margin.3,
-                top: current_available_rect.top + rule.margin.0,
-                right: current_available_rect.right - rule.margin.1,
-                bottom: current_available_rect.bottom - rule.margin.2,
-            };
-            let fill_width = (fill_rect.right - fill_rect.left).max(0);
-            let fill_height = (fill_rect.bottom - fill_rect.top).max(0);
-            unsafe {
-                _ = MoveWindow(
-                    *control_hwnd,
-                    fill_rect.left,
-                    fill_rect.top,
-                    fill_width,
-                    fill_height,
-                    true,
-                );
-            }
-            if all_window_rules
-                .iter()
-                .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
-            {
-                let panel_client_rect_fill = RECT {
-                    left: 0,
-                    top: 0,
-                    right: fill_width,
-                    bottom: fill_height,
-                };
-                self.apply_layout_rules_for_children(
-                    Some(rule.control_id),
-                    panel_client_rect_fill,
-                    window_data,
-                );
-            }
-        }
-    }
-
-    /*
      * Triggers layout recalculation for the specified window.
      */
     pub(crate) fn trigger_layout_recalculation(self: &Arc<Self>, window_id: WindowId) {
@@ -947,7 +733,7 @@ impl Win32ApiInternalState {
                 client_rect,
                 window_id
             );
-            self.apply_layout_rules_for_children(None, client_rect, window_data);
+            apply_layout_rules_for_children(None, client_rect, window_data);
             Ok(())
         }) {
             log::error!(
@@ -1156,6 +942,219 @@ impl Win32ApiInternalState {
             mmi.ptMinTrackSize.y = 200;
         }
         SUCCESS_CODE
+    }
+}
+
+/*
+ * Applies layout rules recursively for a parent and its children.
+ * This function is the core of the layout engine. It iterates through the
+ * layout rules for a given parent, calculates the position and size for
+ * each child control based on its docking style, and then recurses for
+ * any children that are themselves containers.
+ */
+fn apply_layout_rules_for_children(
+    parent_id_for_layout: Option<i32>,
+    parent_rect: RECT,
+    window_data: &NativeWindowData,
+) {
+    log::trace!(
+        "Applying layout for parent_id {:?}, rect: {:?}",
+        parent_id_for_layout,
+        parent_rect
+    );
+
+    let all_window_rules = match &window_data.layout_rules {
+        Some(rules) => rules,
+        None => return, // No rules to apply
+    };
+
+    let mut child_rules: Vec<&LayoutRule> = all_window_rules
+        .iter()
+        .filter(|r| r.parent_control_id == parent_id_for_layout)
+        .collect();
+    child_rules.sort_by_key(|r| r.order);
+
+    let mut current_available_rect = parent_rect;
+    let mut fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
+    let mut proportional_fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
+
+    for rule in &child_rules {
+        let control_hwnd_opt = window_data.control_hwnd_map.get(&rule.control_id).copied();
+        if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
+            log::warn!(
+                "Layout: HWND for control ID {} not found or invalid.",
+                rule.control_id
+            );
+            continue;
+        }
+        let control_hwnd = control_hwnd_opt.unwrap();
+        match rule.dock_style {
+            DockStyle::Top | DockStyle::Bottom | DockStyle::Left | DockStyle::Right => {
+                let mut item_rect = RECT {
+                    left: current_available_rect.left + rule.margin.3,
+                    top: current_available_rect.top + rule.margin.0,
+                    right: current_available_rect.right - rule.margin.1,
+                    bottom: current_available_rect.bottom - rule.margin.2,
+                };
+                let size = rule.fixed_size.unwrap_or(0);
+                match rule.dock_style {
+                    DockStyle::Top => {
+                        item_rect.bottom = item_rect.top + size;
+                        current_available_rect.top = item_rect.bottom + rule.margin.2;
+                    }
+                    DockStyle::Bottom => {
+                        item_rect.top = item_rect.bottom - size;
+                        current_available_rect.bottom = item_rect.top - rule.margin.0;
+                    }
+                    DockStyle::Left => {
+                        item_rect.right = item_rect.left + size;
+                        current_available_rect.left = item_rect.right + rule.margin.1;
+                    }
+                    DockStyle::Right => {
+                        item_rect.left = item_rect.right - size;
+                        current_available_rect.right = item_rect.left - rule.margin.3;
+                    }
+                    _ => unreachable!(),
+                }
+                let item_width = (item_rect.right - item_rect.left).max(0);
+                let item_height = (item_rect.bottom - item_rect.top).max(0);
+                unsafe {
+                    _ = MoveWindow(
+                        control_hwnd,
+                        item_rect.left,
+                        item_rect.top,
+                        item_width,
+                        item_height,
+                        true,
+                    );
+                }
+                if all_window_rules
+                    .iter()
+                    .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
+                {
+                    let panel_client_rect = RECT {
+                        left: 0,
+                        top: 0,
+                        right: item_width,
+                        bottom: item_height,
+                    };
+                    apply_layout_rules_for_children(
+                        Some(rule.control_id),
+                        panel_client_rect,
+                        window_data,
+                    );
+                }
+            }
+            DockStyle::Fill => {
+                fill_candidates.push((rule, control_hwnd));
+            }
+            DockStyle::ProportionalFill { .. } => {
+                proportional_fill_candidates.push((rule, control_hwnd));
+            }
+            DockStyle::None => {}
+        }
+    }
+    if !proportional_fill_candidates.is_empty() {
+        let total_width_for_proportional =
+            (current_available_rect.right - current_available_rect.left).max(0);
+        let total_height_for_proportional =
+            (current_available_rect.bottom - current_available_rect.top).max(0);
+        let total_weight: f32 = proportional_fill_candidates
+            .iter()
+            .map(|(r, _)| {
+                if let DockStyle::ProportionalFill { weight } = r.dock_style {
+                    weight
+                } else {
+                    0.0
+                }
+            })
+            .sum();
+        if total_weight > 0.0 {
+            let mut current_x = current_available_rect.left;
+            for (rule, control_hwnd) in proportional_fill_candidates {
+                if let DockStyle::ProportionalFill { weight } = rule.dock_style {
+                    let proportion = weight / total_weight;
+                    let item_width_allocation =
+                        (total_width_for_proportional as f32 * proportion) as i32;
+                    let final_x = current_x + rule.margin.3;
+                    let final_y = current_available_rect.top + rule.margin.0;
+                    let final_width =
+                        (item_width_allocation - rule.margin.3 - rule.margin.1).max(0);
+                    let final_height =
+                        (total_height_for_proportional - rule.margin.0 - rule.margin.2).max(0);
+                    unsafe {
+                        _ = MoveWindow(
+                            control_hwnd,
+                            final_x,
+                            final_y,
+                            final_width,
+                            final_height,
+                            true,
+                        );
+                    }
+                    current_x += item_width_allocation;
+                    if all_window_rules
+                        .iter()
+                        .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
+                    {
+                        let panel_client_rect_prop = RECT {
+                            left: 0,
+                            top: 0,
+                            right: final_width,
+                            bottom: final_height,
+                        };
+                        apply_layout_rules_for_children(
+                            Some(rule.control_id),
+                            panel_client_rect_prop,
+                            window_data,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    if let Some((rule, control_hwnd)) = fill_candidates.first() {
+        if fill_candidates.len() > 1 {
+            log::warn!(
+                "Layout: Multiple Fill controls for parent_id {:?}. Using first (ID {}).",
+                parent_id_for_layout,
+                rule.control_id
+            );
+        }
+        let fill_rect = RECT {
+            left: current_available_rect.left + rule.margin.3,
+            top: current_available_rect.top + rule.margin.0,
+            right: current_available_rect.right - rule.margin.1,
+            bottom: current_available_rect.bottom - rule.margin.2,
+        };
+        let fill_width = (fill_rect.right - fill_rect.left).max(0);
+        let fill_height = (fill_rect.bottom - fill_rect.top).max(0);
+        unsafe {
+            _ = MoveWindow(
+                *control_hwnd,
+                fill_rect.left,
+                fill_rect.top,
+                fill_width,
+                fill_height,
+                true,
+            );
+        }
+        if all_window_rules
+            .iter()
+            .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
+        {
+            let panel_client_rect_fill = RECT {
+                left: 0,
+                top: 0,
+                right: fill_width,
+                bottom: fill_height,
+            };
+            apply_layout_rules_for_children(
+                Some(rule.control_id),
+                panel_client_rect_fill,
+                window_data,
+            );
+        }
     }
 }
 
