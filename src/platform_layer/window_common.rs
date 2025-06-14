@@ -328,7 +328,7 @@ impl NativeWindowData {
                     self.logical_window_id
                 );
                 unsafe {
-                    let _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
+                    let _ = DeleteObject(HGDIOBJ(h_font.0));
                 }
             }
         }
@@ -708,9 +708,10 @@ impl Win32ApiInternalState {
      * each child control based on its docking style, and then recurses for
      * any children that are themselves containers.
      */
+    #[allow(clippy::only_used_in_recursion)]
     fn apply_layout_rules_for_children(
         self: &Arc<Self>,
-        window_id: WindowId,
+        _window_id: WindowId,
         parent_id_for_layout: Option<i32>,
         parent_rect: RECT,
         window_data: &NativeWindowData,
@@ -1070,7 +1071,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> Option<AppEvent> {
         unsafe {
-            _ = KillTimer(Some(hwnd), timer_id.0 as usize);
+            _ = KillTimer(Some(hwnd), timer_id.0);
         }
         let control_id = timer_id.0 as i32;
 

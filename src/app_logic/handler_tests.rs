@@ -1,4 +1,3 @@
-#![cfg(test)]
 
 use crate::app_logic::handler::*;
 use crate::app_logic::ui_constants;
@@ -23,6 +22,17 @@ use std::sync::{
 };
 use std::time::SystemTime;
 
+type ApplySelStatesCall = (Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>);
+type TestSetup = (
+    MyAppLogic,
+    Arc<Mutex<MockProfileRuntimeData>>,
+    Arc<MockConfigManager>,
+    Arc<MockProfileManager>,
+    Arc<MockFileSystemScanner>,
+    Arc<MockArchiver>,
+    Arc<MockStateManager>,
+    Arc<MockTokenCounter>,
+);
     /*
      * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
      * It utilizes mock implementations of core dependencies, including a new
@@ -1009,18 +1019,7 @@ use std::time::SystemTime;
                 .unwrap_or(&self.default_count)
         }
     }
-
-    fn setup_logic_with_mocks() -> (
-        MyAppLogic,
-        Arc<Mutex<MockProfileRuntimeData>>,
-        Arc<MockConfigManager>,
-        Arc<MockProfileManager>,
-        Arc<MockFileSystemScanner>,
-        Arc<MockArchiver>,
-        Arc<MockStateManager>,
-        Arc<MockTokenCounter>,
-    ) {
-        crate::initialize_logging();
+    fn setup_logic_with_mocks() -> TestSetup {
         let mock_app_session_data_for_test = Arc::new(Mutex::new(MockProfileRuntimeData::new()));
         let mock_config_manager_arc = Arc::new(MockConfigManager::new());
         let mock_profile_manager_arc = Arc::new(MockProfileManager::new());
@@ -1050,22 +1049,20 @@ use std::time::SystemTime;
             mock_token_counter_arc,
         )
     }
-
-    fn find_command<'a, F>(
-        cmds: &'a [PlatformCommand],
+    fn find_command<F>(
+        cmds: &[PlatformCommand],
         mut predicate: F,
-    ) -> Option<&'a PlatformCommand>
+    ) -> Option<&PlatformCommand>
     where
         F: FnMut(&PlatformCommand) -> bool,
     {
         cmds.iter().find(|&cmd| predicate(cmd))
     }
 
-    // Helper to find multiple commands matching a predicate
-    fn find_commands<'a, F>(
-        cmds: &'a [PlatformCommand],
+    fn find_commands<F>(
+        cmds: &[PlatformCommand],
         mut predicate: F,
-    ) -> Vec<&'a PlatformCommand>
+    ) -> Vec<&PlatformCommand>
     where
         F: FnMut(&PlatformCommand) -> bool,
     {

@@ -81,6 +81,7 @@ impl Win32ApiInternalState {
      * Creates a new instance of `Win32ApiInternalState`.
      * Initializes COM, common controls, and retrieves the application instance handle.
      */
+#[allow(clippy::arc_with_non_send_sync)]
     pub(crate) fn new(app_name_for_class: String) -> PlatformResult<Arc<Self>> {
         unsafe {
             let hr = CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED);
@@ -560,7 +561,7 @@ impl PlatformInterface {
         let hwnd = match window_common::create_native_window(
             &self.internal_state, // Pass Arc<Win32ApiInternalState>
             window_id,            // Pass the generated WindowId
-            &config.title,
+            config.title,
             config.width,
             config.height,
         ) {
@@ -716,41 +717,41 @@ impl PlatformInterface {
 
                 // Then process OS messages
                 let result = GetMessageW(&mut msg, None, 0, 0);
-                if result.0 > 0 {
-                    // Regular message
-                    let _ = TranslateMessage(&msg);
-                    DispatchMessageW(&msg);
-                } else if result.0 == 0 {
-                    // WM_QUIT
-                    log::debug!(
-                        "Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop."
-                    );
-                    break;
-                } else {
-                    // Error from GetMessageW (result.0 == -1)
-                    let last_error = GetLastError();
-                    log::error!(
-                        "Platform: GetMessageW failed with return -1. LastError: {:?}",
-                        last_error
-                    );
-                    // Check if we should break despite error (e.g., if quitting and no windows)
-                    let should_still_break =
-                        self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
-                            && self
-                                .internal_state
-                                .active_windows
-                                .read()
-                                .map_or(false, |g| g.is_empty());
-                    if should_still_break {
+                match result.0.cmp(&0) {
+                    std::cmp::Ordering::Greater => {
+                        let _ = TranslateMessage(&msg);
+                        DispatchMessageW(&msg);
+                    }
+                    std::cmp::Ordering::Equal => {
                         log::debug!(
-                            "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
+                            "Platform: GetMessageW returned 0 (WM_QUIT), exiting message loop."
                         );
                         break;
                     }
-                    return Err(PlatformError::OperationFailed(format!(
-                        "GetMessageW failed: {}",
-                        windows::core::Error::from_win32() // Converts last error to windows::core::Error
-                    )));
+                    std::cmp::Ordering::Less => {
+                        let last_error = GetLastError();
+                        log::error!(
+                            "Platform: GetMessageW failed with return -1. LastError: {:?}",
+                            last_error
+                        );
+                        let should_still_break =
+                            self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
+                                && self
+                                    .internal_state
+                                    .active_windows
+                                    .read()
+                                    .is_ok_and(|g| g.is_empty());
+                        if should_still_break {
+                            log::debug!(
+                                "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
+                            );
+                            break;
+                        }
+                        return Err(PlatformError::OperationFailed(format!(
+                            "GetMessageW failed: {}",
+                            windows::core::Error::from_win32()
+                        )));
+                    }
                 }
             }
         }
