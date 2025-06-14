@@ -5,6 +5,7 @@ mod app_logic;
 mod core;
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports)]
 mod platform_layer;
 
 #[cfg(not(target_os = "windows"))]
