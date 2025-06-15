@@ -7,17 +7,25 @@
  * is migrated from `command_executor` and `window_common` in later steps.
  */
 
-use crate::platform_layer::app::Win32ApiInternalState;
-use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
-use crate::platform_layer::types::{AppEvent, MenuAction, MenuItemConfig, WindowId};
-use crate::platform_layer::window_common::NativeWindowData;
-
-use std::sync::Arc;
-use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreateMenu, CreatePopupMenu, DestroyMenu, GetLastError, HMENU,
-    HSTRING, HWND, MF_POPUP, MF_STRING, SetMenu,
+use crate::platform_layer::{
+    app::Win32ApiInternalState,
+    error::{PlatformError, Result as PlatformResult},
+    types::{AppEvent, MenuAction, MenuItemConfig, WindowId},
+    window_common::NativeWindowData,
 };
 
+use std::sync::Arc;
+
+use windows::{
+    Win32::{
+        Foundation::{GetLastError, HWND},
+        UI::WindowsAndMessaging::{
+            AppendMenuW, CreateMenu, CreatePopupMenu, DestroyMenu, HMENU, MF_POPUP, MF_STRING,
+            SetMenu,
+        },
+    },
+    core::HSTRING,
+};
 /*
  * Handles the `CreateMainMenu` command by constructing the native menu
  * structure for the given window.
@@ -31,10 +39,7 @@ pub(crate) fn handle_create_main_menu_command(
     window_id: WindowId,
     menu_items: Vec<MenuItemConfig>,
 ) -> PlatformResult<()> {
-    log::debug!(
-        "MenuHandler: creating main menu for WinID {:?}",
-        window_id
-    );
+    log::debug!("MenuHandler: creating main menu for WinID {:?}", window_id);
 
     let h_main_menu = unsafe { CreateMenu()? };
 
@@ -64,7 +69,8 @@ pub(crate) fn handle_create_main_menu_command(
         }
         log::error!(
             "MenuHandler: SetMenu failed for main menu on WindowId {:?}: {:?}",
-            window_id, last_error
+            window_id,
+            last_error
         );
         return Err(PlatformError::OperationFailed(format!(
             "SetMenu failed for main menu on WindowId {:?}: {:?}",
@@ -143,21 +149,25 @@ pub(crate) fn handle_wm_command_for_menu(
         Ok(Some(action)) => {
             log::debug!(
                 "Menu action {:?} (ID {}) for WinID {:?}.",
-                action, command_id, window_id
+                action,
+                command_id,
+                window_id
             );
             Some(AppEvent::MenuActionClicked { action })
         }
         Ok(None) => {
             log::warn!(
                 "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
-                command_id, window_id
+                command_id,
+                window_id
             );
             None
         }
         Err(e) => {
             log::error!(
                 "Failed to access window data for WM_COMMAND (Menu/Accel) in WinID {:?}: {:?}",
-                window_id, e
+                window_id,
+                e
             );
             None
         }
@@ -168,13 +178,13 @@ pub(crate) fn handle_wm_command_for_menu(
 mod tests {
     use super::*;
     use crate::platform_layer::{
-        window_common::NativeWindowData,
+        WindowId,
         app::Win32ApiInternalState,
         types::{MenuAction, MenuItemConfig},
-        WindowId,
+        window_common::NativeWindowData,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{CreateMenu, DestroyMenu};
     use std::sync::Arc;
+    use windows::Win32::UI::WindowsAndMessaging::{CreateMenu, DestroyMenu};
 
     // Arrange common environment for menu tests
     fn setup_test_env() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) {
@@ -189,13 +199,25 @@ mod tests {
         // Arrange
         let (_state, _window_id, mut native_data) = setup_test_env();
         let menu_items = vec![
-            MenuItemConfig { action: Some(MenuAction::LoadProfile), text: "Load".into(), children: vec![] },
+            MenuItemConfig {
+                action: Some(MenuAction::LoadProfile),
+                text: "Load".into(),
+                children: vec![],
+            },
             MenuItemConfig {
                 action: None,
                 text: "File".into(),
-                children: vec![MenuItemConfig { action: Some(MenuAction::SaveProfileAs), text: "Save As".into(), children: vec![] }],
+                children: vec![MenuItemConfig {
+                    action: Some(MenuAction::SaveProfileAs),
+                    text: "Save As".into(),
+                    children: vec![],
+                }],
             },
-            MenuItemConfig { action: Some(MenuAction::RefreshFileList), text: "Refresh".into(), children: vec![] },
+            MenuItemConfig {
+                action: Some(MenuAction::RefreshFileList),
+                text: "Refresh".into(),
+                children: vec![],
+            },
         ];
 
         // Act

@@ -57,10 +57,7 @@ This is the **current focus**. The goal is to move all logic for a specific cont
         *   **(Completed)**
 
     6.  **Menu (`menu_handler.rs`)**
-        *   **Action:** Create `menu_handler.rs`.
-        *   **Action:** Move `execute_create_main_menu` and `add_menu_item_recursive_impl` from `command_executor.rs` to `menu_handler.rs`.
-        *   **Action:** Extract menu logic (where `control_hwnd.0 == 0`) from `window_common::handle_wm_command` into a new function in `menu_handler.rs`.
-        *   **Action:** Update call sites in `command_executor` and `window_common`.
+        *   **(Completed)**
 
 ---
 
