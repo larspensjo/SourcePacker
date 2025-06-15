@@ -278,22 +278,31 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Called typically after a window is removed from the `active_windows` map
-     * (e.g., during WM_DESTROY processing). If no windows remain active and a quit
-     * has been signaled or if this was the last window, it posts WM_QUIT.
-     * The `is_quitting` flag ensures that if `QuitApplication` was called
-     * when multiple windows were open, the app quits when the *last* one closes.
+     * Returns `true` if no active windows remain. This pure check can be unit
+     * tested without side effects and drives the quit logic when a window
+     * closes.
      */
-    pub(crate) fn check_if_should_quit_after_window_close(&self) {
-        let no_active_windows = self.active_windows.read().map_or_else(
+    fn should_quit_on_last_window_close(&self) -> bool {
+        self.active_windows.read().map_or_else(
             |poisoned_err| {
-                log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}", poisoned_err);
+                log::error!(
+                    "Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}",
+                    poisoned_err
+                );
                 false
             },
-            |guard| guard.is_empty()
-        );
+            |guard| guard.is_empty(),
+        )
+    }
 
-        if no_active_windows {
+    /*
+     * Called after a window is removed from the `active_windows` map. If this
+     * was the last window, posts `WM_QUIT` so the message loop exits. The
+     * `is_quitting` flag ensures we honor a prior quit request once all windows
+     * have closed.
+     */
+    pub(crate) fn check_if_should_quit_after_window_close(&self) {
+        if self.should_quit_on_last_window_close() {
             log::debug!(
                 "Platform: Last active window closed (or was already closed and quit signaled). Posting WM_QUIT."
             );
@@ -917,5 +926,29 @@ mod tests {
         let window = guard.get(&window_id).unwrap();
         let tv_state = window.get_treeview_state().expect("treeview state");
         assert!(tv_state.item_id_to_htreeitem.contains_key(&TreeItemId(9)));
+    }
+
+    #[test]
+    fn should_quit_on_last_window_close_false_when_windows_exist() {
+        // Arrange
+        let (state, window_id, data) = setup_state();
+        {
+            let mut guard = state.active_windows().write().unwrap();
+            guard.insert(window_id, data);
+        }
+        // Act
+        let result = state.should_quit_on_last_window_close();
+        // Assert
+        assert!(!result);
+    }
+
+    #[test]
+    fn should_quit_on_last_window_close_true_when_no_windows() {
+        // Arrange
+        let (state, _, _) = setup_state();
+        // Act
+        let result = state.should_quit_on_last_window_close();
+        // Assert
+        assert!(result);
     }
 }
