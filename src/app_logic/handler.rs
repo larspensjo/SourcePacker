@@ -681,9 +681,11 @@ impl MyAppLogic {
     }
 
     /*
-     * Initiates the two-step flow for creating a brand new profile when the user
-     * selects "File/New Profile". Requires an active main window to present the
-     * dialogs for entering the profile name and root folder.
+     * Starts the first step of the profile creation sequence when the user
+     * chooses "File/New Profile".
+     *
+     * An active main window is required so the dialogs for entering the profile
+     * name and selecting the root folder can be displayed.
      */
     fn handle_menu_new_profile_clicked(&mut self) {
         let window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
