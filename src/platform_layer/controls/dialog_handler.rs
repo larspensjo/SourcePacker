@@ -78,6 +78,7 @@ pub(crate) fn get_hwnd_owner(
  * for `OPENFILENAMEW` and processes the dialog result, then sends an
  * appropriate `AppEvent` constructed by `event_constructor`.
  */
+#[allow(clippy::too_many_arguments)]
 fn show_common_file_dialog<FDialog, FEvent>(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,

@@ -12,12 +12,11 @@ use crate::platform_layer::window_common::WC_STATIC;
 
 use std::sync::Arc;
 use windows::Win32::{
-    Foundation::{GetParent, HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::WindowsAndMessaging::{
-        CallWindowProcW, CreateWindowExW, DefWindowProcW, GetWindowLongPtrW,
-        SendMessageW, SetWindowLongPtrW, HMENU, WINDOW_EX_STYLE, WS_CHILD,
-        WS_VISIBLE, GWLP_USERDATA, GWLP_WNDPROC, WNDPROC, WM_COMMAND,
-        WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_NOTIFY,
+        CallWindowProcW, CreateWindowExW, DefWindowProcW, GWLP_USERDATA, GWLP_WNDPROC, GetParent,
+        GetWindowLongPtrW, HMENU, SendMessageW, SetWindowLongPtrW, WINDOW_EX_STYLE, WM_COMMAND,
+        WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC, WM_NOTIFY, WNDPROC, WS_CHILD, WS_VISIBLE,
     },
 };
 
@@ -33,7 +32,10 @@ unsafe extern "system" fn forwarding_panel_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     unsafe {
-        if msg == WM_COMMAND || msg == WM_CTLCOLOREDIT || msg == WM_CTLCOLORSTATIC || msg == WM_NOTIFY
+        if msg == WM_COMMAND
+            || msg == WM_CTLCOLOREDIT
+            || msg == WM_CTLCOLORSTATIC
+            || msg == WM_NOTIFY
         {
             if let Ok(parent) = GetParent(hwnd) {
                 if !parent.is_invalid() {
@@ -63,7 +65,9 @@ pub(crate) fn handle_create_panel_command(
 ) -> PlatformResult<()> {
     log::debug!(
         "PanelHandler: handle_create_panel_command for WinID {:?}, PanelID: {}, ParentControlID: {:?}",
-        window_id, panel_id, parent_control_id
+        window_id,
+        panel_id,
+        parent_control_id
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
@@ -135,4 +139,3 @@ pub(crate) fn handle_create_panel_command(
         Ok(())
     })
 }
-
