@@ -1,5 +1,6 @@
 use super::command_executor;
 use super::controls::dialog_handler;
+use super::controls::panel_handler;
 use super::controls::treeview_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::AppEvent;
@@ -432,7 +433,12 @@ impl Win32ApiInternalState {
                 parent_control_id,
                 control_id: panel_id,
             } => {
-                command_executor::execute_create_panel(self, window_id, parent_control_id, panel_id)
+                panel_handler::handle_create_panel_command(
+                    self,
+                    window_id,
+                    parent_control_id,
+                    panel_id,
+                )
             }
             PlatformCommand::CreateLabel {
                 window_id,
