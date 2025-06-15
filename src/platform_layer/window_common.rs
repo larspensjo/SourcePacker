@@ -1267,7 +1267,7 @@ mod tests {
     fn test_register_control_hwnd_lookup() {
         // Arrange
         let mut data = NativeWindowData::new(WindowId(1));
-        let hwnd = HWND(0x1234 as isize);
+        let hwnd = HWND(0x1234 as *mut std::ffi::c_void);
         // Act
         data.register_control_hwnd(42, hwnd);
         // Assert
@@ -1326,4 +1326,3 @@ mod tests {
         assert!(!state.brush.is_invalid());
     }
 }
-
