@@ -317,14 +317,19 @@ impl NativeWindowData {
         }
         child_rules.sort_by_key(|r| r.order);
 
-        if child_rules.iter().filter(|r| r.dock_style == DockStyle::Fill).count() > 1 {
+        if child_rules
+            .iter()
+            .filter(|r| r.dock_style == DockStyle::Fill)
+            .count()
+            > 1
+        {
             log::warn!(
                 "Layout: Multiple Fill controls for parent_id {:?}. Using first.",
                 parent_id_for_layout
             );
         }
 
-        let layout_map = calculate_layout(parent_rect, &child_rules);
+        let layout_map = NativeWindowData::calculate_layout(parent_rect, &child_rules);
 
         for rule in &child_rules {
             let rect = match layout_map.get(&rule.control_id) {
