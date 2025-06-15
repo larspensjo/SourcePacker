@@ -121,108 +121,6 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
     Ok(())
 }
 
-/*
- * Executes the `CreateMainMenu` command.
- * Creates a native menu structure based on `menu_items` and associates it
- * with the specified window. Menu item actions are mapped to generated IDs.
- */
-pub(crate) fn execute_create_main_menu(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
-    menu_items: Vec<MenuItemConfig>,
-) -> PlatformResult<()> {
-    log::debug!(
-        "CommandExecutor: execute_create_main_menu for WinID {:?}",
-        window_id
-    );
-    let h_main_menu = unsafe { CreateMenu()? };
-
-    let hwnd_owner = internal_state.with_window_data_write(window_id, |window_data| {
-        let hwnd = window_data.get_hwnd();
-        if hwnd.is_invalid() {
-            log::warn!(
-                "CommandExecutor: HWND not yet valid for WindowId {:?} during menu creation.",
-                window_id
-            );
-            return Err(PlatformError::InvalidHandle(format!(
-                "HWND not yet valid for WindowId {:?} during menu creation",
-                window_id
-            )));
-        }
-        for item_config in &menu_items {
-            // This helper recursively populates the menu and registers actions in window_data
-            unsafe { add_menu_item_recursive_impl(h_main_menu, item_config, window_data)? };
-        }
-        Ok(hwnd)
-    })?;
-
-    if unsafe { SetMenu(hwnd_owner, Some(h_main_menu)) }.is_err() {
-        let last_error = unsafe { GetLastError() };
-        unsafe {
-            DestroyMenu(h_main_menu).unwrap_or_default();
-        }
-        log::error!(
-            "CommandExecutor: SetMenu failed for main menu on WindowId {:?}: {:?}",
-            window_id,
-            last_error
-        );
-        return Err(PlatformError::OperationFailed(format!(
-            "SetMenu failed for main menu on WindowId {:?}: {:?}",
-            window_id, last_error
-        )));
-    }
-    log::debug!(
-        "CommandExecutor: Main menu created and set for WindowId {:?}",
-        window_id
-    );
-    Ok(())
-}
-
-/*
- * Helper function to recursively add menu items.
- * This is an internal implementation detail for `execute_create_main_menu`.
- */
-pub(crate) unsafe fn add_menu_item_recursive_impl(
-    parent_menu_handle: HMENU,
-    item_config: &MenuItemConfig,
-    window_data: &mut super::window_common::NativeWindowData, // Needs full path if moved
-) -> PlatformResult<()> {
-    if item_config.children.is_empty() {
-        // This is a command item
-        if let Some(action) = item_config.action {
-            let generated_id = window_data.register_menu_action(action);
-            unsafe {
-                AppendMenuW(
-                    parent_menu_handle,
-                    MF_STRING,
-                    generated_id as usize, // WinAPI uses usize for item ID
-                    &HSTRING::from(item_config.text.as_str()),
-                )?
-            };
-        } else {
-            // Item has no children and no action - could be a separator or an oversight
-            log::warn!(
-                "CommandExecutor: Menu item '{}' has no children and no action. It will be non-functional unless it's a separator (not yet supported).",
-                item_config.text
-            );
-            // Potentially handle separators here if MF_SEPARATOR is to be supported
-        }
-    } else {
-        let h_submenu = unsafe { CreatePopupMenu()? };
-        for child_config in &item_config.children {
-            unsafe { add_menu_item_recursive_impl(h_submenu, child_config, window_data)? };
-        }
-        unsafe {
-            AppendMenuW(
-                parent_menu_handle,
-                MF_POPUP,
-                h_submenu.0 as usize, // h_submenu is the handle for the popup
-                &HSTRING::from(item_config.text.as_str()),
-            )?
-        };
-    }
-    Ok(())
-}
 
 /*
  * Executes the `SetControlEnabled` command.
@@ -532,7 +430,6 @@ mod tests {
         window_common::NativeWindowData,
     };
     use std::sync::Arc;
-    use windows::Win32::UI::WindowsAndMessaging::{CreateMenu, DestroyMenu};
 
     // Helper to set up a basic Win32ApiInternalState and NativeWindowData for tests
     // This helper function is now local to the tests module.
@@ -545,76 +442,6 @@ mod tests {
         (internal_state_arc, window_id, native_window_data)
     }
 
-    #[test]
-    fn test_add_menu_item_recursive_impl_builds_map_and_ids() {
-        let (_internal_state_arc, _window_id, mut native_window_data) = setup_test_env();
-
-        let menu_items = vec![
-            MenuItemConfig {
-                action: Some(MenuAction::LoadProfile),
-                text: "Load".to_string(),
-                children: vec![],
-            },
-            MenuItemConfig {
-                action: None,
-                text: "File".to_string(),
-                children: vec![MenuItemConfig {
-                    action: Some(MenuAction::SaveProfileAs),
-                    text: "Save As".to_string(),
-                    children: vec![],
-                }],
-            },
-            MenuItemConfig {
-                action: Some(MenuAction::RefreshFileList),
-                text: "Refresh".to_string(),
-                children: vec![],
-            },
-        ];
-
-        unsafe {
-            let h_main_menu = CreateMenu().expect("Failed to create dummy menu for test");
-            // Call the function directly from the parent module
-            for item_config in &menu_items {
-                add_menu_item_recursive_impl(h_main_menu, item_config, &mut native_window_data)
-                    .unwrap();
-            }
-            DestroyMenu(h_main_menu).expect("Failed to destroy dummy menu for test");
-        }
-
-        assert_eq!(
-            native_window_data.menu_action_count(),
-            3,
-            "Expected 3 actions in map: Load, Save As, Refresh"
-        );
-        assert_eq!(
-            native_window_data.get_next_menu_item_id_counter(),
-            30003,
-            "Menu item ID counter should advance by 3"
-        );
-
-        let mut found_load = false;
-        let mut found_save_as = false;
-        let mut found_refresh = false;
-
-        for (id, action) in native_window_data.iter_menu_actions() {
-            assert!(
-                *id >= 30000 && *id < 30003,
-                "Generated menu IDs should be in the expected range"
-            );
-            match action {
-                MenuAction::LoadProfile => found_load = true,
-                MenuAction::SaveProfileAs => found_save_as = true,
-                MenuAction::RefreshFileList => found_refresh = true,
-                _ => panic!("Unexpected action {:?} found in menu_action_map", action),
-            }
-        }
-        assert!(found_load, "MenuAction::LoadProfile not found in map");
-        assert!(found_save_as, "MenuAction::SaveProfileAs not found in map");
-        assert!(
-            found_refresh,
-            "MenuAction::RefreshFileList not found in map"
-        );
-    }
 
     #[test]
     fn test_expand_visible_tree_items_returns_error() {

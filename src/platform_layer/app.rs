@@ -1,13 +1,15 @@
-use super::command_executor;
-use super::controls::dialog_handler;
-use super::controls::panel_handler;
-use super::controls::treeview_handler;
-use super::error::{PlatformError, Result as PlatformResult};
-use super::types::AppEvent;
-use super::types::{
-    PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig, WindowId,
+use crate::platform_layer::{
+    command_executor,
+    controls::{
+        button_handler, dialog_handler, label_handler, menu_handler, panel_handler,
+        treeview_handler,
+    },
+    error::{PlatformError, Result as PlatformResult},
+    types::{
+        AppEvent, PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig, WindowId,
+    },
+    window_common,
 };
-use super::window_common;
 
 use windows::{
     Win32::{
@@ -410,14 +412,12 @@ impl Win32ApiInternalState {
             PlatformCommand::CreateMainMenu {
                 window_id,
                 menu_items,
-            } => command_executor::execute_create_main_menu(self, window_id, menu_items),
+            } => menu_handler::handle_create_main_menu_command(self, window_id, menu_items),
             PlatformCommand::CreateButton {
                 window_id,
                 control_id,
                 text,
-            } => super::controls::button_handler::handle_create_button_command(
-                self, window_id, control_id, text,
-            ),
+            } => button_handler::handle_create_button_command(self, window_id, control_id, text),
             PlatformCommand::CreateTreeView {
                 window_id,
                 control_id,
@@ -432,21 +432,19 @@ impl Win32ApiInternalState {
                 window_id,
                 parent_control_id,
                 control_id: panel_id,
-            } => {
-                panel_handler::handle_create_panel_command(
-                    self,
-                    window_id,
-                    parent_control_id,
-                    panel_id,
-                )
-            }
+            } => panel_handler::handle_create_panel_command(
+                self,
+                window_id,
+                parent_control_id,
+                panel_id,
+            ),
             PlatformCommand::CreateLabel {
                 window_id,
                 parent_panel_id,
                 control_id: label_id,
                 initial_text,
                 class,
-            } => super::controls::label_handler::handle_create_label_command(
+            } => label_handler::handle_create_label_command(
                 self,
                 window_id,
                 parent_panel_id,
@@ -459,7 +457,7 @@ impl Win32ApiInternalState {
                 control_id: label_id,
                 text,
                 severity,
-            } => super::controls::label_handler::handle_update_label_text_command(
+            } => label_handler::handle_update_label_text_command(
                 self, window_id, label_id, text, severity,
             ),
             PlatformCommand::RedrawTreeItem {
