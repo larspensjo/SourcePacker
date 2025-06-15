@@ -680,6 +680,26 @@ impl MyAppLogic {
             });
     }
 
+    /*
+     * Starts the first step of the profile creation sequence when the user
+     * chooses "File/New Profile".
+     *
+     * An active main window is required so the dialogs for entering the profile
+     * name and selecting the root folder can be displayed.
+     */
+    fn handle_menu_new_profile_clicked(&mut self) {
+        let window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
+            Some(id) => id,
+            None => {
+                log::warn!("Cannot handle NewProfile: No UI state (main window).");
+                return;
+            }
+        };
+
+        log::debug!("MenuAction::NewProfile action received by AppLogic.");
+        self.start_new_profile_creation_flow(window_id);
+    }
+
     fn handle_file_open_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
         if !self
             .ui_state
@@ -1675,6 +1695,7 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::MenuActionClicked { action } => match action {
                 MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
+                MenuAction::NewProfile => self.handle_menu_new_profile_clicked(),
                 MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
                 MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
                 MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),

@@ -38,6 +38,7 @@ pub struct TreeItemId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuAction {
     LoadProfile,
+    NewProfile,
     SaveProfileAs,
     SetArchivePath,
     RefreshFileList,
