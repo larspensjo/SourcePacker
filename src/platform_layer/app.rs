@@ -410,7 +410,11 @@ impl Win32ApiInternalState {
             PlatformCommand::CreateMainMenu {
                 window_id,
                 menu_items,
-            } => command_executor::execute_create_main_menu(self, window_id, menu_items),
+            } => super::controls::menu_handler::handle_create_main_menu_command(
+                self,
+                window_id,
+                menu_items,
+            ),
             PlatformCommand::CreateButton {
                 window_id,
                 control_id,

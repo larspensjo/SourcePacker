@@ -991,31 +991,12 @@ impl Win32ApiInternalState {
         let command_id = loword_from_wparam(wparam);
         let notification_code = highord_from_wparam(wparam);
         if control_hwnd.0 == 0 {
-            // Menu or accelerator
-            let menu_action_result =
-                self.with_window_data_read(window_id, |wd| Ok(wd.get_menu_action(command_id)));
-
-            match menu_action_result {
-                Ok(Some(action)) => {
-                    log::debug!(
-                        "Menu action {:?} (ID {}) for WinID {:?}.",
-                        action,
-                        command_id,
-                        window_id
-                    );
-                    return Some(AppEvent::MenuActionClicked { action });
-                }
-                Ok(None) => log::warn!(
-                    "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
-                    command_id,
-                    window_id
-                ),
-                Err(e) => log::error!(
-                    "Failed to access window data for WM_COMMAND (Menu/Accel) in WinID {:?}: {:?}",
-                    window_id,
-                    e
-                ),
-            }
+            return super::controls::menu_handler::handle_wm_command_for_menu(
+                window_id,
+                command_id,
+                _hwnd_parent,
+                self,
+            );
         } else {
             // Control notification
             let hwnd_control = HWND(control_hwnd.0 as *mut std::ffi::c_void);
