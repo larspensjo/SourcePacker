@@ -119,7 +119,11 @@ impl ArchiverOperations for CoreArchiver {
                         }
                     }
                     Err(e) => {
-                        return Err(e);
+                        // Return an io::Error with a custom message including the path
+                        return Err(io::Error::new(
+                            e.kind(),
+                            format!("Failed to read file '{}': {}", node.path().display(), e),
+                        ));
                     }
                 }
             }
