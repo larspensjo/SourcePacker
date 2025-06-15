@@ -7,11 +7,8 @@
  */
 use crate::app_logic::ui_constants;
 
-use crate::platform_layer::{
-    types::{
-        DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
-    },
-    window_common::STATUS_BAR_HEIGHT,
+use crate::platform_layer::types::{
+    DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
 };
 
 // Height for the panel containing filter controls.
@@ -19,6 +16,8 @@ pub const FILTER_BAR_HEIGHT: i32 = 30;
 // Fixed width for the "Expand Filtered/All" button.
 pub const FILTER_EXPAND_BUTTON_WIDTH: i32 = 120;
 pub const FILTER_CLEAR_BUTTON_WIDTH: i32 = 30;
+// Fixed height for the status bar at the bottom of the main window.
+pub const STATUS_BAR_HEIGHT: i32 = 25;
 
 /*
  * Generates a list of `PlatformCommand`s that describe the initial static UI layout

@@ -58,8 +58,8 @@ pub(crate) const WM_APP_TREEVIEW_CHECKBOX_CLICKED: u32 = WM_APP + 0x100;
 pub(crate) const WM_APP_MAIN_WINDOW_UI_SETUP_COMPLETE: u32 = WM_APP + 0x101;
 
 // General UI constants
-pub const STATUS_BAR_HEIGHT: i32 = 25; // Example height for status bar
-pub const FILTER_DEBOUNCE_MS: u32 = 300;
+/// Default debounce delay for edit controls in milliseconds.
+pub const INPUT_DEBOUNCE_MS: u32 = 300;
 
 // Represents an invalid HWND, useful for initialization or checks.
 pub(crate) const HWND_INVALID: HWND = HWND(std::ptr::null_mut());
@@ -1015,7 +1015,7 @@ impl Win32ApiInternalState {
                     SetTimer(
                         Some(_hwnd_parent),
                         command_id as usize,
-                        FILTER_DEBOUNCE_MS,
+                        INPUT_DEBOUNCE_MS,
                         None,
                     );
                 }
@@ -1055,7 +1055,11 @@ impl Win32ApiInternalState {
             let mut buf: [u16; 256] = [0; 256];
             let len = unsafe { GetWindowTextW(hwnd_edit, &mut buf) } as usize;
             let text = String::from_utf16_lossy(&buf[..len]);
-            return Some(AppEvent::FilterTextSubmitted { window_id, text });
+            return Some(AppEvent::InputTextChanged {
+                window_id,
+                control_id,
+                text,
+            });
         }
         None
     }
