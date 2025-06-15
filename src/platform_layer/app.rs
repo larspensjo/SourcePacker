@@ -278,22 +278,31 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Called typically after a window is removed from the `active_windows` map
-     * (e.g., during WM_DESTROY processing). If no windows remain active and a quit
-     * has been signaled or if this was the last window, it posts WM_QUIT.
-     * The `is_quitting` flag ensures that if `QuitApplication` was called
-     * when multiple windows were open, the app quits when the *last* one closes.
+     * Returns `true` if no active windows remain. This pure check can be unit
+     * tested without side effects and drives the quit logic when a window
+     * closes.
      */
-    pub(crate) fn check_if_should_quit_after_window_close(&self) {
-        let no_active_windows = self.active_windows.read().map_or_else(
+    fn should_quit_on_last_window_close(&self) -> bool {
+        self.active_windows.read().map_or_else(
             |poisoned_err| {
-                log::error!("Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}", poisoned_err);
+                log::error!(
+                    "Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}",
+                    poisoned_err
+                );
                 false
             },
-            |guard| guard.is_empty()
-        );
+            |guard| guard.is_empty(),
+        )
+    }
 
-        if no_active_windows {
+    /*
+     * Called after a window is removed from the `active_windows` map. If this
+     * was the last window, posts `WM_QUIT` so the message loop exits. The
+     * `is_quitting` flag ensures we honor a prior quit request once all windows
+     * have closed.
+     */
+    pub(crate) fn check_if_should_quit_after_window_close(&self) {
+        if self.should_quit_on_last_window_close() {
             log::debug!(
                 "Platform: Last active window closed (or was already closed and quit signaled). Posting WM_QUIT."
             );
@@ -798,10 +807,17 @@ impl PlatformInterface {
 }
 
 #[cfg(test)]
-mod app_tests {
+mod tests {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::platform_layer::controls::treeview_handler::TreeViewInternalState;
+    use crate::platform_layer::types::TreeItemId;
+    use crate::platform_layer::window_common::NativeWindowData;
+    use windows::Win32::{Foundation::HWND, UI::Controls::HTREEITEM};
 
     // Helper function to create PathBuf from a slice of u16 (wide char buffer)
     // This is useful when dealing with paths from Win32 API calls.
@@ -826,5 +842,113 @@ mod app_tests {
         // No null terminator added
         let path = pathbuf_from_buf(&wide);
         assert_eq!(path, PathBuf::from(r"D:\\data\\incomplete"));
+    }
+
+    // Arrange common state for Win32ApiInternalState tests
+    fn setup_state() -> (Arc<Win32ApiInternalState>, WindowId, NativeWindowData) {
+        let state = Win32ApiInternalState::new("TestState".to_string()).unwrap();
+        let window_id = state.generate_unique_window_id();
+        let native = NativeWindowData::new(window_id);
+        (state, window_id, native)
+    }
+
+    #[test]
+    fn generate_unique_window_id_produces_unique_values() {
+        // Arrange
+        let state = Win32ApiInternalState::new("UIDTest".to_string()).unwrap();
+        // Act
+        let id1 = state.generate_unique_window_id();
+        let id2 = state.generate_unique_window_id();
+        // Assert
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn remove_window_data_removes_entry() {
+        // Arrange
+        let (state, window_id, data) = setup_state();
+        {
+            let mut guard = state.active_windows().write().unwrap();
+            guard.insert(window_id, data);
+        }
+        // Act
+        state.remove_window_data(window_id);
+        // Assert
+        let guard = state.active_windows().read().unwrap();
+        assert!(!guard.contains_key(&window_id));
+    }
+
+    #[test]
+    fn with_treeview_state_mut_preserves_state_on_success() {
+        // Arrange
+        let (state, window_id, mut data) = setup_state();
+        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
+        data.init_treeview_state();
+        {
+            let mut guard = state.active_windows().write().unwrap();
+            guard.insert(window_id, data);
+        }
+        // Act
+        let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
+            tv_state
+                .item_id_to_htreeitem
+                .insert(TreeItemId(7), HTREEITEM(7));
+            Ok(())
+        });
+        // Assert
+        assert!(result.is_ok());
+        let guard = state.active_windows().read().unwrap();
+        let window = guard.get(&window_id).unwrap();
+        let tv_state = window.get_treeview_state().expect("treeview state");
+        assert!(tv_state.item_id_to_htreeitem.contains_key(&TreeItemId(7)));
+    }
+
+    #[test]
+    fn with_treeview_state_mut_preserves_state_on_error() {
+        // Arrange
+        let (state, window_id, mut data) = setup_state();
+        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
+        data.init_treeview_state();
+        {
+            let mut guard = state.active_windows().write().unwrap();
+            guard.insert(window_id, data);
+        }
+        // Act
+        let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
+            tv_state
+                .item_id_to_htreeitem
+                .insert(TreeItemId(9), HTREEITEM(9));
+            Err(PlatformError::OperationFailed("fail".into()))
+        });
+        // Assert
+        assert!(result.is_err());
+        let guard = state.active_windows().read().unwrap();
+        let window = guard.get(&window_id).unwrap();
+        let tv_state = window.get_treeview_state().expect("treeview state");
+        assert!(tv_state.item_id_to_htreeitem.contains_key(&TreeItemId(9)));
+    }
+
+    #[test]
+    fn should_quit_on_last_window_close_false_when_windows_exist() {
+        // Arrange
+        let (state, window_id, data) = setup_state();
+        {
+            let mut guard = state.active_windows().write().unwrap();
+            guard.insert(window_id, data);
+        }
+        // Act
+        let result = state.should_quit_on_last_window_close();
+        // Assert
+        assert!(!result);
+    }
+
+    #[test]
+    fn should_quit_on_last_window_close_true_when_no_windows() {
+        // Arrange
+        let (state, _, _) = setup_state();
+        // Act
+        let result = state.should_quit_on_last_window_close();
+        // Assert
+        assert!(result);
     }
 }
