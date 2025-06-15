@@ -43,6 +43,11 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
             children: Vec::new(),
         },
         MenuItemConfig {
+            action: Some(MenuAction::NewProfile),
+            text: "New Profile...".to_string(),
+            children: Vec::new(),
+        },
+        MenuItemConfig {
             action: Some(MenuAction::SaveProfileAs),
             text: "Save Profile As...".to_string(),
             children: Vec::new(),
