@@ -1059,7 +1059,7 @@ impl Win32ApiInternalState {
         window_id: WindowId,
     ) -> Option<AppEvent> {
         unsafe {
-            _ = KillTimer(Some(hwnd), timer_id.0 as usize);
+            _ = KillTimer(Some(hwnd), timer_id.0);
         }
         let control_id = timer_id.0 as i32;
 
