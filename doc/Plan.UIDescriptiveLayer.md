@@ -67,18 +67,7 @@ This is the **current focus**. The goal is to move all logic for a specific cont
         *   **(Completed)**
 
 **Step A.III.2: Implement Unit Tests for Key Platform Layer Components**
-*   **Goal:** Increase the robustness and maintainability of the `platform_layer` by adding unit tests for its pure logic, independent of the Win32 API. This verifies the correctness of data management and complex algorithms like layout calculation.
-*   **Strategy:**
-    *   **a. Test `NativeWindowData`:**
-        *   **Action:** Create a `#[cfg(test)] mod tests` module at the bottom of `window_common.rs`.
-        *   **Action:** Write unit tests for `NativeWindowData` methods to verify correct state management. Test cases should cover `register_control_hwnd`, `register_menu_action`, `set_label_severity`, `set_input_background_color`, etc.
-        *   *Justification:* These methods are pure data manipulations and are easy to test, forming a solid foundation.
-    *   **b. Refactor and Test the Layout Engine:**
-        *   **Action:** In `window_common.rs`, refactor `apply_layout_rules_for_children`.
-        *   **Sub-Action 1:** Extract the core calculation logic into a new, pure, private function (e.g., `calculate_layout`). This function will not have any Win32 dependencies. It will take a `RECT` and a slice of `LayoutRule`s and return a `HashMap<i32, RECT>` containing the calculated position and size for each child control.
-        *   **Sub-Action 2:** Simplify the existing `apply_layout_rules_for_children` function. It will now become a "Humble Object" that calls the pure `calculate_layout` function and then iterates through the results, applying them with the impure `MoveWindow` API call.
-        *   **Action:** Write comprehensive unit tests for the new `calculate_layout` function. Test various docking scenarios (`Top`, `Bottom`, `Fill`, `ProportionalFill`), margins, and nested structures to ensure the algorithm is correct.
-*   *Verification:* `cargo test` successfully compiles and runs all new tests in `window_common.rs`. The logic of the layout engine is proven correct without requiring an active window.
+        *   **(Completed)**
 
 **Step A.III.3: Implement Unit Tests for `Win32ApiInternalState`**
 *   **Goal:** Verify the correctness of the platform layer's central state machine (`Win32ApiInternalState` in `app.rs`) by testing its pure logic components.

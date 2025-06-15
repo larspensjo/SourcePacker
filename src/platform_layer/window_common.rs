@@ -175,48 +175,21 @@ impl NativeWindowData {
     }
 
     /*
-     * Applies layout rules recursively for a parent and its children.
-     * This function is the core of the layout engine. It iterates through the
-     * layout rules for a given parent, calculates the position and size for
-     * each child control based on its docking style, and then recurses for
-     * any children that are themselves containers.
+     * Pure layout calculation for a group of child controls. Returns the
+     * rectangle for each control without calling any Win32 APIs. The
+     * algorithm mirrors the runtime layout engine and is recursively
+     * applied by `apply_layout_rules_for_children`.
      */
-    fn apply_layout_rules_for_children(
-        &self,
-        parent_id_for_layout: Option<i32>,
-        parent_rect: RECT,
-    ) {
-        log::trace!(
-            "Applying layout for parent_id {:?}, rect: {:?}",
-            parent_id_for_layout,
-            parent_rect
-        );
+    fn calculate_layout(parent_rect: RECT, rules: &[LayoutRule]) -> HashMap<i32, RECT> {
+        let mut sorted = rules.to_vec();
+        sorted.sort_by_key(|r| r.order);
 
-        let all_window_rules = match &self.layout_rules {
-            Some(rules) => rules,
-            None => return, // No rules to apply
-        };
-
-        let mut child_rules: Vec<&LayoutRule> = all_window_rules
-            .iter()
-            .filter(|r| r.parent_control_id == parent_id_for_layout)
-            .collect();
-        child_rules.sort_by_key(|r| r.order);
-
+        let mut result = HashMap::new();
         let mut current_available_rect = parent_rect;
-        let mut fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
-        let mut proportional_fill_candidates: Vec<(&LayoutRule, HWND)> = Vec::new();
+        let mut fill_candidate: Option<&LayoutRule> = None;
+        let mut proportional_fill_candidates: Vec<&LayoutRule> = Vec::new();
 
-        for rule in &child_rules {
-            let control_hwnd_opt = self.control_hwnd_map.get(&rule.control_id).copied();
-            if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
-                log::warn!(
-                    "Layout: HWND for control ID {} not found or invalid.",
-                    rule.control_id
-                );
-                continue;
-            }
-            let control_hwnd = control_hwnd_opt.unwrap();
+        for rule in &sorted {
             match rule.dock_style {
                 DockStyle::Top | DockStyle::Bottom | DockStyle::Left | DockStyle::Right => {
                     let mut item_rect = RECT {
@@ -245,43 +218,20 @@ impl NativeWindowData {
                         }
                         _ => unreachable!(),
                     }
-                    let item_width = (item_rect.right - item_rect.left).max(0);
-                    let item_height = (item_rect.bottom - item_rect.top).max(0);
-                    unsafe {
-                        _ = MoveWindow(
-                            control_hwnd,
-                            item_rect.left,
-                            item_rect.top,
-                            item_width,
-                            item_height,
-                            true,
-                        );
-                    }
-                    if all_window_rules
-                        .iter()
-                        .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
-                    {
-                        let panel_client_rect = RECT {
-                            left: 0,
-                            top: 0,
-                            right: item_width,
-                            bottom: item_height,
-                        };
-                        self.apply_layout_rules_for_children(
-                            Some(rule.control_id),
-                            panel_client_rect,
-                        );
-                    }
+                    result.insert(rule.control_id, item_rect);
                 }
                 DockStyle::Fill => {
-                    fill_candidates.push((rule, control_hwnd));
+                    if fill_candidate.is_none() {
+                        fill_candidate = Some(rule);
+                    }
                 }
                 DockStyle::ProportionalFill { .. } => {
-                    proportional_fill_candidates.push((rule, control_hwnd));
+                    proportional_fill_candidates.push(rule);
                 }
                 DockStyle::None => {}
             }
         }
+
         if !proportional_fill_candidates.is_empty() {
             let total_width_for_proportional =
                 (current_available_rect.right - current_available_rect.left).max(0);
@@ -289,17 +239,14 @@ impl NativeWindowData {
                 (current_available_rect.bottom - current_available_rect.top).max(0);
             let total_weight: f32 = proportional_fill_candidates
                 .iter()
-                .map(|(r, _)| {
-                    if let DockStyle::ProportionalFill { weight } = r.dock_style {
-                        weight
-                    } else {
-                        0.0
-                    }
+                .map(|r| match r.dock_style {
+                    DockStyle::ProportionalFill { weight } => weight,
+                    _ => 0.0,
                 })
                 .sum();
             if total_weight > 0.0 {
                 let mut current_x = current_available_rect.left;
-                for (rule, control_hwnd) in proportional_fill_candidates {
+                for rule in proportional_fill_candidates {
                     if let DockStyle::ProportionalFill { weight } = rule.dock_style {
                         let proportion = weight / total_weight;
                         let item_width_allocation =
@@ -310,73 +257,110 @@ impl NativeWindowData {
                             (item_width_allocation - rule.margin.3 - rule.margin.1).max(0);
                         let final_height =
                             (total_height_for_proportional - rule.margin.0 - rule.margin.2).max(0);
-                        unsafe {
-                            _ = MoveWindow(
-                                control_hwnd,
-                                final_x,
-                                final_y,
-                                final_width,
-                                final_height,
-                                true,
-                            );
-                        }
+                        result.insert(
+                            rule.control_id,
+                            RECT {
+                                left: final_x,
+                                top: final_y,
+                                right: final_x + final_width,
+                                bottom: final_y + final_height,
+                            },
+                        );
                         current_x += item_width_allocation;
-                        if all_window_rules
-                            .iter()
-                            .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
-                        {
-                            let panel_client_rect_prop = RECT {
-                                left: 0,
-                                top: 0,
-                                right: final_width,
-                                bottom: final_height,
-                            };
-                            self.apply_layout_rules_for_children(
-                                Some(rule.control_id),
-                                panel_client_rect_prop,
-                            );
-                        }
                     }
                 }
             }
         }
-        if let Some((rule, control_hwnd)) = fill_candidates.first() {
-            if fill_candidates.len() > 1 {
-                log::warn!(
-                    "Layout: Multiple Fill controls for parent_id {:?}. Using first (ID {}).",
-                    parent_id_for_layout,
-                    rule.control_id
-                );
-            }
+
+        if let Some(rule) = fill_candidate {
             let fill_rect = RECT {
                 left: current_available_rect.left + rule.margin.3,
                 top: current_available_rect.top + rule.margin.0,
                 right: current_available_rect.right - rule.margin.1,
                 bottom: current_available_rect.bottom - rule.margin.2,
             };
-            let fill_width = (fill_rect.right - fill_rect.left).max(0);
-            let fill_height = (fill_rect.bottom - fill_rect.top).max(0);
-            unsafe {
-                _ = MoveWindow(
-                    *control_hwnd,
-                    fill_rect.left,
-                    fill_rect.top,
-                    fill_width,
-                    fill_height,
-                    true,
+            result.insert(rule.control_id, fill_rect);
+        }
+
+        result
+    }
+
+    /*
+     * Applies layout rules recursively for a parent and its children.
+     * The heavy lifting is done by `calculate_layout`, which returns the
+     * desired rectangles for each child. This function merely calls the
+     * Win32 API to move the windows and recurses for nested containers.
+     */
+    fn apply_layout_rules_for_children(
+        &self,
+        parent_id_for_layout: Option<i32>,
+        parent_rect: RECT,
+    ) {
+        log::trace!(
+            "Applying layout for parent_id {:?}, rect: {:?}",
+            parent_id_for_layout,
+            parent_rect
+        );
+
+        let all_window_rules = match &self.layout_rules {
+            Some(rules) => rules,
+            None => return, // No rules to apply
+        };
+
+        let mut child_rules: Vec<LayoutRule> = all_window_rules
+            .iter()
+            .filter(|r| r.parent_control_id == parent_id_for_layout)
+            .cloned()
+            .collect();
+        if child_rules.is_empty() {
+            return;
+        }
+        child_rules.sort_by_key(|r| r.order);
+
+        if child_rules
+            .iter()
+            .filter(|r| r.dock_style == DockStyle::Fill)
+            .count()
+            > 1
+        {
+            log::warn!(
+                "Layout: Multiple Fill controls for parent_id {:?}. Using first.",
+                parent_id_for_layout
+            );
+        }
+
+        let layout_map = NativeWindowData::calculate_layout(parent_rect, &child_rules);
+
+        for rule in &child_rules {
+            let rect = match layout_map.get(&rule.control_id) {
+                Some(r) => r,
+                None => continue,
+            };
+            let control_hwnd_opt = self.control_hwnd_map.get(&rule.control_id).copied();
+            if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
+                log::warn!(
+                    "Layout: HWND for control ID {} not found or invalid.",
+                    rule.control_id
                 );
+                continue;
+            }
+            let hwnd = control_hwnd_opt.unwrap();
+            let width = (rect.right - rect.left).max(0);
+            let height = (rect.bottom - rect.top).max(0);
+            unsafe {
+                _ = MoveWindow(hwnd, rect.left, rect.top, width, height, true);
             }
             if all_window_rules
                 .iter()
                 .any(|r_child| r_child.parent_control_id == Some(rule.control_id))
             {
-                let panel_client_rect_fill = RECT {
+                let panel_client_rect = RECT {
                     left: 0,
                     top: 0,
-                    right: fill_width,
-                    bottom: fill_height,
+                    right: width,
+                    bottom: height,
                 };
-                self.apply_layout_rules_for_children(Some(rule.control_id), panel_client_rect_fill);
+                self.apply_layout_rules_for_children(Some(rule.control_id), panel_client_rect);
             }
         }
     }
@@ -1251,4 +1235,208 @@ pub(crate) fn destroy_native_window(
     };
     // This function's purpose is to *try* to destroy, so don't bubble up "not found" as an error.
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::HWND;
+
+    /*
+     * Unit tests for NativeWindowData. These tests verify basic state
+     * management without invoking Win32 APIs, using dummy HWND values.
+     */
+
+    #[test]
+    fn test_register_control_hwnd_lookup() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(1));
+        let hwnd = HWND(0x1234 as *mut std::ffi::c_void);
+        // Act
+        data.register_control_hwnd(42, hwnd);
+        // Assert
+        assert_eq!(data.get_control_hwnd(42), Some(hwnd));
+        assert!(data.has_control(42));
+    }
+
+    #[test]
+    fn test_register_menu_action_increments_counter() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(2));
+        let start = data.get_next_menu_item_id_counter();
+        // Act
+        let id1 = data.register_menu_action(MenuAction::RefreshFileList);
+        let id2 = data.register_menu_action(MenuAction::RefreshFileList);
+        // Assert
+        assert_eq!(data.menu_action_count(), 2);
+        assert_eq!(id1, start);
+        assert_eq!(id2, start + 1);
+        assert_eq!(data.get_next_menu_item_id_counter(), start + 2);
+        assert_eq!(data.get_menu_action(id1), Some(MenuAction::RefreshFileList));
+    }
+
+    #[test]
+    fn test_set_and_get_label_severity() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(3));
+        // Act
+        data.set_label_severity(7, MessageSeverity::Warning);
+        // Assert
+        assert_eq!(data.get_label_severity(7), Some(MessageSeverity::Warning));
+    }
+
+    #[test]
+    fn test_set_input_background_color_none() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(4));
+        // Act
+        let result = data.set_input_background_color(5, None);
+        // Assert
+        assert!(result.is_ok());
+        assert!(data.get_input_background_color(5).is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_set_input_background_color_some() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(5));
+        // Act
+        let result = data.set_input_background_color(6, Some(0x00FF00));
+        // Assert
+        assert!(result.is_ok());
+        let state = data.get_input_background_color(6).expect("color state");
+        assert_eq!(state.color.0, 0x00FF00);
+        assert!(!state.brush.is_invalid());
+    }
+
+    /*
+     * Unit tests for the pure layout calculation. These tests ensure the
+     * geometry is computed correctly without creating any native windows.
+     */
+
+    #[test]
+    fn test_calculate_layout_top_and_fill() {
+        // Arrange
+        let rules = vec![
+            LayoutRule {
+                control_id: 1,
+                parent_control_id: None,
+                dock_style: DockStyle::Top,
+                order: 0,
+                fixed_size: Some(20),
+                margin: (0, 0, 0, 0),
+            },
+            LayoutRule {
+                control_id: 2,
+                parent_control_id: None,
+                dock_style: DockStyle::Fill,
+                order: 1,
+                fixed_size: None,
+                margin: (0, 0, 0, 0),
+            },
+        ];
+        let parent_rect = RECT {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 100,
+        };
+        // Act
+        let map = NativeWindowData::calculate_layout(parent_rect, &rules);
+        // Assert
+        assert_eq!(map.get(&1).unwrap().bottom, 20);
+        assert_eq!(map.get(&2).unwrap().top, 20);
+        assert_eq!(map.get(&2).unwrap().bottom, 100);
+    }
+
+    #[test]
+    fn test_calculate_layout_proportional_fill() {
+        // Arrange
+        let rules = vec![
+            LayoutRule {
+                control_id: 1,
+                parent_control_id: None,
+                dock_style: DockStyle::ProportionalFill { weight: 1.0 },
+                order: 0,
+                fixed_size: None,
+                margin: (0, 0, 0, 0),
+            },
+            LayoutRule {
+                control_id: 2,
+                parent_control_id: None,
+                dock_style: DockStyle::ProportionalFill { weight: 2.0 },
+                order: 1,
+                fixed_size: None,
+                margin: (0, 0, 0, 0),
+            },
+        ];
+        let parent_rect = RECT {
+            left: 0,
+            top: 0,
+            right: 100,
+            bottom: 20,
+        };
+        // Act
+        let map = NativeWindowData::calculate_layout(parent_rect, &rules);
+        // Assert
+        let rect1 = map.get(&1).unwrap();
+        let rect2 = map.get(&2).unwrap();
+        assert_eq!(rect1.right - rect1.left, 33);
+        assert_eq!(rect2.left, 33);
+        assert_eq!(rect2.right - rect2.left, 66);
+    }
+
+    #[test]
+    fn test_calculate_layout_nested_panels() {
+        // Arrange
+        let outer_rule = LayoutRule {
+            control_id: 1,
+            parent_control_id: None,
+            dock_style: DockStyle::Fill,
+            order: 0,
+            fixed_size: None,
+            margin: (0, 0, 0, 0),
+        };
+        let inner_rules = vec![
+            LayoutRule {
+                control_id: 2,
+                parent_control_id: Some(1),
+                dock_style: DockStyle::Top,
+                order: 0,
+                fixed_size: Some(10),
+                margin: (0, 0, 0, 0),
+            },
+            LayoutRule {
+                control_id: 3,
+                parent_control_id: Some(1),
+                dock_style: DockStyle::Fill,
+                order: 1,
+                fixed_size: None,
+                margin: (0, 0, 0, 0),
+            },
+        ];
+        let parent_rect = RECT {
+            left: 0,
+            top: 0,
+            right: 50,
+            bottom: 50,
+        };
+        // Act
+        let outer_map = NativeWindowData::calculate_layout(parent_rect, &[outer_rule.clone()]);
+        let outer_rect = outer_map.get(&1).unwrap();
+        let inner_map = NativeWindowData::calculate_layout(
+            RECT {
+                left: 0,
+                top: 0,
+                right: outer_rect.right - outer_rect.left,
+                bottom: outer_rect.bottom - outer_rect.top,
+            },
+            &inner_rules,
+        );
+        // Assert
+        assert_eq!(outer_rect.right - outer_rect.left, 50);
+        assert_eq!(inner_map.get(&2).unwrap().bottom, 10);
+        assert_eq!(inner_map.get(&3).unwrap().top, 10);
+    }
 }
