@@ -535,7 +535,7 @@ impl NativeWindowData {
                     self.logical_window_id
                 );
                 unsafe {
-                    let _ = DeleteObject(HGDIOBJ(h_font.0 as *mut c_void));
+                    let _ = DeleteObject(HGDIOBJ(h_font.0));
                 }
             }
         }
