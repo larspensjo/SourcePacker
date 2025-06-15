@@ -805,10 +805,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::platform_layer::window_common::NativeWindowData;
     use crate::platform_layer::controls::treeview_handler::TreeViewInternalState;
     use crate::platform_layer::types::TreeItemId;
-    use windows::Win32::Foundation::{HWND, HTREEITEM};
+    use crate::platform_layer::window_common::NativeWindowData;
+    use windows::Win32::{Foundation::HWND, UI::Controls::HTREEITEM};
 
     // Helper function to create PathBuf from a slice of u16 (wide char buffer)
     // This is useful when dealing with paths from Win32 API calls.
@@ -873,7 +873,7 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_success() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(1));
+        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();
@@ -881,7 +881,9 @@ mod tests {
         }
         // Act
         let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
-            tv_state.item_id_to_htreeitem.insert(TreeItemId(7), HTREEITEM(7));
+            tv_state
+                .item_id_to_htreeitem
+                .insert(TreeItemId(7), HTREEITEM(7));
             Ok(())
         });
         // Assert
@@ -896,7 +898,7 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_error() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(1));
+        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();
@@ -904,7 +906,9 @@ mod tests {
         }
         // Act
         let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
-            tv_state.item_id_to_htreeitem.insert(TreeItemId(9), HTREEITEM(9));
+            tv_state
+                .item_id_to_htreeitem
+                .insert(TreeItemId(9), HTREEITEM(9));
             Err(PlatformError::OperationFailed("fail".into()))
         });
         // Assert
