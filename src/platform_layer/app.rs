@@ -1,6 +1,6 @@
 use super::command_executor;
+use super::controls::dialog_handler;
 use super::controls::treeview_handler;
-use super::dialog_handler;
 use super::error::{PlatformError, Result as PlatformResult};
 use super::types::AppEvent;
 use super::types::{

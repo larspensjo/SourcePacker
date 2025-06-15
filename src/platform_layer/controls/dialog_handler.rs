@@ -6,10 +6,10 @@
  * results back to the application logic via `AppEvent`s.
  */
 
-use super::app::Win32ApiInternalState;
-use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{AppEvent, WindowId};
-use super::window_common; // For ID_DIALOG_INPUT_EDIT, ID_DIALOG_INPUT_PROMPT_STATIC etc.
+use crate::platform_layer::app::Win32ApiInternalState;
+use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
+use crate::platform_layer::types::{AppEvent, WindowId};
+use crate::platform_layer::window_common; // For ID_DIALOG_INPUT_EDIT, ID_DIALOG_INPUT_PROMPT_STATIC etc.
 
 use std::ffi::{OsString, c_void};
 use std::mem::{align_of, size_of};
