@@ -1252,3 +1252,78 @@ pub(crate) fn destroy_native_window(
     // This function's purpose is to *try* to destroy, so don't bubble up "not found" as an error.
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::HWND;
+
+    /*
+     * Unit tests for NativeWindowData. These tests verify basic state
+     * management without invoking Win32 APIs, using dummy HWND values.
+     */
+
+    #[test]
+    fn test_register_control_hwnd_lookup() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(1));
+        let hwnd = HWND(0x1234 as isize);
+        // Act
+        data.register_control_hwnd(42, hwnd);
+        // Assert
+        assert_eq!(data.get_control_hwnd(42), Some(hwnd));
+        assert!(data.has_control(42));
+    }
+
+    #[test]
+    fn test_register_menu_action_increments_counter() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(2));
+        let start = data.get_next_menu_item_id_counter();
+        // Act
+        let id1 = data.register_menu_action(MenuAction::RefreshFileList);
+        let id2 = data.register_menu_action(MenuAction::RefreshFileList);
+        // Assert
+        assert_eq!(data.menu_action_count(), 2);
+        assert_eq!(id1, start);
+        assert_eq!(id2, start + 1);
+        assert_eq!(data.get_next_menu_item_id_counter(), start + 2);
+        assert_eq!(data.get_menu_action(id1), Some(MenuAction::RefreshFileList));
+    }
+
+    #[test]
+    fn test_set_and_get_label_severity() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(3));
+        // Act
+        data.set_label_severity(7, MessageSeverity::Warning);
+        // Assert
+        assert_eq!(data.get_label_severity(7), Some(MessageSeverity::Warning));
+    }
+
+    #[test]
+    fn test_set_input_background_color_none() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(4));
+        // Act
+        let result = data.set_input_background_color(5, None);
+        // Assert
+        assert!(result.is_ok());
+        assert!(data.get_input_background_color(5).is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_set_input_background_color_some() {
+        // Arrange
+        let mut data = NativeWindowData::new(WindowId(5));
+        // Act
+        let result = data.set_input_background_color(6, Some(0x00FF00));
+        // Assert
+        assert!(result.is_ok());
+        let state = data.get_input_background_color(6).expect("color state");
+        assert_eq!(state.color.0, 0x00FF00);
+        assert!(!state.brush.is_invalid());
+    }
+}
+
