@@ -51,16 +51,10 @@ This is the **current focus**. The goal is to move all logic for a specific cont
         *   **(Completed)**
 
     4.  **Button (`button_handler.rs`)**
-        *   **Action:** Create `button_handler.rs`.
-        *   **Action:** Move `execute_create_button` from `command_executor.rs` to `button_handler.rs`.
-        *   **Action:** Extract `BN_CLICKED` logic from `window_common::handle_wm_command` into a new function in `button_handler.rs`.
-        *   **Action:** Update call sites in `command_executor` and `window_common`.
+        *   **(Completed)**
 
     5.  **Panel (`panel_handler.rs`)**
-        *   **Action:** Create `panel_handler.rs`.
-        *   **Action:** Move `execute_create_panel` from `command_executor.rs` to `panel_handler.rs`.
-        *   **Action:** Move the `forwarding_panel_proc` from `command_executor.rs` to `panel_handler.rs`, as it is an implementation detail of the panel.
-        *   **Action:** Update the call site in `command_executor`.
+        *   **(Completed)**
 
     6.  **Menu (`menu_handler.rs`)**
         *   **Action:** Create `menu_handler.rs`.
