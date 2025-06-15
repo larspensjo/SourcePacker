@@ -196,9 +196,10 @@ pub enum AppEvent {
     MainWindowUISetupComplete {
         window_id: WindowId,
     },
-    // Signals that the user has submitted text in a filter input field. TODO: This should be generalized, for any input field.
-    FilterTextSubmitted {
+    // Signals that text was entered in an input control after debouncing.
+    InputTextChanged {
         window_id: WindowId,
+        control_id: i32,
         text: String,
     },
 }

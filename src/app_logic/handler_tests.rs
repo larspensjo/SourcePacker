@@ -2195,8 +2195,9 @@ mod handler_tests {
         let filter_text_to_submit = "find_me";
 
         // Act 1: Submit non-empty filter text
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: filter_text_to_submit.to_string(),
         });
         let cmds_after_submit = logic.test_drain_commands();
@@ -2225,8 +2226,9 @@ mod handler_tests {
         );
 
         // Act 2: Submit empty filter text (clearing the filter)
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "".to_string(),
         });
         let cmds_after_clear = logic.test_drain_commands();
@@ -2284,8 +2286,9 @@ mod handler_tests {
             .set_snapshot_nodes_for_mock(nodes);
 
         // Act
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "match".to_string(),
         });
         let cmds = logic.test_drain_commands();
@@ -2320,8 +2323,9 @@ mod handler_tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "filter".to_string(),
         });
         logic.test_drain_commands();
@@ -2360,8 +2364,9 @@ mod handler_tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "abc".into(),
         });
         logic.test_drain_commands();
@@ -2411,15 +2416,17 @@ mod handler_tests {
             .set_snapshot_nodes_for_mock(nodes);
 
         // Act 1: apply matching filter
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "match".into(),
         });
         let _ = logic.test_drain_commands();
 
         // Act 2: apply non-matching filter
-        logic.handle_event(AppEvent::FilterTextSubmitted {
+        logic.handle_event(AppEvent::InputTextChanged {
             window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
             text: "none".into(),
         });
         let cmds = logic.test_drain_commands();

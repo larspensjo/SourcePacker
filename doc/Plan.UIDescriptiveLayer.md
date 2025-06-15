@@ -64,9 +64,7 @@ This is the **current focus**. The goal is to move all logic for a specific cont
 ### Sub-Phase A.III: Review and Finalize Platform Layer Generality
 
 **Step A.III.1: Review and Remove Residual UI-Specific Knowledge**
-*   **Action:** After all control logic is migrated, perform a thorough review of the entire `platform_layer`.
-*   **Goal:** Ensure no SourcePacker-specific logic, layout assumptions, or control ID knowledge remains. All such specifics must be driven by `PlatformCommand`s. Constants like `ID_TREEVIEW_CTRL` must only be used in `app_logic` and passed into the `platform_layer`.
-*   *Verification:* Code review confirms increased generality. The `platform_layer` acts as a generic command executor and event translator.
+        *   **(Completed)**
 
 **Step A.III.2: Implement Unit Tests for Key Platform Layer Components**
 *   **Goal:** Increase the robustness and maintainability of the `platform_layer` by adding unit tests for its pure logic, independent of the Win32 API. This verifies the correctness of data management and complex algorithms like layout calculation.

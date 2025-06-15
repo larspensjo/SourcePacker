@@ -1563,7 +1563,7 @@ impl MyAppLogic {
             Some(s) => s,
             None => {
                 log::warn!(
-                    "FilterTextSubmitted received for an unknown or non-main window (ID: {:?}). Ignoring event.",
+                    "InputTextChanged for filter input received for an unknown or non-main window (ID: {:?}). Ignoring event.",
                     window_id
                 );
                 return;
@@ -1719,8 +1719,20 @@ impl PlatformEventHandler for MyAppLogic {
             AppEvent::MainWindowUISetupComplete { window_id } => {
                 self._on_ui_setup_complete(window_id);
             }
-            AppEvent::FilterTextSubmitted { window_id, text } => {
-                self.handle_filter_text_submitted(window_id, text);
+            AppEvent::InputTextChanged {
+                window_id,
+                control_id,
+                text,
+            } => {
+                if control_id == ui_constants::FILTER_INPUT_ID {
+                    self.handle_filter_text_submitted(window_id, text);
+                } else {
+                    log::debug!(
+                        "InputTextChanged received for unhandled control {} in window {:?}",
+                        control_id,
+                        window_id
+                    );
+                }
             }
         }
     }
