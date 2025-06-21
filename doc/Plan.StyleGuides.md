@@ -1,28 +1,27 @@
-# Step-by-Step Plan: Implementing Defined Styles (Method 2) & UI Enhancements
+# Refactored Plan: A Comprehensive Styling and Theming System
 
-**Goal:** Implement a foundational styling system where styles are defined with an ID and then applied to controls. Subsequently, extend this system with panel-specific backgrounds, border controls, and tooltip functionality. This plan assumes the "UI Descriptive Layer plan" is completed.
+**Goal:** To refactor the UI system to support a flexible, ID-based styling mechanism. This will decouple style definitions from control creation, enabling the implementation of themes like "Neon Night" and making future look-and-feel changes easier. The system will be built in small, verifiable increments where the application remains functional after each phase.
 
 **Legend:**
-*   **(PL-Types):** Changes in `platform_layer/types.rs` (or a new `platform_layer/styling.rs`)
-*   **(PL-State):** Changes in `platform_layer/app.rs` (Win32ApiInternalState) or `platform_layer/window_common.rs` (NativeWindowData)
-*   **(PL-Exec):** Changes in `platform_layer/command_executor.rs`
-*   **(PL-WndProc):** Changes in `platform_layer/window_common.rs` (WndProc message handling)
-*   **(UIDL):** Changes in `ui_description_layer/mod.rs`
-*   **(AppLogic):** Potential future changes in `app_logic/handler.rs` for dynamic styling
+*   **(PL-Types):** Changes in `platform_layer/types.rs` or a new `platform_layer/styling.rs`.
+*   **(PL-State):** Changes in `platform_layer/app.rs` or `platform_layer/window_common.rs`.
+*   **(PL-Exec):** Changes in `platform_layer/command_executor.rs` or control handlers.
+*   **(PL-WndProc):** Changes in `platform_layer/window_common.rs` (message handling).
+*   **(UIDL):** Changes in `ui_description_layer.rs` or a new `ui_description_layer/theme.rs`.
 
 ---
 
-## Phase 1: Define Core Styling Types and Commands (Foundation)
+## Phase 1: Foundational Types for a Definable Style System
 
-**Objective:** Establish the necessary structs for describing styles (initially font & color) and the `PlatformCommand`s to manage them.
+**Objective:** Establish the core data structures for defining styles and the commands to manage them. This phase involves no visual changes but lays the entire groundwork.
 
-1.  **Create `platform_layer/styling.rs` (Optional but Recommended):**
-    *   **Action:** Create `src/platform_layer/styling.rs`.
-    *   **Action:** Add `pub mod styling;` to `src/platform_layer/mod.rs` and `pub use styling::*;` to re-export.
+1.  **Create a New Module for Styling (Recommended):**
+    *   **Action:** Create `src/platform_layer/styling.rs` to house all style-related definitions.
+    *   **Action:** Add `pub mod styling;` to `src/platform_layer/mod.rs` and `pub use styling::*;` to re-export its contents.
 
-2.  **(PL-Types) Define Basic Styling Primitives:**
-    *   **File:** `platform_layer/styling.rs`.
-    *   **Action:** Define `Color`, `FontWeight`, and `FontDescription` structs.
+2.  **(PL-Types) Define Core Styling Primitives:**
+    *   **File:** `platform_layer/styling.rs`
+    *   **Action:** Define the basic building blocks for styles.
         ```rust
         #[derive(Debug, Clone, Default, PartialEq, Eq)]
         pub struct Color { pub r: u8, pub g: u8, pub b: u8 }
@@ -35,52 +34,52 @@
             pub name: Option<String>,
             pub size: Option<i32>,
             pub weight: Option<FontWeight>,
-            pub italic: Option<bool>,
-            pub underline: Option<bool>,
-            pub strikeout: Option<bool>,
+            // italic, underline, etc. can be added here
         }
         ```
 
-3.  **(PL-Types) Define `ControlStyle` Struct (Initial Version):**
-    *   **File:** `platform_layer/styling.rs`.
-    *   **Action:** Define the main `ControlStyle` struct, starting with font and basic colors.
+3.  **(PL-Types) Define the Master `ControlStyle` Struct:**
+    *   **File:** `platform_layer/styling.rs`
+    *   **Action:** Define the struct that holds all possible style properties. We will start simple and add more properties in later phases.
         ```rust
         #[derive(Debug, Clone, Default, PartialEq, Eq)]
         pub struct ControlStyle {
             pub font: Option<FontDescription>,
             pub text_color: Option<Color>,
             pub background_color: Option<Color>,
-            // Border and other properties will be added in later phases
+            // Properties for border, hover, etc., will be added later.
         }
         ```
 
-4.  **(PL-Types) Define `StyleId` Enum (Initial Version):**
-    *   **File:** `platform_layer/styling.rs`.
-    *   **Action:** Define an enum for named styles. Start with essential ones.
+4.  **(PL-Types) Define `StyleId` Enum:**
+    *   **File:** `platform_layer/styling.rs`
+    *   **Action:** Create an enum to act as the unique identifier for each defined style. This is the equivalent of `x:Key` in WPF.
         ```rust
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum StyleId {
-            // General Purpose
+            // General Controls
             DefaultText,
             DefaultButton,
-            DefaultPanel, // For generic panel backgrounds
-
-            // Specific Labels (examples)
+            DefaultInput,
+            // Panels & Regions
+            MainWindowBackground,
+            PanelBackground,
+            StatusBarBackground,
+            // Specific elements
             StatusLabelNormal,
             StatusLabelWarning,
             StatusLabelError,
-            // Add more specific StyleIds for panels in Phase 6
         }
         ```
 
-5.  **(PL-Types) Add New `PlatformCommand` Variants for Styling:**
-    *   **File:** `platform_layer/types.rs` (in `PlatformCommand` enum).
-    *   **Action:** Add commands for defining and applying styles.
+5.  **(PL-Types) Add New `PlatformCommand` Variants:**
+    *   **File:** `platform_layer/types.rs`
+    *   **Action:** Add the two key commands for our new system into the `PlatformCommand` enum.
         ```rust
         // ... existing commands
         DefineStyle {
             style_id: StyleId,
-            style_definition: ControlStyle,
+            style: ControlStyle,
         },
         ApplyStyleToControl {
             window_id: WindowId,
@@ -89,249 +88,169 @@
         },
         ```
 
-6.  **(PL-State) Define `ParsedControlStyle` (Internal - Initial Version):**
-    *   **File:** `platform_layer/styling.rs` (or `app.rs`).
-    *   **Action:** Struct for platform layer's internal representation.
+6.  **(PL-State) Define the Internal `ParsedControlStyle`:**
+    *   **File:** `platform_layer/styling.rs`
+    *   **Action:** Create a struct for the `platform_layer`'s internal use, which will hold processed data like native `HFONT` handles. This encapsulates Win32 types.
         ```rust
-        use windows::Win32::Graphics::Gdi::HFONT;
+        use windows::Win32::Graphics::Gdi::{HFONT, DeleteObject};
 
         #[derive(Debug, Clone)]
         pub(crate) struct ParsedControlStyle {
             pub(crate) font_handle: Option<HFONT>,
             pub(crate) text_color: Option<Color>,
             pub(crate) background_color: Option<Color>,
-            pub(crate) original_font_desc: Option<FontDescription>,
-            // Border and other parsed properties will be added in later phases
+            // ... other parsed properties ...
         }
 
         impl Drop for ParsedControlStyle { // Handles HFONT cleanup
             fn drop(&mut self) {
                 if let Some(hfont) = self.font_handle.take() {
                     if !hfont.is_invalid() {
-                        unsafe { windows::Win32::Graphics::Gdi::DeleteObject(hfont); }
-                        log::trace!("Dropped HFONT {:?}", hfont);
+                        unsafe { DeleteObject(hfont); }
                     }
                 }
             }
         }
         ```
 
----
-
-## Phase 2: `platform_layer` - Implement `DefineStyle` (Foundation)
-
-*(No changes from original plan for this phase, focuses on initial `ControlStyle` fields)*
-
-1.  **(PL-State) Add Storage for Defined Styles in `Win32ApiInternalState`:** `defined_styles: RwLock<HashMap<StyleId, ParsedControlStyle>>`.
-2.  **(PL-Exec) Implement `execute_define_style`:** Parses initial `ControlStyle` (font, text/bg color), creates `HFONT`, stores in `defined_styles`.
+**Verification:** The application compiles successfully. No functional changes are expected.
 
 ---
 
-## Phase 3: `platform_layer` - Implement `ApplyStyleToControl` and Rendering (Foundation)
+## Phase 2: Backend - Implementing `DefineStyle`
 
-*(No changes from original plan for this phase, focuses on initial `ControlStyle` fields)*
+**Objective:** Implement the logic that allows the platform layer to receive style definitions and store them in a parsed, ready-to-use format. Still no visual changes.
 
-1.  **(PL-State) Add Storage for Applied Styles per Control in `NativeWindowData`:** `applied_styles: HashMap<i32, StyleId>`.
-2.  **(PL-Exec) Implement `execute_apply_style_to_control`:** Looks up style, sends `WM_SETFONT`, stores mapping, invalidates control.
-3.  **(PL-WndProc) Modify `WM_CTLCOLORSTATIC` (and similar):** Retrieves applied style and uses its `text_color` and `background_color`.
-
----
-
-## Phase 4: `ui_description_layer` Integration (Foundation)
-
-*(No changes from original plan for this phase, focuses on initial `ControlStyle` fields)*
-
-1.  **(UIDL) Define Styles:** Add `DefineStyle` commands using the initial `ControlStyle` definition.
-2.  **(UIDL) Apply Styles to Controls:** Add `ApplyStyleToControl` commands.
-3.  **(UIDL) Decide on `MessageSeverity` vs. `StyleId` for status label colors.**
-
----
-
-## Phase 5: Testing and Refinement (Foundation)
-
-*(No changes from original plan for this phase)*
-
-1.  **Unit Tests & Manual Verification** for font and color application.
-2.  **Resource Leak Check** for `HFONT`s.
-3.  **API Review.**
-
----
-
-## Phase 6: Advanced Styling - Panel/Section Specific Backgrounds
-
-**Objective:** Allow `ui_description_layer` to define distinct background colors for different panels/sections by leveraging the existing styling mechanism with more specific `StyleId`s.
-
-1.  **(PL-Types & UIDL) Define More Specific `StyleId`s for Panels:**
-    *   **File (PL-Types):** `platform_layer/styling.rs` (in `StyleId` enum).
-    *   **Action:** Add new `StyleId`s like:
+1.  **(PL-State) Add Storage for Defined Styles:**
+    *   **File:** `platform_layer/app.rs`
+    *   **Action:** In `Win32ApiInternalState`, add a map to store the defined styles.
         ```rust
-        // ... existing StyleIds
-        FiltersPaneBackground,
-        EditorPaneBackground,
-        StatusBarPanelBackground, // If not already granular enough
-        // Add others as identified from your UI structure
+        // in Win32ApiInternalState
+        defined_styles: RwLock<HashMap<StyleId, ParsedControlStyle>>,
         ```
-    *   **File (UIDL):** `ui_description_layer/mod.rs`.
-    *   **Action:** In `build_main_window_static_layout`, use `PlatformCommand::DefineStyle` to define these new `StyleId`s, primarily setting their `background_color` property in `ControlStyle`.
-        ```rust
-        commands.push(PlatformCommand::DefineStyle {
-            style_id: StyleId::FiltersPaneBackground,
-            style_definition: ControlStyle {
-                background_color: Some(Color { r: 60, g: 60, b: 60 }), // Example dark gray
-                ..Default::default() // Other properties can be default or inherited if/when implemented
-            },
-        });
-        ```
-    *   **Action (UIDL):** When creating panels (e.g., status bar panel, future sidebars), use `PlatformCommand::ApplyStyleToControl` to apply these new panel-specific `StyleId`s to the respective panel `control_id`s.
 
-2.  **(PL-WndProc) Ensure Panel Backgrounds are Drawn:**
-    *   **File:** `platform_layer/window_common.rs`.
-    *   **Action:** The existing `WM_CTLCOLORSTATIC` handler (which panels are, as they are `WC_STATIC`) should already pick up the `background_color` from the applied `StyleId` if it's set. It needs to return an `HBRUSH` for that color.
-        ```rust
-        // Inside WM_CTLCOLORSTATIC, after retrieving 'parsed_style':
-        if let Some(parsed_style) = style_to_apply {
-            // ... existing text_color logic ...
-            if let Some(bg_color) = &parsed_style.background_color {
-                // IMPORTANT: Brushes created here need to be managed (cached or deleted).
-                // For simplicity now, we might leak them or use GetSysColorBrush if it's a system color.
-                // A better approach is a brush cache in Win32ApiInternalState.
-                let hbrush = unsafe { CreateSolidBrush(RGB(bg_color.r, bg_color.g, bg_color.b)) };
-                lresult_override = Some(LRESULT(hbrush.0 as isize)); // Return the brush
-                // SetBkColor(hdc_static_ctrl, RGB(bg_color.r, bg_color.g, bg_color.b)); // Alternative for some controls
-            } else {
-                // Default background handling (e.g., transparent for labels, default for panels)
-                unsafe { SetBkMode(hdc_static_ctrl, TRANSPARENT.0); }
-                lresult_override = Some(LRESULT(GetStockObject(NULL_BRUSH).0 as isize));
-            }
-            handled = true;
-        }
-        ```
-    *   **Refinement:** Brush management for `WM_CTLCOLOR*` is important. Creating brushes on every message is inefficient and leaks. Implement a brush cache in `Win32ApiInternalState` or `NativeWindowData` keyed by `Color`, or only support a fixed palette of system brushes initially.
+2.  **(PL-Exec) Implement `execute_define_style`:**
+    *   **Action:** Create a function to handle the `DefineStyle` command (e.g., in `command_executor.rs` or a new `styling_handler.rs`). It will:
+        *   Parse the incoming `ControlStyle` (e.g., create an `HFONT` from a `FontDescription`).
+        *   Create a `ParsedControlStyle` instance.
+        *   Store it in the `defined_styles` map in `Win32ApiInternalState`, replacing any existing style with the same ID.
 
-3.  **Testing:**
-    *   Verify that different panels defined by `ui_description_layer` now show their distinct background colors.
+**Verification:** The application compiles. Unit tests can be written to verify that calling `DefineStyle` results in a correctly parsed style being added to the internal state map.
 
 ---
 
-## Phase 7: Advanced Styling - Border Control (Thickness, Color, Visibility)
+## Phase 3: Backend - Implementing `ApplyStyleToControl` and Basic Rendering
 
-**Objective:** Extend `ControlStyle` and `platform_layer` to support basic border styling. "Shadow" is deferred as it's much more complex.
+**Objective:** Make the styles appear on screen. This is the first phase with a visible result, focusing on fonts and colors.
 
-1.  **(PL-Types) Extend `ControlStyle` and `ParsedControlStyle` for Borders:**
-    *   **File:** `platform_layer/styling.rs`.
-    *   **Action:** Add border-related fields to both structs.
+1.  **(PL-State) Add Storage for Applied Styles:**
+    *   **File:** `platform_layer/window_common.rs`
+    *   **Action:** In `NativeWindowData`, add a map to track which style is applied to which control.
         ```rust
-        // In ControlStyle
-        // ... existing fields ...
-        pub border_thickness: Option<u32>,     // e.g., 1, 2 pixels
+        // in NativeWindowData
+        applied_styles: HashMap<i32, StyleId>,
+        ```
+
+2.  **(PL-Exec) Implement `execute_apply_style_to_control`:**
+    *   **Action:** Create a function to handle `ApplyStyleToControl`. It will:
+        *   Store the `control_id -> style_id` mapping in the window's `NativeWindowData`.
+        *   Look up the `ParsedControlStyle` from the global `defined_styles` map.
+        *   If a font is present in the style, send a `WM_SETFONT` message to the control's `HWND`.
+        *   Call `InvalidateRect` on the control to force it to repaint with the new style properties.
+
+3.  **(PL-WndProc) Modify `WndProc` for Color Handling:**
+    *   **File:** `platform_layer/window_common.rs` (or relevant control handlers).
+    *   **Action:** Modify the handlers for `WM_CTLCOLORSTATIC`, `WM_CTLCOLOREDIT`, etc.
+        *   When a message arrives, get the `control_id` from the `HWND`.
+        *   Look up the `StyleId` in the `applied_styles` map for that control.
+        *   If found, get the `ParsedControlStyle` from the global map.
+        *   Use the `text_color` and `background_color` from the parsed style to set the text color and return the appropriate background brush.
+        *   This will **replace** the existing hardcoded `MessageSeverity` logic in `label_handler.rs`.
+
+**Verification:** At the end of this phase, you can define a simple style in the UIDL, apply it to a label, and it should appear with the specified font and colors.
+
+---
+
+## Phase 4: UI Descriptive Layer Integration and Theming
+
+**Objective:** Define the entire "Neon Night" theme using the new styling system.
+
+1.  **Create a Theme Definition Module:**
+    *   **Action:** Create a new file: `src/ui_description_layer/theme.rs`.
+    *   **Action:** Create a function `pub fn define_neon_night_theme() -> Vec<PlatformCommand>`. This function will return a list of `PlatformCommand::DefineStyle` commands for every `StyleId`.
+    *   **Rationale:** This separates theme definition (colors, fonts) from UI layout (which controls exist and where).
+
+2.  **(UIDL) Define the "Neon Night" Styles:**
+    *   **File:** `ui_description_layer/theme.rs`
+    *   **Action:** Translate the colors from `DarkTheme.xaml` into `Color { r, g, b }` structs in Rust.
+    *   **Action:** Implement `define_neon_night_theme()` to create `DefineStyle` commands for all your `StyleId`s (`DefaultButton`, `PanelBackground`, etc.), setting their `ControlStyle` properties.
+
+3.  **(UIDL) Apply Styles to Controls:**
+    *   **File:** `ui_description_layer.rs`
+    *   **Action:** In `build_main_window_static_layout`:
+        *   First, call `theme::define_neon_night_theme()` and add all the returned commands to the command list.
+        *   After each `CreateButton`, `CreatePanel`, etc. command, add a `PlatformCommand::ApplyStyleToControl` command to apply the desired `StyleId` to that control.
+
+**Verification:** Relaunch the application. The entire UI should now have the basic colors and fonts of the Neon Night theme.
+
+---
+
+## Phase 5: Advanced Styling - Borders and Focus Effects
+
+**Objective:** Implement custom borders and the focus "glow" effect, which are crucial for the Neon Night theme's aesthetic.
+
+1.  **(PL-Types) Extend `ControlStyle`:**
+    *   **File:** `platform_layer/styling.rs`
+    *   **Action:** Add border and focus properties to `ControlStyle` and `ParsedControlStyle`.
+        ```rust
+        // in ControlStyle
         pub border_color: Option<Color>,
-        pub border_visibility: Option<bool>,   // To explicitly show/hide standard WS_BORDER
-
-        // In ParsedControlStyle
-        // ... existing fields ...
-        pub(crate) border_thickness: Option<u32>,
-        pub(crate) border_color: Option<Color>,
-        pub(crate) border_visibility: Option<bool>,
+        pub border_thickness: Option<u32>,
+        pub focus_border_color: Option<Color>, // Used to simulate the "glow"
         ```
 
-2.  **(PL-Exec) Update `execute_define_style`:**
-    *   **Action:** Modify it to copy the new border properties from `style_definition` to `parsed_style`.
+2.  **(PL-Exec & PL-WndProc) Implement Border and Focus Drawing:**
+    *   **The Challenge:** True glow effects are difficult in native Win32. We will simulate it by changing the border color on focus.
+    *   **Recommended Approach:** Handle `WM_NCPAINT` (non-client area paint). This is the most robust way to draw custom borders around standard controls.
+    *   **Action (WM_NCPAINT):**
+        *   When a control with a custom border style gets this message, call the default window procedure first.
+        *   Then, get the window's `RECT` and a device context (`HDC`) for the non-client area.
+        *   Check if the control is focused (`GetFocus() == hwnd`).
+        *   Select the `focus_border_color` if focused and the style defines it; otherwise, use the normal `border_color`.
+        *   Draw a frame around the control using this color.
+    *   **Action (Focus Handling):**
+        *   In the main `WndProc`, handle `WM_SETFOCUS` and `WM_KILLFOCUS`. When a control receives or loses focus, call `RedrawWindow` with the `RDW_FRAME` flag to force a `WM_NCPAINT` message, triggering the border color change.
 
-3.  **(PL-Exec & PL-WndProc) Implement Border Application:**
-    *   **Standard Border Visibility (`border_visibility`):**
-        *   **Action (PL-Exec):** In `execute_apply_style_to_control`, if the applied `ParsedControlStyle` has `border_visibility` set:
-            *   Get current window styles using `GetWindowLongPtrW(hwnd, GWL_STYLE)`.
-            *   If `border_visibility` is `true`, add `WS_BORDER` style. If `false`, remove `WS_BORDER`.
-            *   Use `SetWindowLongPtrW(hwnd, GWL_STYLE, new_styles)` to apply.
-            *   Call `SetWindowPos(hwnd, ..., SWP_FRAMECHANGED | ...)` to force redraw of the frame.
-    *   **Custom Border Color/Thickness (Simple Initial Version - `border_color`, `border_thickness`):**
-        *   This requires custom drawing. A simple approach for 1px borders on `WC_STATIC` (panels) or other simple controls:
-        *   **(PL-WndProc) `WM_PAINT` Handler:**
-            *   If a control has a style with `border_color` and `border_thickness: Some(1)`:
-                *   After default painting (or instead of, for full custom), get client `RECT`.
-                *   Create a pen with `border_color`.
-                *   Select pen into `HDC`, draw rectangle frame inside the client rect.
-                *   Restore old pen, delete created pen.
-        *   **Alternative (WM_NCPAINT for non-client borders - more complex):**
-            *   If a style has `border_color`:
-                *   Handle `WM_NCPAINT`. Call default proc first.
-                *   Get window DC (`GetWindowDC`).
-                *   Draw a rectangle around the window's non-client frame using the `border_color`.
-                *   Release DC.
-        *   **Initial Focus:** Start with `border_visibility` (controlling `WS_BORDER`). Custom color/thickness can be a more advanced follow-up within this phase or deferred if too complex initially.
+3.  **(UIDL) Update Theme Definition:**
+    *   **Action:** Add border and focus color properties to your style definitions in `ui_description_layer/theme.rs`.
 
-4.  **(UIDL) Update Style Definitions:**
-    *   **Action:** Modify some `DefineStyle` commands to include `border_visibility`, `border_color`, `border_thickness` for relevant controls.
-
-5.  **Testing:**
-    *   Verify `WS_BORDER` can be toggled.
-    *   If attempting custom border drawing, test visual correctness, performance, and ensure it doesn't interfere with standard control painting.
+**Verification:** Panels and controls should have custom-colored borders. When you tab to a `TextBox` or `Button`, its border color should change to the accent color, simulating the focus glow.
 
 ---
 
-## Phase 8: UI Enhancement - Tooltip Support
+## Phase 6: UI Enhancement - Tooltip Support
 
-**Objective:** Implement functionality for displaying tooltips on UI controls.
+**Objective:** Implement styled tooltips, reusing the logic from the previous plan but integrating it with the new theme.
 
-1.  **(PL-Types) Add `PlatformCommand` for Tooltips:**
-    *   **File:** `platform_layer/types.rs`.
-    *   **Action:**
-        ```rust
-        // In PlatformCommand enum
-        SetControlTooltip {
-            window_id: WindowId,
-            control_id: i32,
-            tooltip_text: Option<String>, // None to remove tooltip
-        },
-        ```
+1.  **(PL-Types) Add Tooltip Command:**
+    *   **File:** `platform_layer/types.rs`
+    *   **Action:** Add `SetControlTooltip { window_id: WindowId, control_id: i32, tooltip_text: Option<String> }`.
 
-2.  **(PL-State) Manage Tooltip Control in `NativeWindowData`:**
-    *   **File:** `platform_layer/window_common.rs`.
-    *   **Action:** Add `pub(crate) hwnd_tooltip: Option<HWND>` to `NativeWindowData`.
-    *   **Action:** Initialize to `None`. Ensure `DestroyWindow` is called on it if Some during `WM_DESTROY`.
+2.  **(PL-Exec & PL-State) Implement Tooltip Logic:**
+    *   **Action:** Implement the logic to create a tooltip control (`TOOLTIPS_CLASSW`) per window and use `TTM_ADDTOOLW` to associate text with a control's `HWND`.
+    *   **Styling:** To style the tooltip itself, it must be created with the `TTS_OWNERDRAW` style. This requires handling `WM_DRAWITEM` for the tooltip, which is an advanced step.
+    *   **Simpler Alternative:** A simpler first step is to accept the default system tooltip appearance. Full custom styling can be a follow-on task.
 
-3.  **(PL-Exec) Implement `execute_set_control_tooltip`:**
-    *   **File:** `platform_layer/command_executor.rs`.
-    *   **Action:**
-        *   Retrieve `window_data` and `control_hwnd`.
-        *   If `window_data.hwnd_tooltip` is `None`, create a tooltip control (`TOOLTIPS_CLASSW`) as a child of `window_data.hwnd`. Store its handle in `window_data.hwnd_tooltip`.
-            *   Use styles like `WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX`.
-            *   Optionally send `TTM_SETMAXTIPWIDTH`.
-        *   Create a `TOOLINFOW` struct.
-            *   `uFlags = TTF_IDISHWND | TTF_SUBCLASS` (identifies tool by `HWND`, subclasses the control).
-            *   `hwnd = window_data.hwnd` (owner of the tooltip window).
-            *   `uId = control_hwnd.0 as usize` (the `HWND` of the control getting the tooltip).
-        *   If `tooltip_text` is `Some`:
-            *   Set `ti.lpszText` to point to the (null-terminated) wide string of the text.
-            *   Send `TTM_ADDTOOLW` message to `hwnd_tooltip_ctrl`. Handle potential errors if the tool already exists (log, or try `TTM_DELTOOLW` then `TTM_ADDTOOLW`).
-        *   If `tooltip_text` is `None`:
-            *   Send `TTM_DELTOOLW` message to `hwnd_tooltip_ctrl` to remove the tooltip for that `control_hwnd`.
+3.  **(UIDL) Add Tooltips:**
+    *   **Action:** After creating a button or other control, send a `SetControlTooltip` command.
 
-4.  **(PL-WndProc) Message Relaying (Generally Automatic with `TTF_SUBCLASS`):**
-    *   `TTF_SUBCLASS` usually handles message relaying. If issues arise with custom controls not showing tooltips, you might need to manually relay mouse messages using `TTM_RELAYEVENT`. For standard controls, this is often not needed.
-
-5.  **(UIDL or AppLogic) Using Tooltips:**
-    *   **Action (UIDL - for static tooltips):** After creating a control, send `SetControlTooltip` command.
-        ```rust
-        commands.push(PlatformCommand::CreateButton { /* ... */ control_id: MY_BUTTON_ID, /* ... */ });
-        commands.push(PlatformCommand::SetControlTooltip {
-            window_id,
-            control_id: MY_BUTTON_ID,
-            tooltip_text: Some("This button does X.".to_string()),
-        });
-        ```
-    *   **Action (AppLogic - for dynamic tooltips):** `app_logic` can send `SetControlTooltip` at any time to change or remove a tooltip based on application state.
-
-6.  **Testing:**
-    *   Verify tooltips appear on hover for configured controls.
-    *   Verify tooltips can be set, updated, and removed dynamically (if `AppLogic` sends commands).
-    *   Test with multiple controls having tooltips on the same window.
+**Verification:** Hovering over a control with a configured tooltip displays the text.
 
 ---
 
-## Phase 9: Review and Further Enhancements (Post-All-Features)
+## Phase 7: Review and Further Enhancements
 
 1.  **Comprehensive Testing:** Test all styling and tooltip features in combination.
-2.  **Performance Review:** Especially for any custom drawing (borders) or frequent tooltip updates.
-3.  **API and `StyleId` Refinement:** Based on usage, adjust `StyleId`s for clarity and add more `ControlStyle` properties if needed.
-4.  **Consider "Shadows" (Major Future Work):** If desired, this would be a significant undertaking, likely involving layered windows or complex DWM manipulations.
+2.  **Performance Review:** Assess the performance impact of custom drawing, especially `WM_NCPAINT` handlers.
+3.  **API and `StyleId` Refinement:** Based on usage, adjust `StyleId`s for clarity and add more `ControlStyle` properties if needed (e.g., hover-state colors).
+4.  **Consider Hover Effects:** Implement hover state changes by handling `WM_MOUSEMOVE` and `WM_MOUSELEAVE` (`TrackMouseEvent`) to trigger repaints, similar to the focus handling logic.
