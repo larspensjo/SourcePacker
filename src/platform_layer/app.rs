@@ -508,6 +508,12 @@ impl Win32ApiInternalState {
             } => command_executor::execute_set_input_background_color(
                 self, window_id, control_id, color,
             ),
+            PlatformCommand::DefineStyle { .. } => {
+                todo!("DefineStyle not implemented for Win32")
+            }
+            PlatformCommand::ApplyStyleToControl { .. } => {
+                todo!("ApplyStyleToControl not implemented for Win32")
+            }
         }
     }
 }

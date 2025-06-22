@@ -10,6 +10,8 @@
 
 use std::path::PathBuf;
 
+use super::styling::{ControlStyle, StyleId};
+
 // An opaque identifier for a native window, managed by the platform layer.
 //
 // The application logic layer uses this ID to refer to specific windows
@@ -342,7 +344,7 @@ pub enum PlatformCommand {
         control_id: i32,
         text: String,
     },
-    /// Sets the background color of an input control. None resets to system default.
+    // Sets the background color of an input control. None resets to system default.
     SetInputBackgroundColor {
         window_id: WindowId,
         control_id: i32,
@@ -354,12 +356,12 @@ pub enum PlatformCommand {
         text: String,
         severity: MessageSeverity,
     },
-    /// Expands only the currently visible items in a TreeView. Used when a filter is active.
+    // Expands only the currently visible items in a TreeView. Used when a filter is active.
     ExpandVisibleTreeItems {
         window_id: WindowId,
         control_id: i32,
     },
-    /// Expands all items in a TreeView regardless of visibility.
+    // Expands all items in a TreeView regardless of visibility.
     ExpandAllTreeItems {
         window_id: WindowId,
         control_id: i32,
@@ -368,6 +370,19 @@ pub enum PlatformCommand {
         window_id: WindowId,
         control_id: i32, /* New: Logical ID of the TreeView containing the item */
         item_id: TreeItemId,
+    },
+
+    // --- Style Management Commands ---
+    // This style can then be applied to controls.
+    DefineStyle {
+        style_id: StyleId,
+        style: ControlStyle,
+    },
+    // Applies a previously defined style to a specific control.
+    ApplyStyleToControl {
+        window_id: WindowId,
+        control_id: i32,
+        style_id: StyleId,
     },
 }
 
@@ -390,7 +405,6 @@ pub trait PlatformEventHandler: Send + Sync + 'static {
     // Attempts to dequeue a single `PlatformCommand` from the internal queue.
     // This is called by the platform layer's run loop.
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand>;
-
 }
 
 /// Provides synchronous access to UI state needed by the platform layer.
