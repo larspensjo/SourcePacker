@@ -82,3 +82,7 @@ Implementation complete.
 
 ## P4.6: Graphical effect on status change
 *   When something in the status field changes, I want there to be a visual effect that gradually fades away.
+
+## P4.7: Future Exploration: Advanced Layout and Deeper Decomposition**
+*   **(Future)** This remains a longer-term goal. Consider advanced layout managers (e.g., grid, stack panels) as generic offerings within `platform_layer`, configurable by `ui_description_layer`.
+*   **(Future)** Evaluate if `NativeWindowData` can be made more generic or if control-specific state can be fully encapsulated within their respective handlers.
