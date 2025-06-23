@@ -34,6 +34,9 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 *   Implement a proper dialog for profile selection in the platform layer (not a stub).
 *   Implement a user-friendly UI for listing, selecting, creating, and deleting profiles within the application.
 
+## P2.14: Better encapsulation of Win32ApiInternalState
+*   The controls shouldn't depend on Win32ApiInternalState, see styling_hander.rs
+
 # Phase 3: Enhancements & UX Improvements
 
 ## P3.2: Quick search visual enhancement

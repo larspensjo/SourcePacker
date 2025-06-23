@@ -2,9 +2,10 @@ use crate::platform_layer::{
     command_executor,
     controls::{
         button_handler, dialog_handler, label_handler, menu_handler, panel_handler,
-        treeview_handler,
+        styling_handler, treeview_handler,
     },
     error::{PlatformError, Result as PlatformResult},
+    styling::{ControlStyle, ParsedControlStyle, StyleId},
     types::{
         AppEvent, PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig, WindowId,
     },
@@ -44,6 +45,8 @@ pub(crate) struct Win32ApiInternalState {
     active_windows: RwLock<HashMap<WindowId, window_common::NativeWindowData>>,
     application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     ui_state_provider: Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>>,
+    // Stores processed, native-ready style definitions, keyed by a semantic ID.
+    defined_styles: RwLock<HashMap<StyleId, ParsedControlStyle>>,
     // The application name, used for window class registration.
     app_name_for_class: String,
     is_quitting: AtomicUsize, // 0 = false, 1 = true
@@ -119,6 +122,7 @@ impl Win32ApiInternalState {
                 active_windows: RwLock::new(HashMap::new()),
                 application_event_handler: Mutex::new(None),
                 ui_state_provider: Mutex::new(None),
+                defined_styles: RwLock::new(HashMap::new()),
                 app_name_for_class,
                 is_quitting: AtomicUsize::new(0),
             }))
@@ -508,13 +512,56 @@ impl Win32ApiInternalState {
             } => command_executor::execute_set_input_background_color(
                 self, window_id, control_id, color,
             ),
-            PlatformCommand::DefineStyle { .. } => {
-                todo!("DefineStyle not implemented for Win32")
+            PlatformCommand::DefineStyle { style_id, style } => {
+                self.execute_define_style(style_id, style)
             }
             PlatformCommand::ApplyStyleToControl { .. } => {
                 todo!("ApplyStyleToControl not implemented for Win32")
             }
         }
+    }
+
+    /*
+     * Executes the `DefineStyle` command.
+     *
+     * This method orchestrates the process of defining a style. It delegates the
+     * complex parsing of the `ControlStyle` to the `styling_handler`, and then
+     * performs the state modification by inserting the resulting `ParsedControlStyle`
+     * into its own `defined_styles` map. This maintains proper encapsulation.
+     */
+    fn execute_define_style(
+        self: &Arc<Self>,
+        style_id: StyleId,
+        style: ControlStyle,
+    ) -> PlatformResult<()> {
+        log::debug!(
+            "Win32ApiInternalState: execute_define_style for StyleId::{:?}",
+            style_id
+        );
+
+        // 1. Delegate parsing to the specialized handler.
+        let parsed_style = styling_handler::parse_style(style)?;
+
+        // 2. Modify the internal state.
+        match self.defined_styles.write() {
+            Ok(mut styles_map) => {
+                styles_map.insert(style_id, parsed_style);
+                log::debug!(
+                    "Successfully stored parsed style for StyleId::{:?}",
+                    style_id
+                );
+            }
+            Err(e) => {
+                log::error!(
+                    "Failed to acquire write lock on defined_styles map: {:?}",
+                    e
+                );
+                return Err(PlatformError::OperationFailed(
+                    "RwLock poisoned on defined_styles map".to_string(),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
