@@ -10,8 +10,8 @@ mod handler_tests {
         TokenCounterOperations, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
-        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
-        UiStateProvider, WindowId, types::MenuAction,
+        AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
+        TreeItemId, UiStateProvider, WindowId, types::MenuAction,
     };
 
     use std::collections::{HashMap, HashSet};
@@ -1937,7 +1937,10 @@ mod handler_tests {
             ))
             .is_some()
         );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)).is_some());
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)
+        })
+        .is_some());
 
         // Case 2: User cancels
         mock_app_session
@@ -2027,7 +2030,10 @@ mod handler_tests {
             ))
             .is_some()
         );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)).is_some()); // Status update
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)
+        })
+        .is_some()); // Status update
 
         // Case 2: Invalid name from path
         logic.test_handle_file_save_dialog_for_saving_profile_as(
@@ -2081,11 +2087,28 @@ mod handler_tests {
                 .len(),
             1
         );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title.contains("ActivatedProfile"))).is_some());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::PopulateTreeView { items, .. } if !items.is_empty() )).is_some());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)).is_some());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 10")).is_some());
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Profile loaded")).is_some());
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title.contains("ActivatedProfile"))
+        })
+        .is_some());
+        assert!(
+            find_command(&cmds, |cmd| {
+                matches!(cmd, PlatformCommand::PopulateTreeView { items, .. } if !items.is_empty() )
+            })
+            .is_some()
+        );
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)
+        })
+        .is_some());
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 10")
+        })
+        .is_some());
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Profile loaded")
+        })
+        .is_some());
         assert!(
             find_command(&cmds, |cmd| matches!(
                 cmd,
@@ -2120,8 +2143,14 @@ mod handler_tests {
             Some("Invalid*Name".to_string()),
         );
         let cmds_invalid = logic.test_drain_commands();
-        assert!(find_command(&cmds_invalid, |cmd| matches!(cmd, PlatformCommand::ShowInputDialog { title, default_text, .. } if title.contains("Name") && default_text.as_deref() == Some("Invalid*Name"))).is_some());
-        assert!(find_command(&cmds_invalid, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { severity, .. } if *severity == MessageSeverity::Warning )).is_some()); // Warning status
+        assert!(find_command(&cmds_invalid, |cmd| {
+            matches!(cmd, PlatformCommand::ShowInputDialog { title, default_text, .. } if title.contains("Name") && default_text.as_deref() == Some("Invalid*Name"))
+        })
+        .is_some());
+        assert!(find_command(&cmds_invalid, |cmd| {
+            matches!(cmd, PlatformCommand::UpdateLabelText { severity, .. } if *severity == MessageSeverity::Warning )
+        })
+        .is_some()); // Warning status
         assert!(logic.test_get_pending_new_profile_name().is_none()); // Should not be set yet
 
         // Case 3: Valid name
@@ -2160,7 +2189,10 @@ mod handler_tests {
             .set_profile_name_for_mock(None);
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds1 = logic.test_drain_commands();
-        assert!(find_command(&cmds1, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded]")).is_some());
+        assert!(find_command(&cmds1, |cmd| {
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded]")
+        })
+        .is_some());
 
         // Case 2: Profile, no archive
         mock_app_session
@@ -2173,7 +2205,10 @@ mod handler_tests {
             .set_archive_path_for_mock(None);
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds2 = logic.test_drain_commands();
-        assert!(find_command(&cmds2, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set]")).is_some());
+        assert!(find_command(&cmds2, |cmd| {
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set]")
+        })
+        .is_some());
 
         // Case 3: Profile and archive
         mock_app_session
@@ -2182,7 +2217,10 @@ mod handler_tests {
             .set_archive_path_for_mock(Some(PathBuf::from("/path/archive.txt")));
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds3 = logic.test_drain_commands();
-        assert!(find_command(&cmds3, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt]")).is_some());
+        assert!(find_command(&cmds3, |cmd| {
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt]")
+        })
+        .is_some());
     }
 
     #[test]
@@ -2194,7 +2232,7 @@ mod handler_tests {
 
         let filter_text_to_submit = "find_me";
 
-        // Act 1: Submit non-empty filter text
+        // Act 1: Submit non-empty filter text. Since mock data is empty, this will result in no matches.
         logic.handle_event(AppEvent::InputTextChanged {
             window_id,
             control_id: ui_constants::FILTER_INPUT_ID,
@@ -2215,6 +2253,15 @@ mod handler_tests {
             ))
             .is_some(),
             "PopulateTreeView command should be enqueued after submitting text."
+        );
+        // Because the mock has no nodes, the filter will find no matches, and the style should be DefaultInputError.
+        assert!(
+            find_command(&cmds_after_submit, |cmd| matches!(cmd,
+                PlatformCommand::ApplyStyleToControl { window_id: wid, control_id, style_id }
+                    if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && *style_id == StyleId::DefaultInputError
+            ))
+            .is_some(),
+            "Expected error style change for an active filter with no matches."
         );
         assert!(
             find_command(&cmds_after_submit, |cmd| matches!(cmd,
@@ -2245,6 +2292,14 @@ mod handler_tests {
             ))
             .is_some(),
             "PopulateTreeView command should be enqueued after clearing filter."
+        );
+        assert!(
+            find_command(&cmds_after_clear, |cmd| matches!(cmd,
+                PlatformCommand::ApplyStyleToControl { window_id: wid, control_id, style_id }
+                    if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && *style_id == StyleId::DefaultInput
+            ))
+            .is_some(),
+            "Expected style change to reset filter to default"
         );
         assert!(
             find_command(&cmds_after_clear, |cmd| matches!(cmd,
@@ -2336,9 +2391,12 @@ mod handler_tests {
         });
         let cmds = logic.test_drain_commands();
 
-        assert!(find_command(&cmds, |cmd| matches!(cmd,
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd,
             PlatformCommand::ExpandVisibleTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandVisibleTreeItems command when filter is active");
+        )
+        })
+        .is_some(), "Expected ExpandVisibleTreeItems command when filter is active");
     }
 
     #[test]
@@ -2353,9 +2411,12 @@ mod handler_tests {
         });
         let cmds = logic.test_drain_commands();
 
-        assert!(find_command(&cmds, |cmd| matches!(cmd,
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd,
             PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id } if *wid == window_id && *control_id == ui_constants::ID_TREEVIEW_CTRL
-        )).is_some(), "Expected ExpandAllTreeItems command when no filter is set");
+        )
+        })
+        .is_some(), "Expected ExpandAllTreeItems command when no filter is set");
     }
 
     #[test]
@@ -2385,9 +2446,16 @@ mod handler_tests {
             ))
             .is_some()
         );
-        assert!(find_command(&cmds, |cmd| matches!(cmd,
+        assert!(find_command(&cmds, |cmd| {
+            matches!(cmd,
             PlatformCommand::SetInputText { window_id: wid, control_id, text } if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && text.is_empty()
-        )).is_some(), "Expected SetInputText to clear filter input");
+        )
+        })
+        .is_some(), "Expected SetInputText to clear filter input");
+        assert!(find_command(&cmds, |cmd| matches!(cmd,
+            PlatformCommand::ApplyStyleToControl { window_id: wid, control_id, style_id }
+                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && *style_id == StyleId::DefaultInput
+        )).is_some(), "Expected style reset on clear button");
         assert!(
             find_command(&cmds, |cmd| matches!(cmd,
                 PlatformCommand::ExpandAllTreeItems { window_id: wid, control_id }
@@ -2399,7 +2467,7 @@ mod handler_tests {
     }
 
     #[test]
-    fn test_no_match_filter_uses_cached_results_and_sets_color() {
+    fn test_no_match_filter_applies_error_style() {
         // Arrange
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
         let window_id = WindowId(1);
@@ -2441,8 +2509,8 @@ mod handler_tests {
             .is_some()
         );
         assert!(find_command(&cmds, |cmd| matches!(cmd,
-            PlatformCommand::SetInputBackgroundColor { window_id: wid, control_id, color }
-                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && color.is_some()
-        )).is_some(), "Expected color change for no match");
+            PlatformCommand::ApplyStyleToControl { window_id: wid, control_id, style_id }
+                if *wid == window_id && *control_id == ui_constants::FILTER_INPUT_ID && *style_id == StyleId::DefaultInputError
+        )).is_some(), "Expected error style for no match");
     }
 }

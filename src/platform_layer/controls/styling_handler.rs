@@ -2,20 +2,20 @@
  * This module is responsible for parsing platform-agnostic style descriptions
  * into native-ready formats. It encapsulates the logic for converting
  * theme definitions (like fonts and colors) into resources that the Win32
- * API can use directly, such as HFONT handles.
+ * API can use directly, such as HFONT and HBRUSH handles.
  */
 
 use crate::platform_layer::{
     error::{PlatformError, Result as PlatformResult},
-    styling::{ControlStyle, FontWeight, ParsedControlStyle},
+    styling::{Color, ControlStyle, FontWeight, ParsedControlStyle},
 };
 use windows::{
     Win32::{
-        Foundation::GetLastError,
+        Foundation::{COLORREF, GetLastError},
         Graphics::Gdi::{
-            CLIP_DEFAULT_PRECIS, CreateFontW, DEFAULT_CHARSET, DEFAULT_QUALITY, FF_DONTCARE,
-            FW_BOLD, FW_NORMAL, GetDC, GetDeviceCaps, HFONT, LOGPIXELSY, OUT_DEFAULT_PRECIS,
-            ReleaseDC,
+            CLIP_DEFAULT_PRECIS, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_QUALITY,
+            FF_DONTCARE, FW_BOLD, FW_NORMAL, GetDC, GetDeviceCaps, HBRUSH, HFONT, LOGPIXELSY,
+            OUT_DEFAULT_PRECIS, ReleaseDC,
         },
         System::WindowsProgramming::MulDiv,
     },
@@ -23,13 +23,21 @@ use windows::{
 };
 
 /*
+ * Creates a Win32 COLORREF from the platform-agnostic `Color` struct.
+ * Win32 expects colors in BGR format, so this function handles the conversion.
+ */
+fn color_to_colorref(color: &Color) -> COLORREF {
+    COLORREF((color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16))
+}
+
+/*
  * Parses a platform-agnostic `ControlStyle` into a `ParsedControlStyle`.
  *
  * This function handles the "heavy lifting" of style conversion. It takes a
  * platform-agnostic description and creates any necessary native GDI resources,
- * most notably creating an `HFONT` from a `FontDescription`. The resulting
- * `ParsedControlStyle` can then be stored by the platform layer for later use
- * in rendering controls.
+ * such as creating an `HFONT` from a `FontDescription` and an `HBRUSH` from
+ * a `background_color`. The resulting `ParsedControlStyle` can then be stored
+ * by the platform layer for later use in rendering controls.
  */
 pub(crate) fn parse_style(style: ControlStyle) -> PlatformResult<ParsedControlStyle> {
     // --- Parse FontDescription into HFONT ---
@@ -97,11 +105,29 @@ pub(crate) fn parse_style(style: ControlStyle) -> PlatformResult<ParsedControlSt
         None
     };
 
+    // --- Parse background_color into HBRUSH ---
+    let background_brush: Option<HBRUSH> = if let Some(color) = &style.background_color {
+        let color_ref = color_to_colorref(color);
+        let h_brush = unsafe { CreateSolidBrush(color_ref) };
+        if h_brush.is_invalid() {
+            log::error!("StylingHandler: CreateSolidBrush failed: {:?}", unsafe {
+                GetLastError()
+            });
+            return Err(PlatformError::OperationFailed(
+                "CreateSolidBrush failed".to_string(),
+            ));
+        }
+        Some(h_brush)
+    } else {
+        None
+    };
+
     // --- Create the ParsedControlStyle ---
     let parsed_style = ParsedControlStyle {
         font_handle,
         text_color: style.text_color,
         background_color: style.background_color,
+        background_brush,
     };
 
     Ok(parsed_style)

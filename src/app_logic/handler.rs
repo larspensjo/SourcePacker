@@ -4,8 +4,8 @@ use crate::core::{
     ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
 };
 use crate::platform_layer::{
-    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, TreeItemId,
-    UiStateProvider, WindowId, types::MenuAction,
+    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
+    TreeItemId, UiStateProvider, WindowId, types::MenuAction,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -1604,28 +1604,27 @@ impl MyAppLogic {
 
         let ui_state_ref = self.ui_state.as_ref().unwrap();
 
-        let color_cmd = if filter_active {
+        log::debug!(
+            "Filter active: {}, No match: {}",
+            filter_active,
+            ui_state_ref.filter_no_match
+        );
+        let style_id = if filter_active {
             if ui_state_ref.filter_no_match {
-                PlatformCommand::SetInputBackgroundColor {
-                    window_id,
-                    control_id: ui_constants::FILTER_INPUT_ID,
-                    color: Some(ui_constants::FILTER_COLOR_NO_MATCH),
-                }
+                StyleId::DefaultInputError
             } else {
-                PlatformCommand::SetInputBackgroundColor {
-                    window_id,
-                    control_id: ui_constants::FILTER_INPUT_ID,
-                    color: Some(ui_constants::FILTER_COLOR_ACTIVE),
-                }
+                StyleId::DefaultInput
             }
         } else {
-            PlatformCommand::SetInputBackgroundColor {
-                window_id,
-                control_id: ui_constants::FILTER_INPUT_ID,
-                color: None,
-            }
+            StyleId::DefaultInput
         };
-        self.synchronous_command_queue.push_back(color_cmd);
+
+        let style_cmd = PlatformCommand::ApplyStyleToControl {
+            window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
+            style_id,
+        };
+        self.synchronous_command_queue.push_back(style_cmd);
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ExpandAllTreeItems {
@@ -1652,10 +1651,10 @@ impl MyAppLogic {
         let _ = ui_state_mut; // release borrow before repopulating
         self.repopulate_tree_view(window_id);
         self.synchronous_command_queue
-            .push_back(PlatformCommand::SetInputBackgroundColor {
+            .push_back(PlatformCommand::ApplyStyleToControl {
                 window_id,
                 control_id: ui_constants::FILTER_INPUT_ID,
-                color: None,
+                style_id: StyleId::DefaultInput,
             });
 
         self.synchronous_command_queue

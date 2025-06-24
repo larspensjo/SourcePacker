@@ -14,7 +14,8 @@ use crate::platform_layer::{
 
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HINSTANCE, HWND},
+        Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, WPARAM},
+        Graphics::Gdi::InvalidateRect,
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
         UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
@@ -46,7 +47,7 @@ pub(crate) struct Win32ApiInternalState {
     application_event_handler: Mutex<Option<Weak<Mutex<dyn PlatformEventHandler>>>>,
     ui_state_provider: Mutex<Option<Weak<Mutex<dyn UiStateProvider>>>>,
     // Stores processed, native-ready style definitions, keyed by a semantic ID.
-    defined_styles: RwLock<HashMap<StyleId, ParsedControlStyle>>,
+    defined_styles: RwLock<HashMap<StyleId, Arc<ParsedControlStyle>>>,
     // The application name, used for window class registration.
     app_name_for_class: String,
     is_quitting: AtomicUsize, // 0 = false, 1 = true
@@ -173,7 +174,6 @@ impl Win32ApiInternalState {
         if let Some(mut removed_data) = windows_map_guard.remove(&window_id) {
             // Perform cleanup on the GDI objects owned by the window data.
             removed_data.cleanup_status_bar_font();
-            removed_data.cleanup_input_background_colors();
             log::debug!("Removed and cleaned up data for WindowId {:?}.", window_id);
         } else {
             log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
@@ -319,7 +319,7 @@ impl Win32ApiInternalState {
      * Delegates to specific handlers in `command_executor`, `dialog_handler`,
      * or now directly to control handlers (e.g., `treeview_handler`).
      */
-    fn _execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
+    fn execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
         log::trace!("Platform: Executing command: {:?}", command);
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
@@ -505,19 +505,14 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
-            PlatformCommand::SetInputBackgroundColor {
-                window_id,
-                control_id,
-                color,
-            } => command_executor::execute_set_input_background_color(
-                self, window_id, control_id, color,
-            ),
             PlatformCommand::DefineStyle { style_id, style } => {
                 self.execute_define_style(style_id, style)
             }
-            PlatformCommand::ApplyStyleToControl { .. } => {
-                todo!("ApplyStyleToControl not implemented for Win32")
-            }
+            PlatformCommand::ApplyStyleToControl {
+                window_id,
+                control_id,
+                style_id,
+            } => self.execute_apply_style_to_control(window_id, control_id, style_id),
         }
     }
 
@@ -545,7 +540,7 @@ impl Win32ApiInternalState {
         // 2. Modify the internal state.
         match self.defined_styles.write() {
             Ok(mut styles_map) => {
-                styles_map.insert(style_id, parsed_style);
+                styles_map.insert(style_id, Arc::new(parsed_style));
                 log::debug!(
                     "Successfully stored parsed style for StyleId::{:?}",
                     style_id
@@ -562,6 +557,82 @@ impl Win32ApiInternalState {
             }
         }
         Ok(())
+    }
+
+    /*
+     * Executes the `ApplyStyleToControl` command.
+     *
+     * This method applies a previously defined style to a specific control. It
+     * updates the window's internal mapping, sends a `WM_SETFONT` message if a
+     * font is part of the style, and invalidates the control to force a repaint,
+     * which will trigger color changes via `WM_CTLCOLOR...` messages.
+     */
+    fn execute_apply_style_to_control(
+        self: &Arc<Self>,
+        window_id: WindowId,
+        control_id: i32,
+        style_id: StyleId,
+    ) -> PlatformResult<()> {
+        log::debug!(
+            "Applying style {:?} to ControlID {} in WinID {:?}",
+            style_id,
+            control_id,
+            window_id
+        );
+
+        // Get the control's HWND and store the style association in the window's data.
+        let control_hwnd = self.with_window_data_write(window_id, |window_data| {
+            window_data.apply_style_to_control(control_id, style_id);
+            window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "Control ID {} not found in WinID {:?}",
+                    control_id, window_id
+                ))
+            })
+        })?;
+
+        if let Some(parsed_style) = self.get_parsed_style(style_id) {
+            // Apply the font if one is defined in the style.
+            if let Some(hfont) = parsed_style.font_handle {
+                if !hfont.is_invalid() {
+                    unsafe {
+                        // SendMessageW is synchronous. The LPARAM(1) tells the control to redraw immediately.
+                        SendMessageW(
+                            control_hwnd,
+                            WM_SETFONT,
+                            Some(WPARAM(hfont.0 as usize)),
+                            Some(LPARAM(1)),
+                        );
+                    }
+                }
+            }
+
+            // Invalidate the control's rectangle to force a repaint.
+            // This is crucial for `WM_CTLCOLOR...` messages to be sent, which will apply
+            // the new text and background colors.
+            unsafe {
+                InvalidateRect(Some(control_hwnd), None, true);
+            }
+        } else {
+            log::warn!("Attempted to apply undefined StyleId::{:?}", style_id);
+        }
+
+        Ok(())
+    }
+
+    /*
+     * Retrieves a shared reference to a parsed style definition.
+     *
+     * This method provides safe, read-only access to the central style map.
+     * It returns an `Arc<ParsedControlStyle>`, allowing multiple components to
+     * share ownership of the style data (including native GDI handles) without
+     * risking double-free errors.
+     */
+    pub(crate) fn get_parsed_style(&self, style_id: StyleId) -> Option<Arc<ParsedControlStyle>> {
+        self.defined_styles
+            .read()
+            .ok()
+            .and_then(|styles_map| styles_map.get(&style_id).cloned())
     }
 }
 
@@ -745,7 +816,7 @@ impl PlatformInterface {
 
         for command in initial_commands_to_execute {
             log::debug!("Platform: Executing initial command: {:?}", command);
-            if let Err(e) = self.internal_state._execute_platform_command(command) {
+            if let Err(e) = self.internal_state.execute_platform_command(command) {
                 log::error!(
                     "Platform: Error executing initial UI command: {:?}. Halting initialization.",
                     e
@@ -775,7 +846,7 @@ impl PlatformInterface {
                     };
 
                     if let Some(command) = command_to_execute {
-                        if let Err(e) = self.internal_state._execute_platform_command(command) {
+                        if let Err(e) = self.internal_state.execute_platform_command(command) {
                             log::error!("Platform: Error executing command from queue: {:?}", e);
                             // Decide if error is fatal. For now, continue.
                         }

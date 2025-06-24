@@ -13,6 +13,7 @@ use super::{
     app::Win32ApiInternalState,
     controls::{button_handler, input_handler, label_handler, treeview_handler},
     error::{PlatformError, Result as PlatformResult},
+    styling::StyleId,
     types::{AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, WindowId},
 };
 
@@ -84,14 +85,14 @@ pub(crate) struct NativeWindowData {
     control_hwnd_map: HashMap<i32, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     menu_action_map: HashMap<i32, MenuAction>,
+    // Maps a control's ID to the semantic StyleId applied to it.
+    applied_styles: HashMap<i32, StyleId>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
     next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
     layout_rules: Option<Vec<LayoutRule>>,
     /// The current severity for each status label, keyed by its logical ID.
     label_severities: HashMap<i32, MessageSeverity>,
-    /// Background color state for input controls keyed by their logical ID.
-    input_bg_colors: HashMap<i32, crate::platform_layer::controls::input_handler::InputColorState>,
     status_bar_font: Option<HFONT>,
 }
 
@@ -103,10 +104,10 @@ impl NativeWindowData {
             treeview_state: None,
             control_hwnd_map: HashMap::new(),
             menu_action_map: HashMap::new(),
+            applied_styles: HashMap::new(),
             next_menu_item_id_counter: 30000,
             layout_rules: None,
             label_severities: HashMap::new(),
-            input_bg_colors: HashMap::new(),
             status_bar_font: None,
         }
     }
@@ -154,6 +155,14 @@ impl NativeWindowData {
 
     pub(crate) fn get_treeview_state(&self) -> Option<&treeview_handler::TreeViewInternalState> {
         self.treeview_state.as_ref()
+    }
+
+    pub(crate) fn apply_style_to_control(&mut self, control_id: i32, style_id: StyleId) {
+        self.applied_styles.insert(control_id, style_id);
+    }
+
+    pub(crate) fn get_style_for_control(&self, control_id: i32) -> Option<StyleId> {
+        self.applied_styles.get(&control_id).copied()
     }
 
     fn generate_menu_item_id(&mut self) -> i32 {
@@ -394,60 +403,6 @@ impl NativeWindowData {
 
     pub(crate) fn get_label_severity(&self, label_id: i32) -> Option<MessageSeverity> {
         self.label_severities.get(&label_id).copied()
-    }
-
-    pub(crate) fn set_input_background_color(
-        &mut self,
-        control_id: i32,
-        color: Option<u32>,
-    ) -> crate::platform_layer::error::Result<()> {
-        use crate::platform_layer::controls::input_handler::InputColorState;
-        use windows::Win32::Foundation::{COLORREF, GetLastError};
-        use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject};
-
-        if let Some(existing) = self.input_bg_colors.remove(&control_id) {
-            unsafe {
-                let _ = DeleteObject(existing.brush.into());
-            }
-        }
-
-        if let Some(c) = color {
-            let colorref = COLORREF(c);
-            let brush = unsafe { CreateSolidBrush(colorref) };
-            if brush.is_invalid() {
-                return Err(
-                    crate::platform_layer::error::PlatformError::OperationFailed(format!(
-                        "CreateSolidBrush failed: {:?}",
-                        unsafe { GetLastError() }
-                    )),
-                );
-            }
-            self.input_bg_colors.insert(
-                control_id,
-                InputColorState {
-                    color: colorref,
-                    brush,
-                },
-            );
-        }
-
-        Ok(())
-    }
-
-    pub(crate) fn get_input_background_color(
-        &self,
-        control_id: i32,
-    ) -> Option<&crate::platform_layer::controls::input_handler::InputColorState> {
-        self.input_bg_colors.get(&control_id)
-    }
-
-    pub(crate) fn cleanup_input_background_colors(&mut self) {
-        use windows::Win32::Graphics::Gdi::DeleteObject;
-        for (_, state) in self.input_bg_colors.drain() {
-            unsafe {
-                let _ = DeleteObject(state.brush.into());
-            }
-        }
     }
 
     pub(crate) fn ensure_status_bar_font(&mut self) {
@@ -1283,31 +1238,6 @@ mod tests {
         data.set_label_severity(7, MessageSeverity::Warning);
         // Assert
         assert_eq!(data.get_label_severity(7), Some(MessageSeverity::Warning));
-    }
-
-    #[test]
-    fn test_set_input_background_color_none() {
-        // Arrange
-        let mut data = NativeWindowData::new(WindowId(4));
-        // Act
-        let result = data.set_input_background_color(5, None);
-        // Assert
-        assert!(result.is_ok());
-        assert!(data.get_input_background_color(5).is_none());
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn test_set_input_background_color_some() {
-        // Arrange
-        let mut data = NativeWindowData::new(WindowId(5));
-        // Act
-        let result = data.set_input_background_color(6, Some(0x00FF00));
-        // Assert
-        assert!(result.is_ok());
-        let state = data.get_input_background_color(6).expect("color state");
-        assert_eq!(state.color.0, 0x00FF00);
-        assert!(!state.brush.is_invalid());
     }
 
     /*

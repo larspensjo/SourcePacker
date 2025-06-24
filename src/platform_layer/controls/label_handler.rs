@@ -5,21 +5,24 @@
  * executor and window procedure cleaner.
  *
  * It provides functions to execute label-related PlatformCommands and to handle
- * relevant Win32 messages like WM_CTLCOLORSTATIC for custom appearance.
+ * relevant Win32 messages like WM_CTLCOLORSTATIC for custom appearance. The
+ * drawing logic prioritizes the new styling system but falls back to the
+ * legacy severity-based coloring for backward compatibility.
  */
 
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
+use crate::platform_layer::styling::Color;
 use crate::platform_layer::types::{LabelClass, MessageSeverity, WindowId};
 use crate::platform_layer::window_common::{SS_LEFT, WC_STATIC}; // Import common constants
 
 use std::sync::Arc;
 use windows::{
     Win32::{
-        Foundation::{GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        Foundation::{COLORREF, GetLastError, HWND, LPARAM, LRESULT, WPARAM},
+        Graphics::Gdi::{COLOR_WINDOWTEXT, GetSysColor},
         Graphics::Gdi::{
-            COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, GetSysColorBrush, HDC, InvalidateRect,
-            SetBkMode, SetTextColor, TRANSPARENT,
+            GetSysColorBrush, HBRUSH, HDC, InvalidateRect, SetBkMode, SetTextColor, TRANSPARENT,
         },
         UI::WindowsAndMessaging::{
             CreateWindowExW, GetDlgCtrlID, SendMessageW, SetWindowTextW, WINDOW_EX_STYLE,
@@ -28,6 +31,14 @@ use windows::{
     },
     core::HSTRING,
 };
+
+/*
+ * Creates a Win32 COLORREF from the platform-agnostic `Color` struct.
+ * Win32 expects colors in BGR format, so this function handles the conversion.
+ */
+fn color_to_colorref(color: &Color) -> COLORREF {
+    COLORREF((color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16))
+}
 
 /*
  * Handles the creation of a native label (STATIC) control.
@@ -195,10 +206,13 @@ pub(crate) fn handle_update_label_text_command(
 }
 
 /*
- * Handles the WM_CTLCOLORSTATIC message specifically for label controls.
+ * Handles the WM_CTLCOLORSTATIC message for label controls.
+ *
  * This function is called when a label (STATIC control) is about to be drawn.
- * It determines the appropriate text color based on the label's stored severity
- * and sets the background to transparent.
+ * It uses the new styling system to determine colors and brushes. It checks if
+ * a `StyleId` is applied to the control. If so, it uses the text color and
+ * background brush from the corresponding `ParsedControlStyle`. If no style is
+ * applied, it falls back to the legacy severity-based coloring for the status bar.
  */
 pub(crate) fn handle_wm_ctlcolorstatic(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -206,52 +220,50 @@ pub(crate) fn handle_wm_ctlcolorstatic(
     hdc_static_ctrl: HDC,   // Directly pass HDC from WPARAM
     hwnd_static_ctrl: HWND, // Directly pass HWND from LPARAM
 ) -> Option<LRESULT> {
-    log::trace!(
-        "LabelHandler: handle_wm_ctlcolorstatic for WinID {:?}, HDC {:?}, HWND {:?}",
-        window_id,
-        hdc_static_ctrl,
-        hwnd_static_ctrl
-    );
+    let control_id = unsafe { GetDlgCtrlID(hwnd_static_ctrl) };
+    if control_id == 0 {
+        return None; // Not a control with an ID, let system handle it.
+    }
 
-    let result = internal_state.with_window_data_read(window_id, |window_data| {
-        let control_id_of_static = unsafe { GetDlgCtrlID(hwnd_static_ctrl) };
-        if control_id_of_static == 0 {
-            log::trace!(
-                "LabelHandler: WM_CTLCOLORSTATIC for HWND {:?} which has no control ID. Defaulting.",
-                hwnd_static_ctrl
-            );
-            return Ok(None);
-        }
+    // This operation requires reading from both window data and global style data,
+    // so we wrap it in a block to manage the lock lifetimes carefully.
+    let style_result: PlatformResult<Option<LRESULT>> =
+        internal_state.with_window_data_read(window_id, |window_data| {
+            // --- New Styling System Logic ---
+            if let Some(style_id) = window_data.get_style_for_control(control_id) {
+                if let Some(style) = internal_state.get_parsed_style(style_id) {
+                    // Apply text color from the style, if defined.
+                    if let Some(color) = &style.text_color {
+                        unsafe { SetTextColor(hdc_static_ctrl, color_to_colorref(color)) };
+                    }
+                    // The background should be transparent to show the parent's color.
+                    unsafe { SetBkMode(hdc_static_ctrl, TRANSPARENT) };
 
-        if let Some(severity) = window_data.get_label_severity(control_id_of_static) {
-            log::trace!(
-                "LabelHandler: Found severity {:?} for label ID {} (HWND {:?})",
-                severity,
-                control_id_of_static,
-                hwnd_static_ctrl
-            );
-            unsafe {
-                let color = match severity {
-                    MessageSeverity::Error => windows::Win32::Foundation::COLORREF(0x000000FF), // Red
-                    MessageSeverity::Warning => windows::Win32::Foundation::COLORREF(0x0000A5FF), // Orange-ish
-                    _ => windows::Win32::Foundation::COLORREF(GetSysColor(COLOR_WINDOWTEXT)),
-                };
-                SetTextColor(hdc_static_ctrl, color);
-                SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                // Return the brush for the parent window's background
-                let brush_result = LRESULT(GetSysColorBrush(COLOR_WINDOW).0 as isize);
-                return Ok(Some(brush_result));
+                    // Return the parent's background brush, which might be styled.
+                    if let Some(brush) = style.background_brush {
+                        return Ok(Some(LRESULT(brush.0 as isize)));
+                    }
+                }
             }
-        }
 
-        log::trace!(
-            "LabelHandler: No severity found for label ID {} (HWND {:?}). Defaulting.",
-            control_id_of_static,
-            hwnd_static_ctrl
-        );
-        Ok(None) // Default processing
-    });
+            // --- Fallback to Legacy Severity Logic (for status bar) ---
+            if let Some(severity) = window_data.get_label_severity(control_id) {
+                let color = match severity {
+                    MessageSeverity::Error => COLORREF(0x000000FF), // Red
+                    MessageSeverity::Warning => COLORREF(0x0000A5FF), // Orange-ish
+                    _ => COLORREF(unsafe { GetSysColor(COLOR_WINDOWTEXT) }),
+                };
+                unsafe {
+                    SetTextColor(hdc_static_ctrl, color);
+                    SetBkMode(hdc_static_ctrl, TRANSPARENT);
+                    // Return a system brush for the standard window background.
+                    let brush: HBRUSH =
+                        GetSysColorBrush(windows::Win32::Graphics::Gdi::COLOR_WINDOW);
+                    return Ok(Some(LRESULT(brush.0 as isize)));
+                }
+            }
+            Ok(None)
+        });
 
-    // Convert PlatformResult<Option<LRESULT>> to Option<LRESULT>
-    result.ok().flatten()
+    style_result.ok().flatten()
 }

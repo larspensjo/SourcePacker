@@ -1,19 +1,17 @@
 /*
-* This module defines the core data structures for a flexible, themeable
-* styling system for UI controls. It separates the definition of a style
+ * This module defines the core data structures for a flexible, themeable
+ * styling system for UI controls. It separates the definition of a style
+ * (e.g., colors, fonts) from its application to a control, enabling
+ * centralized theme management.
+ *
+ * Key components include `ControlStyle`, which describes the look of a
+ * control, and `StyleId`, which acts as a unique key for a defined style.
+ * The `ui_description_layer` uses these to define a theme, and the
+ * `platform_layer` uses them to render controls. It also defines internal
+ * `ParsedControlStyle` for holding native handles.
+ */
 
-* (e.g., colors, fonts) from its application to a control, enabling
-* centralized theme management.
-*
-* Key components include `ControlStyle`, which describes the look of a
-* control, and `StyleId`, which acts as a unique key for a defined style.
-* The `ui_description_layer` uses these to define a theme, and the
-* `platform_layer` uses them to render controls. It also defines internal
-* `ParsedControlStyle` for holding native handles.
-*/
-
-use windows::Win32::Graphics::Gdi::{DeleteObject, HFONT};
-
+use windows::Win32::Graphics::Gdi::{DeleteObject, HBRUSH, HFONT, HGDIOBJ};
 // --- Public Styling Primitives and Descriptors ---
 
 /*
@@ -78,6 +76,7 @@ pub enum StyleId {
     MainWindowBackground,
     PanelBackground,
     StatusBarBackground,
+    DefaultInputError,
     // Specific elements
     StatusLabelNormal,
     StatusLabelWarning,
@@ -88,30 +87,39 @@ pub enum StyleId {
 
 /*
  * The `platform_layer`'s internal, processed representation of a `ControlStyle`.
- * This struct holds native resource handles (like `HFONT`) that are created from
- * the platform-agnostic descriptions. This encapsulates Win32-specific types
- * and handles their cleanup via the `Drop` trait.
+ * This struct holds native resource handles (like `HFONT` and `HBRUSH`) that are
+ * created from the platform-agnostic descriptions. This encapsulates Win32-specific
+ * types and handles their cleanup via the `Drop` trait.
  */
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedControlStyle {
     pub(crate) font_handle: Option<HFONT>,
     pub(crate) text_color: Option<Color>,
     pub(crate) background_color: Option<Color>,
+    pub(crate) background_brush: Option<HBRUSH>,
     // ... other parsed properties ...
 }
 
 impl Drop for ParsedControlStyle {
     /*
-     * Ensures that native GDI resources, such as HFONTs, are properly released
-     * when a `ParsedControlStyle` is no longer in use. This prevents resource leaks.
+     * Ensures that native GDI resources, such as HFONTs and HBRUSHes, are properly
+     * released when a `ParsedControlStyle` is no longer in use. This prevents
+     * resource leaks.
      */
     fn drop(&mut self) {
         if let Some(hfont) = self.font_handle.take() {
             if !hfont.is_invalid() {
                 // It's safe to call DeleteObject on a font handle.
                 unsafe {
-                    use windows::Win32::Graphics::Gdi::HGDIOBJ;
-                    _ = DeleteObject(HGDIOBJ(hfont.0));
+                    DeleteObject(HGDIOBJ(hfont.0));
+                }
+            }
+        }
+        if let Some(hbrush) = self.background_brush.take() {
+            if !hbrush.is_invalid() {
+                // It's also safe to call DeleteObject on a brush handle.
+                unsafe {
+                    DeleteObject(HGDIOBJ(hbrush.0));
                 }
             }
         }

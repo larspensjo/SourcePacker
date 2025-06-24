@@ -121,7 +121,6 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
     Ok(())
 }
 
-
 /*
  * Executes the `SetControlEnabled` command.
  * Enables or disables a specific control within a window.
@@ -358,43 +357,6 @@ pub(crate) fn execute_set_input_text(
     Ok(())
 }
 
-/*
- * Executes the `SetInputBackgroundColor` command. The desired color is stored
- * in `NativeWindowData` and applied during WM_CTLCOLOREDIT handling. This
- * avoids reliance on EM_SETBKGNDCOLOR which is not supported for plain EDIT
- * controls on all Windows versions.
- */
-pub(crate) fn execute_set_input_background_color(
-    internal_state: &Arc<Win32ApiInternalState>,
-    window_id: WindowId,
-    control_id: i32,
-    color: Option<u32>,
-) -> PlatformResult<()> {
-    let hwnd_edit = internal_state.with_window_data_write(window_id, |window_data| {
-        // Store the new color state, this also handles cleanup of old GDI objects.
-        window_data.set_input_background_color(control_id, color)?;
-
-        // Return the HWND for invalidation.
-        window_data.get_control_hwnd(control_id).ok_or_else(|| {
-            log::warn!(
-                "CommandExecutor: Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
-                control_id,
-                window_id
-            );
-            PlatformError::InvalidHandle(format!(
-                "Control ID {} not found for SetInputBackgroundColor in WinID {:?}",
-                control_id, window_id
-            ))
-        })
-    })?;
-
-    // Trigger a repaint for the new color to take effect.
-    unsafe {
-        _ = InvalidateRect(Some(hwnd_edit), None, true);
-    }
-    Ok(())
-}
-
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)
 pub(crate) fn execute_set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -419,7 +381,6 @@ pub(crate) fn execute_close_window(
     super::window_common::send_close_message(internal_state, window_id)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*; // Import functions from command_executor like execute_expand_all_tree_items
@@ -441,7 +402,6 @@ mod tests {
         let native_window_data = NativeWindowData::new(window_id);
         (internal_state_arc, window_id, native_window_data)
     }
-
 
     #[test]
     fn test_expand_visible_tree_items_returns_error() {
