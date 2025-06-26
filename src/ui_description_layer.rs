@@ -7,10 +7,14 @@
  */
 use crate::app_logic::ui_constants;
 
-use crate::platform_layer::types::{
-    DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
+use crate::platform_layer::{
+    styling::StyleId,
+    types::{
+        DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
+    },
 };
 
+mod theme;
 // Height for the panel containing filter controls.
 pub const FILTER_BAR_HEIGHT: i32 = 30;
 // Fixed width for the "Expand Filtered/All" button.
@@ -33,8 +37,11 @@ pub const STATUS_BAR_HEIGHT: i32 = 25;
 pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformCommand> {
     log::debug!("ui_description_layer: describe_main_window_layout called.");
 
-    let mut commands = Vec::new();
+    // Start by defining the entire theme. This ensures all StyleIds are defined
+    // before they are applied to any controls.
+    let mut commands = theme::define_neon_night_theme();
 
+    // --- Menu Bar ---
     // 1. Define the "File" menu structure
     let file_menu_items = vec![
         MenuItemConfig {
@@ -81,56 +88,106 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     };
     commands.push(main_menu_command);
 
-    // 2. Create Filter Bar Panel (child of main window)
+    // --- Main Content Area Panels ---
+
+    // Create a main background panel that everything else will sit on.
+    // This allows us to apply a background color to the entire window client area.
     commands.push(PlatformCommand::CreatePanel {
         window_id,
-        parent_control_id: None, // Child of the main window's client area
-        control_id: ui_constants::FILTER_PANEL_ID,
+        parent_control_id: None,
+        control_id: ui_constants::MAIN_BACKGROUND_PANEL_ID,
+    });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::MAIN_BACKGROUND_PANEL_ID,
+        style_id: StyleId::MainWindowBackground,
     });
 
-    // 2.a Create Filter Input field within the Filter Panel
+    // Create Filter Bar Panel (now a child of the main background panel)
+    commands.push(PlatformCommand::CreatePanel {
+        window_id,
+        parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
+        control_id: ui_constants::FILTER_PANEL_ID,
+    });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::FILTER_PANEL_ID,
+        style_id: StyleId::PanelBackground,
+    });
+
+    // Create Status Bar Panel (now a child of the main background panel)
+    commands.push(PlatformCommand::CreatePanel {
+        window_id,
+        parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
+        control_id: ui_constants::STATUS_BAR_PANEL_ID,
+    });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::STATUS_BAR_PANEL_ID,
+        style_id: StyleId::StatusBarBackground,
+    });
+
+    // --- Controls within Panels ---
+
+    // Create Filter Input field within the Filter Panel
     commands.push(PlatformCommand::CreateInput {
         window_id,
         parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::FILTER_INPUT_ID,
         initial_text: "".to_string(), // Placeholder text can be set here if desired
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::FILTER_INPUT_ID,
+        style_id: StyleId::DefaultInput,
+    });
 
-    // 2.a.1 Create Clear Filter button
+    // Create Clear Filter button
     commands.push(PlatformCommand::CreateButton {
         window_id,
         control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
         text: "X".to_string(),
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
+        style_id: StyleId::DefaultButton,
+    });
 
-    // 2.b Create "Expand Filtered/All" Button within the Filter Panel
+    // Create "Expand Filtered/All" Button within the Filter Panel
     commands.push(PlatformCommand::CreateButton {
         window_id,
         control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
         text: "Expand All".to_string(), // Initial text, might change based on filter state
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
+        style_id: StyleId::DefaultButton,
+    });
 
-    // 3. Create TreeView
+    // Create TreeView (now a child of the main background panel)
     commands.push(PlatformCommand::CreateTreeView {
         window_id,
+        parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
         control_id: ui_constants::ID_TREEVIEW_CTRL,
     });
+    // TreeView styling is handled by its custom draw logic, but we could apply a base style if needed.
 
-    // Create the Status Bar Panel (child of main window)
-    commands.push(PlatformCommand::CreatePanel {
-        window_id,
-        parent_control_id: None, // Child of the main window's client area
-        control_id: ui_constants::STATUS_BAR_PANEL_ID,
-    });
-
-    // Create Labels within the Status Bar Panel
+    // Create Labels within the Status Bar Panel and apply styles
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
         control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
         initial_text: "Status: Initial".to_string(),
-        class: LabelClass::StatusBar,
+        class: LabelClass::StatusBar, // This class is for font, colors are now from style
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
+        style_id: StyleId::StatusLabelNormal,
+    });
+
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
@@ -138,6 +195,12 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         initial_text: "Archive: Initial".to_string(),
         class: LabelClass::StatusBar,
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
+        style_id: StyleId::StatusLabelNormal,
+    });
+
     commands.push(PlatformCommand::CreateLabel {
         window_id,
         parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
@@ -145,31 +208,45 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         initial_text: "Tokens: Initial".to_string(),
         class: LabelClass::StatusBar,
     });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
+        style_id: StyleId::StatusLabelNormal,
+    });
 
-    // 5. Define Layout Rules for the controls
+    // --- Layout Rules ---
     let layout_rules = vec![
-        // Filter Bar Panel: Docks to the top of the main window.
+        // The main background panel fills the entire window.
+        LayoutRule {
+            control_id: ui_constants::MAIN_BACKGROUND_PANEL_ID,
+            parent_control_id: None,
+            dock_style: DockStyle::Fill,
+            order: 0,
+            fixed_size: None,
+            margin: (0, 0, 0, 0),
+        },
+        // Filter Bar Panel: Docks to the top of the main background panel.
         LayoutRule {
             control_id: ui_constants::FILTER_PANEL_ID,
-            parent_control_id: None,
+            parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
             dock_style: DockStyle::Top,
             order: 0, // Process first
             fixed_size: Some(FILTER_BAR_HEIGHT),
             margin: (2, 2, 2, 2), // Small margin around the panel
         },
-        // Status Bar Panel: Docks to the bottom of the main window.
+        // Status Bar Panel: Docks to the bottom of the main background panel.
         LayoutRule {
             control_id: ui_constants::STATUS_BAR_PANEL_ID,
-            parent_control_id: None,
+            parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
             dock_style: DockStyle::Bottom,
             order: 1, // Process after top-docked items
             fixed_size: Some(STATUS_BAR_HEIGHT),
             margin: (0, 0, 0, 0),
         },
-        // TreeView: Fills the remaining space in the main window.
+        // TreeView: Fills the remaining space in the main background panel.
         LayoutRule {
             control_id: ui_constants::ID_TREEVIEW_CTRL,
-            parent_control_id: None,
+            parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
             dock_style: DockStyle::Fill,
             order: 10, // Process after fixed-size items
             fixed_size: None,

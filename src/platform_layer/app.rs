@@ -433,8 +433,14 @@ impl Win32ApiInternalState {
             } => button_handler::handle_create_button_command(self, window_id, control_id, text),
             PlatformCommand::CreateTreeView {
                 window_id,
+                parent_control_id,
                 control_id,
-            } => treeview_handler::handle_create_treeview_command(self, window_id, control_id),
+            } => treeview_handler::handle_create_treeview_command(
+                self,
+                window_id,
+                parent_control_id,
+                control_id,
+            ),
             PlatformCommand::SignalMainWindowUISetupComplete { window_id } => {
                 command_executor::execute_signal_main_window_ui_setup_complete(self, window_id)
             }

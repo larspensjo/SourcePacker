@@ -308,8 +308,8 @@ pub enum PlatformCommand {
     },
     CreateTreeView {
         window_id: WindowId,
-        control_id: i32, // The logical ID for the TreeView
-                         // Position/size will be managed by DefineLayout command.
+        parent_control_id: Option<i32>, // The logical ID for the parent, None for main window
+        control_id: i32,                // The logical ID for the TreeView
     },
     // Signals to the platform layer that all initial UI description commands
     // for the main window have been enqueued and processed.

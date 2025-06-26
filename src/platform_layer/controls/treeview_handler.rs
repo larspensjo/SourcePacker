@@ -188,11 +188,13 @@ impl TreeViewInternalState {
 pub(crate) fn handle_create_treeview_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
+    parent_control_id: Option<i32>,
     control_id: i32,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: handle_create_treeview_command for WinID {:?}, ControlID {}",
+        "TreeViewHandler: handle_create_treeview_command for WinID {:?}, ParentID {:?}, ControlID {}",
         window_id,
+        parent_control_id,
         control_id
     );
 
@@ -201,11 +203,21 @@ pub(crate) fn handle_create_treeview_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             if window_data.has_control(control_id) || window_data.has_treeview_state() {
                 return Err(PlatformError::ControlCreationFailed(format!(
-                    "TreeView with ID {} or existing state already present for window {:?}",
+                    "TreeView with ID {} or existing treeview state already present for window {:?}",
                     control_id, window_id
                 )));
             }
-            let hwnd = window_data.get_hwnd();
+
+            let hwnd = match parent_control_id {
+                Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!(
+                        "Parent control with ID {} not found for CreateTreeView in WinID {:?}",
+                        id, window_id
+                    ))
+                })?,
+                None => window_data.get_hwnd(),
+            };
+
             if hwnd.is_invalid() {
                 return Err(PlatformError::InvalidHandle(format!(
                     "Parent HWND for CreateTreeView is invalid (WinID: {:?})",
