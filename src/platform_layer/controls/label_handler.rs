@@ -10,23 +10,25 @@
  * legacy severity-based coloring for backward compatibility.
  */
 
-use crate::platform_layer::app::Win32ApiInternalState;
-use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
-use crate::platform_layer::styling::Color;
-use crate::platform_layer::types::{LabelClass, MessageSeverity, WindowId};
-use crate::platform_layer::window_common::{SS_LEFT, WC_STATIC}; // Import common constants
+use crate::platform_layer::{
+    app::Win32ApiInternalState,
+    error::{PlatformError, Result as PlatformResult},
+    styling::Color,
+    types::{LabelClass, MessageSeverity, WindowId},
+    window_common::{SS_LEFT, WC_STATIC},
+};
 
 use std::sync::Arc;
 use windows::{
     Win32::{
         Foundation::{COLORREF, GetLastError, HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::{COLOR_WINDOWTEXT, GetSysColor},
         Graphics::Gdi::{
-            GetSysColorBrush, HBRUSH, HDC, InvalidateRect, SetBkMode, SetTextColor, TRANSPARENT,
+            COLOR_WINDOW, COLOR_WINDOWTEXT, GetSysColor, GetSysColorBrush, HBRUSH, HDC,
+            InvalidateRect, SetBkMode, SetTextColor, TRANSPARENT,
         },
         UI::WindowsAndMessaging::{
-            CreateWindowExW, GetDlgCtrlID, SendMessageW, SetWindowTextW, WINDOW_EX_STYLE,
-            WM_SETFONT, WS_CHILD, WS_VISIBLE,
+            CreateWindowExW, GetDlgCtrlID, GetParent, SendMessageW, SetWindowTextW,
+            WINDOW_EX_STYLE, WM_SETFONT, WS_CHILD, WS_VISIBLE,
         },
     },
     core::HSTRING,
@@ -225,13 +227,14 @@ pub(crate) fn handle_wm_ctlcolorstatic(
         return None; // Not a control with an ID, let system handle it.
     }
 
-    // This operation requires reading from both window data and global style data,
-    // so we wrap it in a block to manage the lock lifetimes carefully.
     let style_result: PlatformResult<Option<LRESULT>> =
         internal_state.with_window_data_read(window_id, |window_data| {
             // --- New Styling System Logic ---
             if let Some(style_id) = window_data.get_style_for_control(control_id) {
                 if let Some(style) = internal_state.get_parsed_style(style_id) {
+                    // A style is defined for this control. Handle it completely and then return.
+                    // Do not fall through to the legacy logic.
+
                     // Apply text color from the style, if defined.
                     if let Some(color) = &style.text_color {
                         unsafe { SetTextColor(hdc_static_ctrl, color_to_colorref(color)) };
@@ -239,10 +242,35 @@ pub(crate) fn handle_wm_ctlcolorstatic(
                     // The background should be transparent to show the parent's color.
                     unsafe { SetBkMode(hdc_static_ctrl, TRANSPARENT) };
 
-                    // Return the parent's background brush, which might be styled.
+                    // If the style itself has a background brush, use it.
                     if let Some(brush) = style.background_brush {
                         return Ok(Some(LRESULT(brush.0 as isize)));
                     }
+
+                    // If the style does not have a background brush, it's a transparent label.
+                    // We must return the parent's background brush.
+                    if let Ok(parent_hwnd) = unsafe { GetParent(hwnd_static_ctrl) } {
+                        if !parent_hwnd.is_invalid() {
+                            let parent_id = unsafe { GetDlgCtrlID(parent_hwnd) };
+                            if let Some(parent_style_id) =
+                                window_data.get_style_for_control(parent_id)
+                            {
+                                if let Some(parent_style) =
+                                    internal_state.get_parsed_style(parent_style_id)
+                                {
+                                    if let Some(parent_brush) = parent_style.background_brush {
+                                        return Ok(Some(LRESULT(parent_brush.0 as isize)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Fallback for transparent label if parent brush isn't found: use system window brush.
+                    // This is better than falling through to legacy logic which would override the text color.
+                    let brush: HBRUSH =
+                        unsafe { GetSysColorBrush(windows::Win32::Graphics::Gdi::COLOR_WINDOW) };
+                    return Ok(Some(LRESULT(brush.0 as isize)));
                 }
             }
 
@@ -256,7 +284,6 @@ pub(crate) fn handle_wm_ctlcolorstatic(
                 unsafe {
                     SetTextColor(hdc_static_ctrl, color);
                     SetBkMode(hdc_static_ctrl, TRANSPARENT);
-                    // Return a system brush for the standard window background.
                     let brush: HBRUSH =
                         GetSysColorBrush(windows::Win32::Graphics::Gdi::COLOR_WINDOW);
                     return Ok(Some(LRESULT(brush.0 as isize)));
