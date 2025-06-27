@@ -15,6 +15,9 @@
 * Prefer the use of early-out. That is, test for the failure case, handle the error and return, and then the main logic. The goal is to reduce the indentation level of the main logic.
 * Don't remove comments with a TODO in them.
 * For structs and records, use private declaration of members by default.
+* Double-check with internet resources to ensure changes follow official documentation.
+* Don't remove unsafe block unless you are sure it isn't needed.
+* Use non-modrs module files.
 * Ensure that all locked regions are kept to a minimum, using clear block delimiters. This is good practice.
 * If you make changes to code that depends on windows-rs, make sure to look up the latest API from internet, version 0.61.1.
 
