@@ -111,7 +111,7 @@ impl Drop for ParsedControlStyle {
             if !hfont.is_invalid() {
                 // It's safe to call DeleteObject on a font handle.
                 unsafe {
-                    DeleteObject(HGDIOBJ(hfont.0));
+                    _ = DeleteObject(HGDIOBJ(hfont.0));
                 }
             }
         }
@@ -119,7 +119,7 @@ impl Drop for ParsedControlStyle {
             if !hbrush.is_invalid() {
                 // It's also safe to call DeleteObject on a brush handle.
                 unsafe {
-                    DeleteObject(HGDIOBJ(hbrush.0));
+                    _ = DeleteObject(HGDIOBJ(hbrush.0));
                 }
             }
         }

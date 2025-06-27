@@ -617,7 +617,7 @@ impl Win32ApiInternalState {
             // This is crucial for `WM_CTLCOLOR...` messages to be sent, which will apply
             // the new text and background colors.
             unsafe {
-                InvalidateRect(Some(control_hwnd), None, true);
+                _ = InvalidateRect(Some(control_hwnd), None, true);
             }
         } else {
             log::warn!("Attempted to apply undefined StyleId::{:?}", style_id);
