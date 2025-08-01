@@ -18,7 +18,10 @@ use windows::{
         Graphics::Gdi::InvalidateRect,
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
-        UI::Controls::{ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx},
+        UI::Controls::{
+            ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, TVM_SETBKCOLOR,
+            TVM_SETTEXTCOLOR,
+        },
         UI::WindowsAndMessaging::*,
     },
     core::PCWSTR,
@@ -608,6 +611,32 @@ impl Win32ApiInternalState {
                             WM_SETFONT,
                             Some(WPARAM(hfont.0 as usize)),
                             Some(LPARAM(1)),
+                        );
+                    }
+                }
+            }
+
+            // For TreeView, we need to set colors directly.
+            if style_id == StyleId::TreeView {
+                if let Some(color) = &parsed_style.background_color {
+                    let color_ref = styling_handler::color_to_colorref(color);
+                    unsafe {
+                        SendMessageW(
+                            control_hwnd,
+                            TVM_SETBKCOLOR,
+                            None,
+                            Some(LPARAM(color_ref.0 as isize)),
+                        );
+                    }
+                }
+                if let Some(color) = &parsed_style.text_color {
+                    let color_ref = styling_handler::color_to_colorref(color);
+                    unsafe {
+                        SendMessageW(
+                            control_hwnd,
+                            TVM_SETTEXTCOLOR,
+                            None,
+                            Some(LPARAM(color_ref.0 as isize)),
                         );
                     }
                 }

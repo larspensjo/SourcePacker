@@ -77,6 +77,7 @@ pub enum StyleId {
     PanelBackground,
     StatusBarBackground,
     DefaultInputError,
+    TreeView,
     // Specific elements
     StatusLabelNormal,
     StatusLabelWarning,

@@ -5,7 +5,7 @@ use crate::core::{
 };
 use crate::platform_layer::{
     AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
-    TreeItemId, UiStateProvider, WindowId, types::MenuAction,
+    TreeItemId, UiStateProvider, WindowId, types::MenuAction, ControlStyle, FontDescription, FontWeight, Color,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -1185,6 +1185,9 @@ impl MyAppLogic {
                     available_profiles.len(),
                     prompt
                 );
+
+                self.define_styles();
+
                 self.synchronous_command_queue.push_back(
                     PlatformCommand::ShowProfileSelectionDialog {
                         window_id,
@@ -1662,6 +1665,113 @@ impl MyAppLogic {
                 window_id,
                 control_id: ui_constants::ID_TREEVIEW_CTRL,
             });
+    }
+}
+
+impl MyAppLogic {
+    fn define_styles(&mut self) {
+        // --- Colors ---
+        let bg_main = Color { r: 30, g: 30, b: 30 };
+        let bg_panel = Color { r: 45, g: 45, b: 45 };
+        let bg_input = Color { r: 60, g: 60, b: 60 };
+        let text_light = Color { r: 220, g: 220, b: 220 };
+        let bg_error = Color { r: 80, g: 40, b: 40 };
+        let text_error = Color { r: 255, g: 100, b: 100 };
+        let text_warning = Color { r: 255, g: 165, b: 0 };
+
+        // --- Fonts ---
+        let default_font = FontDescription {
+            name: Some("Segoe UI".to_string()),
+            size: Some(9),
+            weight: Some(FontWeight::Normal),
+        };
+
+        // --- Style Definitions ---
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::MainWindowBackground,
+            style: ControlStyle {
+                background_color: Some(bg_main),
+                ..Default::default()
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::PanelBackground,
+            style: ControlStyle {
+                background_color: Some(bg_panel.clone()),
+                ..Default::default()
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::StatusBarBackground,
+            style: ControlStyle {
+                background_color: Some(bg_panel.clone()),
+                ..Default::default()
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::DefaultText,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                font: Some(default_font.clone()),
+                background_color: None, // Transparent background
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::DefaultButton,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                background_color: Some(bg_input.clone()),
+                font: Some(default_font.clone()),
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::DefaultInput,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                background_color: Some(bg_input),
+                font: Some(default_font.clone()),
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::DefaultInputError,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                background_color: Some(bg_error),
+                font: Some(default_font.clone()),
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::TreeView,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                background_color: Some(bg_panel.clone()),
+                font: Some(default_font.clone()),
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::StatusLabelNormal,
+            style: ControlStyle {
+                text_color: Some(text_light.clone()),
+                font: Some(default_font.clone()),
+                ..Default::default()
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::StatusLabelWarning,
+            style: ControlStyle {
+                text_color: Some(text_warning),
+                font: Some(default_font.clone()),
+                ..Default::default()
+            },
+        });
+        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
+            style_id: StyleId::StatusLabelError,
+            style: ControlStyle {
+                text_color: Some(text_error),
+                font: Some(default_font),
+                ..Default::default()
+            },
+        });
     }
 }
 

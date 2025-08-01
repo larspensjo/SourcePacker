@@ -10,6 +10,7 @@ use crate::platform_layer::{
     styling::{Color, ControlStyle, FontWeight, ParsedControlStyle},
 };
 use windows::{
+    core::HSTRING,
     Win32::{
         Foundation::{COLORREF, GetLastError},
         Graphics::Gdi::{
@@ -19,14 +20,13 @@ use windows::{
         },
         System::WindowsProgramming::MulDiv,
     },
-    core::HSTRING,
 };
 
 /*
  * Creates a Win32 COLORREF from the platform-agnostic `Color` struct.
  * Win32 expects colors in BGR format, so this function handles the conversion.
  */
-fn color_to_colorref(color: &Color) -> COLORREF {
+pub(crate) fn color_to_colorref(color: &Color) -> COLORREF {
     COLORREF((color.r as u32) | ((color.g as u32) << 8) | ((color.b as u32) << 16))
 }
 
