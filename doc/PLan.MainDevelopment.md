@@ -31,8 +31,7 @@ This section details various cleanup tasks, refactorings, and minor enhancements
 ### P2.11.7: Should the treeview be created from ui_descriptive_layer?
 
 ## P2.13: Improved Profile management
-*   Implement a proper dialog for profile selection in the platform layer (not a stub).
-*   Implement a user-friendly UI for listing, selecting, creating, and deleting profiles within the application.
+(implemented)
 
 ## P2.14: Better encapsulation of Win32ApiInternalState
 *   The controls shouldn't depend on Win32ApiInternalState, see styling_hander.rs

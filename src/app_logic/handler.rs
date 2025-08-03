@@ -4,8 +4,9 @@ use crate::core::{
     ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
 };
 use crate::platform_layer::{
-    AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
-    TreeItemId, UiStateProvider, WindowId, types::MenuAction, ControlStyle, FontDescription, FontWeight, Color,
+    AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
+    PlatformCommand, PlatformEventHandler, StyleId, TreeItemId, UiStateProvider, WindowId,
+    types::MenuAction,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -659,25 +660,19 @@ impl MyAppLogic {
     }
 
     fn handle_menu_load_profile_clicked(&mut self) {
-        log::debug!("MenuAction::LoadProfile action received by AppLogic.");
-        let ui_state_ref = match self.ui_state.as_ref() {
-            Some(s) => s,
+        log::debug!(
+            "MenuAction::LoadProfile action received by AppLogic, initiating profile selection flow."
+        );
+        let window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
+            Some(id) => id,
             None => {
                 log::warn!("Cannot handle LoadProfile: No UI state (main window).");
                 return;
             }
         };
 
-        let profile_dir_opt = self
-            .profile_manager
-            .get_profile_dir_path(APP_NAME_FOR_PROFILES);
-        self.synchronous_command_queue
-            .push_back(PlatformCommand::ShowOpenFileDialog {
-                window_id: ui_state_ref.window_id,
-                title: "Load Profile".to_string(),
-                filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
-                initial_dir: profile_dir_opt,
-            });
+        // Reuse the exact same function that the startup sequence uses.
+        self.initiate_profile_selection_or_creation(window_id);
     }
 
     /*
@@ -1166,18 +1161,16 @@ impl MyAppLogic {
 
         match self.profile_manager.list_profiles(APP_NAME_FOR_PROFILES) {
             Ok(available_profiles) => {
-                let (title, prompt, emphasize_create_new) = if available_profiles.is_empty() {
+                let (title, prompt) = if available_profiles.is_empty() {
                     (
                         "Welcome to SourcePacker!".to_string(),
                         "No profiles found. Please create a new profile to get started."
                             .to_string(),
-                        true,
                     )
                 } else {
                     (
                         "Select or Create Profile".to_string(),
                         "Please select an existing profile, or create a new one.".to_string(),
-                        false,
                     )
                 };
                 log::debug!(
@@ -1194,7 +1187,6 @@ impl MyAppLogic {
                         available_profiles,
                         title,
                         prompt,
-                        emphasize_create_new,
                     },
                 );
             }
@@ -1671,13 +1663,41 @@ impl MyAppLogic {
 impl MyAppLogic {
     fn define_styles(&mut self) {
         // --- Colors ---
-        let bg_main = Color { r: 30, g: 30, b: 30 };
-        let bg_panel = Color { r: 45, g: 45, b: 45 };
-        let bg_input = Color { r: 60, g: 60, b: 60 };
-        let text_light = Color { r: 220, g: 220, b: 220 };
-        let bg_error = Color { r: 80, g: 40, b: 40 };
-        let text_error = Color { r: 255, g: 100, b: 100 };
-        let text_warning = Color { r: 255, g: 165, b: 0 };
+        let bg_main = Color {
+            r: 30,
+            g: 30,
+            b: 30,
+        };
+        let bg_panel = Color {
+            r: 45,
+            g: 45,
+            b: 45,
+        };
+        let bg_input = Color {
+            r: 60,
+            g: 60,
+            b: 60,
+        };
+        let text_light = Color {
+            r: 220,
+            g: 220,
+            b: 220,
+        };
+        let bg_error = Color {
+            r: 80,
+            g: 40,
+            b: 40,
+        };
+        let text_error = Color {
+            r: 255,
+            g: 100,
+            b: 100,
+        };
+        let text_warning = Color {
+            r: 255,
+            g: 165,
+            b: 0,
+        };
 
         // --- Fonts ---
         let default_font = FontDescription {
@@ -1687,91 +1707,102 @@ impl MyAppLogic {
         };
 
         // --- Style Definitions ---
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::MainWindowBackground,
-            style: ControlStyle {
-                background_color: Some(bg_main),
-                ..Default::default()
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::PanelBackground,
-            style: ControlStyle {
-                background_color: Some(bg_panel.clone()),
-                ..Default::default()
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::StatusBarBackground,
-            style: ControlStyle {
-                background_color: Some(bg_panel.clone()),
-                ..Default::default()
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::DefaultText,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                font: Some(default_font.clone()),
-                background_color: None, // Transparent background
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::DefaultButton,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                background_color: Some(bg_input.clone()),
-                font: Some(default_font.clone()),
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::DefaultInput,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                background_color: Some(bg_input),
-                font: Some(default_font.clone()),
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::DefaultInputError,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                background_color: Some(bg_error),
-                font: Some(default_font.clone()),
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::TreeView,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                background_color: Some(bg_panel.clone()),
-                font: Some(default_font.clone()),
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::StatusLabelNormal,
-            style: ControlStyle {
-                text_color: Some(text_light.clone()),
-                font: Some(default_font.clone()),
-                ..Default::default()
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::StatusLabelWarning,
-            style: ControlStyle {
-                text_color: Some(text_warning),
-                font: Some(default_font.clone()),
-                ..Default::default()
-            },
-        });
-        self.synchronous_command_queue.push_back(PlatformCommand::DefineStyle {
-            style_id: StyleId::StatusLabelError,
-            style: ControlStyle {
-                text_color: Some(text_error),
-                font: Some(default_font),
-                ..Default::default()
-            },
-        });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::MainWindowBackground,
+                style: ControlStyle {
+                    background_color: Some(bg_main),
+                    ..Default::default()
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::PanelBackground,
+                style: ControlStyle {
+                    background_color: Some(bg_panel.clone()),
+                    ..Default::default()
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::StatusBarBackground,
+                style: ControlStyle {
+                    background_color: Some(bg_panel.clone()),
+                    ..Default::default()
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::DefaultText,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    font: Some(default_font.clone()),
+                    background_color: None, // Transparent background
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::DefaultButton,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    background_color: Some(bg_input.clone()),
+                    font: Some(default_font.clone()),
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::DefaultInput,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    background_color: Some(bg_input),
+                    font: Some(default_font.clone()),
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::DefaultInputError,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    background_color: Some(bg_error),
+                    font: Some(default_font.clone()),
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::TreeView,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    background_color: Some(bg_panel.clone()),
+                    font: Some(default_font.clone()),
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::StatusLabelNormal,
+                style: ControlStyle {
+                    text_color: Some(text_light.clone()),
+                    font: Some(default_font.clone()),
+                    ..Default::default()
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::StatusLabelWarning,
+                style: ControlStyle {
+                    text_color: Some(text_warning),
+                    font: Some(default_font.clone()),
+                    ..Default::default()
+                },
+            });
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::DefineStyle {
+                style_id: StyleId::StatusLabelError,
+                style: ControlStyle {
+                    text_color: Some(text_error),
+                    font: Some(default_font),
+                    ..Default::default()
+                },
+            });
     }
 }
 

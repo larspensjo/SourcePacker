@@ -378,14 +378,12 @@ impl Win32ApiInternalState {
                 available_profiles,
                 title,
                 prompt,
-                emphasize_create_new,
             } => dialog_handler::handle_show_profile_selection_dialog_command(
                 self,
                 window_id,
                 available_profiles,
                 title,
                 prompt,
-                emphasize_create_new,
             ),
             PlatformCommand::ShowInputDialog {
                 window_id,

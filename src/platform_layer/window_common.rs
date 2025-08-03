@@ -684,9 +684,22 @@ impl Win32ApiInternalState {
                 lresult_override = Some(SUCCESS_CODE);
             }
             WM_DESTROY => {
-                event_to_send = self.handle_wm_destroy(hwnd, wparam, lparam, window_id);
+                // DO NOT remove window data here. Just notify the app logic.
+                log::debug!(
+                    "WM_DESTROY received for WinID {:?}. Notifying app logic.",
+                    window_id
+                );
+                event_to_send = Some(AppEvent::WindowDestroyed { window_id });
             }
-            WM_NCDESTROY => {}
+            WM_NCDESTROY => {
+                // This is the FINAL message. Now it's safe to clean up.
+                log::debug!(
+                    "WM_NCDESTROY received for WinID {:?}. Initiating final cleanup.",
+                    window_id
+                );
+                self.remove_window_data(window_id);
+                self.check_if_should_quit_after_window_close();
+            }
             WM_PAINT => {
                 lresult_override = Some(self.handle_wm_paint(hwnd, wparam, lparam, window_id));
             }

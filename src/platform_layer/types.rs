@@ -275,7 +275,6 @@ pub enum PlatformCommand {
         available_profiles: Vec<String>,
         title: String,
         prompt: String,
-        emphasize_create_new: bool,
     },
     ShowInputDialog {
         window_id: WindowId,
