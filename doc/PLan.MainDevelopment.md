@@ -1,90 +1,80 @@
-# Detailed Development Plan for SourcePacker
+# SourcePacker - Master Development Plan
 
-This plan breaks down the development of SourcePacker into small, incremental steps. Optional steps or features intended for later are marked.
+This document outlines the prioritized, sequential development plan for SourcePacker. It serves as the master roadmap, consolidating goals from other planning files.
 
----
+## **Phase 1: Architectural Refinement (High Priority)**
 
-# Phase 2: Basic UI & Interaction - Post Sync
+**Objective:** Transform the `platform_layer` into a reusable library, improve type safety, and formalize the command-driven UI pattern. This is the most critical next step for enhancing code quality and maintainability.
 
-(Earlier steps already completed)
+*   **Task 1.1: Refactor `platform_layer` into the `CommanDuctUI` Library**
+    *   **Goal:** Create a high-quality, reusable Rust library for command-driven native Windows UI.
+    *   **Status:** **Not Started.**
+    *   **Action:** Follow the detailed steps outlined in `Plan.CommanDuctUI.md`. Key steps include:
+        1.  Create the new `CommanDuctUI` library crate.
+        2.  Migrate the existing `platform_layer` code.
+        3.  **Implement the type-safe `ControlId` wrapper** to replace raw `i32` IDs.
+        4.  Integrate the new library back into SourcePacker as a crate dependency.
+        5.  Set up `build.rs` in SourcePacker to auto-generate `ControlId` constants.
+    *   **Justification:** This addresses the need for type safety ("Newtypes for IDs") and improves the "disconnect between UI elements and actions" (`P2.11.6`) by solidifying the command pattern.
 
-## P2.11: General Cleanup and Refinements
+## **Phase 2: Core UI Feature Implementation**
 
-This section details various cleanup tasks, refactorings, and minor enhancements to improve code quality, user experience, and testability.
+**Objective:** Add essential, user-facing features that improve the core usability of the application. These tasks can begin once the `CommanDuctUI` refactor is complete.
 
-### P2.11.5: Future Enhancements & Nice-to-Haves (Low Priority for P2)
-*   **Structured Application Settings File:**
-    *   **Problem:** `last_profile_name.txt` is limited.
-    *   **Action:** Plan to migrate `core::config` to use JSON (e.g., `app_settings.json`) if more settings are anticipated.
-    *   **Rationale:** Scalable solution for preferences.
-    *   **Status:** Not done (low priority).
-*   **Modularity of `handler.rs` and `handler_tests.rs`:**
-    *   **Problem:** Files can become large.
-    *   **Action:** If `app_logic/handler.rs` becomes unwieldy *after* the M/V/P refactor, consider further sub-modules for specific flows.
-    *   **Rationale:** Long-term maintainability.
-    *   **Status:** M/V/P was the major step. Further sub-moduling can be considered if files grow excessively.
+*   **Task 2.1: Implement File Content Viewer**
+    *   **Goal:** Add a read-only panel to display the contents of the selected file.
+    *   **Status:** **Not Started.**
+    *   **Action:**
+        1.  Add a read-only, multi-line `EDIT` control to the UI layout in `ui_description_layer`.
+        2.  Define a new `PlatformCommand` to set its content (e.g., `SetViewerContent`).
+        3.  Add a `TreeViewItemSelectionChanged` event to the platform layer.
+        4.  In `MyAppLogic`, handle the selection change event to read the file's content and issue the `SetViewerContent` command.
+    *   **Requirement:** `[UiContentViewerPanelReadOnlyV1]`
 
-### P2.11.6: Improved disconnect between UI elements and actions
-*   When you click on a button or click on a menu item, the execution flow is different. But it should be harmonized. The event should be made independent of the source.
-    * For example, when I changed a regular button into a menu item, I had to change code in types.rs, ui_descrptive_layer, handler.rs
+*   **Task 2.2: Implement Visual Handling for Missing Files**
+    *   **Goal:** Visually distinguish files that are part of a profile but are missing from the disk.
+    *   **Status:** **Not Started.**
+    *   **Action:**
+        1.  During profile load, identify paths from the profile that do not exist in the file system scan results.
+        2.  Create `FileNode`s for these missing paths with a distinct state (e.g., `SelectionState::Missing`).
+        3.  Modify the platform layer's TreeView custom draw logic (`handle_nm_customdraw`) to render items with this state differently (e.g., greyed-out text).
+    *   **Requirement:** `[ProfileMissingFileIndicateOrRemoveV1]`, `[UiTreeViewVisualFileStatusV1]`
 
-### P2.11.7: Should the treeview be created from ui_descriptive_layer?
+## **Phase 3: Theming and UX Enhancements**
 
-## P2.13: Improved Profile management
-(implemented)
+**Objective:** Improve the visual appeal and user experience of the application.
 
-## P2.14: Better encapsulation of Win32ApiInternalState
-*   The controls shouldn't depend on Win32ApiInternalState, see styling_hander.rs
+*   **Task 3.1: Implement Advanced Styling (Borders & Focus)**
+    *   **Goal:** Enhance the "Neon Night" theme with custom borders and a visual indicator for focused controls.
+    *   **Status:** **Not Started.**
+    *   **Action:** Follow **Phase 5** of the `Plan.StyleGuides.md`. This involves:
+        1.  Extending `ControlStyle` to include border properties.
+        2.  Implementing `WM_NCPAINT`, `WM_SETFOCUS`, and `WM_KILLFOCUS` handlers to draw custom borders and change their color on focus.
+        3.  Updating the theme definition in `theme.rs` with the new border styles.
 
-# Phase 3: Enhancements & UX Improvements
+*   **Task 3.2: Enhance Quick Search Visuals**
+    *   **Goal:** Highlight matching text within the TreeView when a quick search is active.
+    *   **Status:** **Not Started.**
+    *   **Action:** This is a more advanced custom draw task. It would likely require modifying the `NM_CUSTOMDRAW` handler to parse the item text and render the matching substring with a different background color.
 
-## P3.2: Quick search visual enhancement
-*   When doing a quick search, the text matching should be highlighted.
+## **Phase 4: Full Profile Management**
 
-## P3.3: File Content Viewer (preview)
-*   Add a read-only text control. `[UiContentViewerPanelReadOnlyV1]`
-*   Load selected file's content into the viewer.
+**Objective:** Provide a complete user interface for managing profiles beyond loading and saving.
 
-## P3.5: Handling File State Discrepancies Visually
-*   When loading a profile or after refresh:
-    *   Files in profile but not on disk: Mark visually (e.g., greyed out). `[ProfileMissingFileIndicateOrRemoveV1]`, `[UiTreeViewVisualFileStatusV1]`
-    *   Files on disk but not in profile: Appear as `FileState::Unknown`. `[FileStateNewUnknownV2]`, `[UiTreeViewVisualFileStatusV1]`
+*   **Task 4.1: Build Profile Management Dialog**
+    *   **Goal:** Create a dedicated dialog for users to create, duplicate, and delete profiles.
+    *   **Status:** **Not Started.**
+    *   **Action:**
+        1.  Add a "Manage Profiles..." `MenuAction`.
+        2.  Design and implement a new dialog using platform commands. This dialog should list existing profiles and have "Create New", "Duplicate", and "Delete" buttons.
+        3.  Implement the corresponding `AppEvent` to handle the dialog's results.
+        4.  Implement the backend logic in `CoreProfileManager` for deleting and duplicating profile files.
+    *   **Requirements:** `[UiMenuProfileManagementV1]`, `[ProfileOpDuplicateExistingV1]`, `[ProfileOpDeleteExistingV1]`
 
-## P3.6: Full Profile Management UI
-*   "File -> Manage Profiles..." opens a dedicated dialog. `[UiMenuProfileManagementV1]`
-*   Dialog with list, "Create New", "Duplicate", "Delete".
-*   "Edit Profile": Allow changing name, root folder (triggers rescan), `archive_path`. `[UiMenuSetRootFolderV1]`
-*   "Duplicate Profile" dialog. `[ProfileOpDuplicateExistingV1]`
-*   "Delete Profile": Confirm, remove file. If active, trigger profile selection. `[ProfileOpDeleteExistingV1]`
+## **Future Considerations (Post-Phase 4)**
 
-## P3.7: But to expand the whole tree
-    *   **(Note: This is partially addressed by the "Expand Filtered/All" button in P4.1. This item can be considered superseded or a refinement if P4.1's button doesn't cover all desired "expand all" scenarios.)**
-
-# Phase 4: Advanced Features (Optional / Future)
-
-## P4.1: Quick File & Folder Filter `[UiQuickFileFilterV1]`
-
-**Goal:** Implement an interactive filter for the TreeView, allowing users to quickly find files and folders by name using simple text and glob patterns.
-
-**User Story:** As a user, I want to type text into a filter box to dynamically narrow down the items shown in the file tree, so I can quickly locate specific files or folders in large projects. I also want to easily expand the filtered results or the entire tree.
-
-Implementation complete.
-
-## P4.2: Content Search `[UiSearchFileContentHighlightV1]`
-*   Input for search string.
-*   Button "Search in Selected".
-*   Highlight files in tree.
-*   (Optional) Show occurrences in File Content Viewer.
-
-## P4.4: "Clear Selection" / "Select All Files" / "Invert Selection" options.
-
-## P4.5: Better Binary File Detection `[TextFileFocusUTF8V1]`
-*   Implement robust check (e.g., percentage of non-printable chars).
-*   Visually indicate/exclude binary files. `[FutureBinaryFileDetectionSophisticatedV1]`
-
-## P4.6: Graphical effect on status change
-*   When something in the status field changes, I want there to be a visual effect that gradually fades away.
-
-## P4.7: Future Exploration: Advanced Layout and Deeper Decomposition**
-*   **(Future)** This remains a longer-term goal. Consider advanced layout managers (e.g., grid, stack panels) as generic offerings within `platform_layer`, configurable by `ui_description_layer`.
-*   **(Future)** Evaluate if `NativeWindowData` can be made more generic or if control-specific state can be fully encapsulated within their respective handlers.
+*   **Concurrency:** Offload long-running tasks (scanning, archiving) to background threads to ensure UI responsiveness.
+*   **Content Search:** Implement search within file contents. (`[UiSearchFileContentHighlightV1]`)
+*   **Advanced Selection:** Add "Clear Selection", "Select All", and "Invert Selection" options.
+*   **Improved Binary File Detection:** Implement a more robust check for binary files. (`[FutureBinaryFileDetectionSophisticatedV1]`)
+*   **Filesystem Watcher:** Use the `notify` crate to replace manual refresh with real-time file system monitoring.

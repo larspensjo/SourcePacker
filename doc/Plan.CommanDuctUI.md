@@ -1,10 +1,8 @@
 # Plan: Transforming `platform_layer` into the `CommanDuctUI` Library
 
-**Goal:** Create a high-quality, reusable Rust library named `CommanDuctUI` from the existing `platform_layer` code, suitable for publishing to `crates.io` and use in other projects.
+**Goal:** Create a high-quality, reusable Rust library named `CommanDuctUI` from the existing `platform_layer` code, suitable for publishing and use in other projects. Completing this plan is the central goal of **Phase 1** of the Master Development Plan.
 
-**Dependency:** We should first complete the [UI Descriptive Layer plan](PlanUIDescriptiveLayer.md).
-
----
+**Dependency:** The UI Descriptive Layer plan, which defined the initial structure via commands, is considered **complete**.
 
 ## Phase 1: Library Creation and Code Migration
 
@@ -83,9 +81,7 @@
    - Run `cargo check` and `cargo build` within the `CommanDuctUI` directory.
    - Resolve any compilation errors related to path changes, visibility, or missing dependencies.
 
----
-
-## Phase 2: API Design and Refinement
+## Phase 2: API Design and Refinement (Key Task)
 
 ### Step 2.1: Implement Type-Safe `ControlId`
 
