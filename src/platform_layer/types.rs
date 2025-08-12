@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use super::styling::{ControlStyle, StyleId};
+use super::styling_primitives::{ControlStyle, StyleId};
 
 // An opaque identifier for a native window, managed by the platform layer.
 //

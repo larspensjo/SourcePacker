@@ -10,9 +10,12 @@ mod platform_layer;
 
 #[cfg(not(target_os = "windows"))]
 mod platform_layer {
+    #[path = "styling_primitives.rs"]
+    pub mod styling_primitives;
     #[path = "types.rs"]
     pub mod types;
 
+    pub use styling_primitives::{Color, ControlStyle, FontDescription, FontWeight, StyleId};
     pub use types::{
         AppEvent, CheckState, DockStyle, LabelClass, LayoutRule, MenuAction, MessageSeverity,
         PlatformCommand, PlatformEventHandler, TreeItemDescriptor, TreeItemId, UiStateProvider,
