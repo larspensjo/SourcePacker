@@ -1025,7 +1025,12 @@ impl MyAppLogic {
             }
         };
 
-        let (current_profile_name_clone, root_path_to_scan, current_selection_paths_opt) = {
+        let (
+            current_profile_name_clone,
+            root_path_to_scan,
+            current_selection_paths_opt,
+            exclude_patterns,
+        ) = {
             let data = self.app_session_data_ops.lock().unwrap();
             let name = data.get_profile_name();
             if name.is_none() {
@@ -1034,11 +1039,13 @@ impl MyAppLogic {
             }
 
             let (selected, deselected) = data.get_current_selection_paths();
+            let exclude_patterns = data.create_profile_snapshot().exclude_patterns;
 
             (
                 name,
                 data.get_root_path_for_scan(),
                 Some((selected, deselected)),
+                exclude_patterns,
             )
         };
 
@@ -1064,7 +1071,10 @@ impl MyAppLogic {
         );
 
         // TODO: Do we really need a full new scan_directory here?
-        match self.file_system_scanner.scan_directory(&root_path_to_scan) {
+        match self
+            .file_system_scanner
+            .scan_directory(&root_path_to_scan, &exclude_patterns)
+        {
             Ok(new_nodes) => {
                 {
                     let mut data = self.app_session_data_ops.lock().unwrap();

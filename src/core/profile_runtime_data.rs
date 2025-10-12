@@ -547,7 +547,9 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.archive_path = loaded_profile.archive_path.clone();
         self.cached_file_token_details = loaded_profile.file_details.clone(); // Initial copy
 
-        match file_system_scanner.scan_directory(&self.root_path_for_scan) {
+        match file_system_scanner
+            .scan_directory(&self.root_path_for_scan, &loaded_profile.exclude_patterns)
+        {
             Ok(nodes) => {
                 self.file_system_snapshot_nodes = nodes;
                 log::debug!(
@@ -642,7 +644,12 @@ mod tests {
     }
 
     impl FileSystemScannerOperations for MockFileSystemScanner {
-        fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>, FileSystemError> {
+        fn scan_directory(
+            &self,
+            root_path: &Path,
+            exclude_patterns: &[String],
+        ) -> Result<Vec<FileNode>, FileSystemError> {
+            let _ = exclude_patterns;
             self.scan_directory_calls
                 .lock()
                 .unwrap()

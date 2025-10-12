@@ -497,7 +497,10 @@ mod handler_tests {
                 .push(loaded_profile.clone());
 
             // Simulate the behavior of the real ProfileRuntimeData::load_profile_into_session
-            match file_system_scanner.scan_directory(&loaded_profile.root_folder) {
+            match file_system_scanner.scan_directory(
+                &loaded_profile.root_folder,
+                &loaded_profile.exclude_patterns,
+            ) {
                 Ok(scanned_nodes) => {
                     self.profile_name = Some(loaded_profile.name.clone());
                     self.archive_path = loaded_profile.archive_path.clone();
@@ -768,7 +771,12 @@ mod handler_tests {
         }
     }
     impl FileSystemScannerOperations for MockFileSystemScanner {
-        fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>, FileSystemError> {
+        fn scan_directory(
+            &self,
+            root_path: &Path,
+            exclude_patterns: &[String],
+        ) -> Result<Vec<FileNode>, FileSystemError> {
+            let _ = exclude_patterns;
             self.scan_directory_calls
                 .lock()
                 .unwrap()

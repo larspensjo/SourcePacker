@@ -1,6 +1,6 @@
 use super::file_node::FileNode;
 use crate::core::checksum_utils;
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -64,7 +64,8 @@ pub type Result<T> = std::result::Result<T, FileSystemError>;
  * Defines the operations for scanning file systems.
  * This trait abstracts the specific mechanisms for traversing directories and
  * building a representation of the file structure, typically as a tree of `FileNode` objects.
- * Implementations should respect ignore files (e.g., .gitignore).
+ * Implementations should respect ignore files (e.g., .gitignore) and any additional exclude patterns
+ * supplied at scan time.
  */
 pub trait FileSystemScannerOperations: Send + Sync {
     /*
@@ -73,7 +74,11 @@ pub trait FileSystemScannerOperations: Send + Sync {
      * ignore files like .gitignore, and construct a hierarchical representation of
      * non-ignored files and directories. The tree is typically sorted for consistent presentation.
      */
-    fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>>;
+    fn scan_directory(
+        &self,
+        root_path: &Path,
+        exclude_patterns: &[String],
+    ) -> Result<Vec<FileNode>>;
 }
 
 /*
@@ -107,7 +112,11 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
      * and constructs a hierarchical representation.
      * The tree is sorted such that directories appear before files at each level, and then alphabetically.
      */
-    fn scan_directory(&self, root_path: &Path) -> Result<Vec<FileNode>> {
+    fn scan_directory(
+        &self,
+        root_path: &Path,
+        exclude_patterns: &[String],
+    ) -> Result<Vec<FileNode>> {
         if !root_path.is_dir() {
             return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
         }
@@ -119,8 +128,9 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         let mut nodes_map: HashMap<PathBuf, FileNode> = HashMap::new();
         let mut entry_paths_in_discovery_order: Vec<PathBuf> = Vec::new();
 
-        // Use WalkBuilder from the 'ignore' crate.
-        let walker = WalkBuilder::new(root_path)
+        // Use WalkBuilder from the 'ignore' crate, applying any user-specified exclude patterns.
+        let mut walker_builder = WalkBuilder::new(root_path);
+        walker_builder
             .standard_filters(true) // Enables standard gitignore-style filtering (gitignore, .ignore, .git/info/exclude)
             .parents(true) // Process ignore files in parent directories.
             .git_global(false) // Do not respect global .gitignore for more hermetic behavior, especially in tests.
@@ -128,8 +138,49 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             .git_exclude(true) // Respect .git/info/exclude files.
             .ignore(true) // Respect .ignore files.
             .hidden(true) // Standard behavior: ignore hidden files unless explicitly unignored.
-            .sort_by_file_path(|a, b| a.cmp(b)) // Sort entries by path for consistent processing order
-            .build();
+            .sort_by_file_path(|a, b| a.cmp(b)); // Sort entries by path for consistent processing order
+
+        if !exclude_patterns.is_empty() {
+            let mut override_builder = OverrideBuilder::new(root_path);
+            for pattern in exclude_patterns {
+                let trimmed = pattern.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+
+                let override_pattern = if let Some(negated) = trimmed.strip_prefix('!') {
+                    let include_pattern = negated.trim();
+                    if include_pattern.is_empty() {
+                        continue;
+                    }
+                    include_pattern.to_string()
+                } else {
+                    format!("!{}", trimmed)
+                };
+
+                if let Err(err) = override_builder.add(&override_pattern) {
+                    log::warn!(
+                        "FileSystemScanner: Invalid exclude pattern '{}': {}",
+                        pattern,
+                        err
+                    );
+                }
+            }
+
+            match override_builder.build() {
+                Ok(overrides) => {
+                    walker_builder.overrides(overrides);
+                }
+                Err(err) => {
+                    log::warn!(
+                        "FileSystemScanner: Failed to build overrides for exclude patterns: {}",
+                        err
+                    );
+                }
+            }
+        }
+
+        let walker = walker_builder.build();
 
         for entry_result in walker {
             let entry = entry_result?; // Propagates ignore::Error, converted by From trait
@@ -236,6 +287,7 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
+    use std::path::Path;
     use tempfile::tempdir;
 
     fn setup_test_dir(base_path: &Path) -> io::Result<()> {
@@ -258,7 +310,7 @@ mod tests {
         scanner: &dyn FileSystemScannerOperations,
         path: &Path,
     ) -> Result<Vec<FileNode>> {
-        scanner.scan_directory(path)
+        scanner.scan_directory(path, &Vec::new())
     }
 
     // Helper to create .gitignore file for tests
@@ -397,6 +449,53 @@ mod tests {
         );
         assert_eq!(data_node.children[0].name(), "config.json");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_scan_respects_custom_exclude_patterns() -> Result<()> {
+        // Arrange
+        let dir = tempdir()?;
+        let build_dir = dir.path().join("build");
+        let notes_dir = dir.path().join("notes");
+        fs::create_dir_all(&build_dir)?;
+        fs::create_dir_all(dir.path().join("src"))?;
+        fs::create_dir_all(&notes_dir)?;
+        fs::write(build_dir.join("output.bin"), b"binary content")?;
+        fs::write(dir.path().join("src").join("main.rs"), "fn main() {}")?;
+        fs::write(notes_dir.join("activity.log"), "log entry")?;
+        fs::write(dir.path().join("README.md"), "# keep me")?;
+        let scanner = CoreFileSystemScanner::new();
+        let exclude_patterns = vec!["*.log".to_string(), "build/".to_string()];
+
+        // Act
+        let nodes = scanner.scan_directory(dir.path(), &exclude_patterns)?;
+
+        // Assert
+        fn tree_contains_path(nodes: &[FileNode], target: &Path) -> bool {
+            for node in nodes {
+                if node.path() == target {
+                    return true;
+                }
+                if node.is_dir() && tree_contains_path(&node.children, target) {
+                    return true;
+                }
+            }
+            false
+        }
+
+        assert!(
+            !tree_contains_path(&nodes, &build_dir),
+            "Build directory should be excluded by profile patterns."
+        );
+        assert!(
+            !tree_contains_path(&nodes, &notes_dir.join("activity.log")),
+            "Log files matching *.log should be excluded."
+        );
+        assert!(
+            tree_contains_path(&nodes, &dir.path().join("src").join("main.rs")),
+            "Non-matching files must remain in the scan results."
+        );
         Ok(())
     }
 
