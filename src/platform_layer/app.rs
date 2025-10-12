@@ -399,6 +399,14 @@ impl Win32ApiInternalState {
                 default_text,
                 context_tag,
             ),
+            PlatformCommand::ShowMessageBox {
+                window_id,
+                title,
+                message,
+                severity,
+            } => dialog_handler::handle_show_message_box_command(
+                self, window_id, title, message, severity,
+            ),
             PlatformCommand::ShowFolderPickerDialog {
                 window_id,
                 title,

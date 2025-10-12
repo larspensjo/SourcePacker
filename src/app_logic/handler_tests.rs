@@ -1392,6 +1392,80 @@ mod handler_tests {
     }
 
     #[test]
+    fn test_generate_archive_missing_file_shows_message_box() {
+        // Arrange
+        let (mut logic, mock_app_session_mutexed, _, _, _, mock_archiver, _, _) =
+            setup_logic_with_mocks();
+        let main_window_id = WindowId(99);
+        logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+        let profile_name = "PopupProfile";
+        let archive_path = PathBuf::from("/popup/archive.txt");
+        let root_folder = PathBuf::from("/popup/root");
+        let file_nodes = vec![FileNode::new_test(
+            root_folder.join("missing.txt"),
+            "missing.txt".into(),
+            false,
+        )];
+        {
+            let mut mock_app_session = mock_app_session_mutexed.lock().unwrap();
+            mock_app_session.set_profile_name_for_mock(Some(profile_name.to_string()));
+            mock_app_session.set_root_path_for_scan_for_mock(root_folder.clone());
+            mock_app_session.set_archive_path_for_mock(Some(archive_path.clone()));
+            mock_app_session.set_snapshot_nodes_for_mock(file_nodes.clone());
+        }
+        mock_archiver.set_create_archive_content_result(Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "mocked missing file",
+        )));
+
+        // Act
+        logic.handle_event(AppEvent::MenuActionClicked {
+            action: MenuAction::GenerateArchive,
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        let message_box_cmd = find_command(&cmds, |cmd| {
+            matches!(
+                cmd,
+                PlatformCommand::ShowMessageBox {
+                    window_id,
+                    title,
+                    message,
+                    severity,
+                } if *window_id == main_window_id
+                    && title == "Missing Source File"
+                    && message.contains("mocked missing file")
+                    && *severity == MessageSeverity::Error
+            )
+        });
+        assert!(
+            message_box_cmd.is_some(),
+            "Expected ShowMessageBox command. Got: {:?}",
+            cmds
+        );
+
+        assert!(
+            find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::UpdateLabelText {
+                    control_id,
+                    ..
+                } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID
+            ))
+            .is_none(),
+            "Unexpected status label update when missing file encountered. Got: {:?}",
+            cmds
+        );
+
+        assert!(
+            mock_archiver.get_save_archive_content_calls().is_empty(),
+            "Archive save should not be attempted when content generation fails"
+        );
+    }
+
+    #[test]
     fn test_menu_action_generate_archive_no_profile_shows_error() {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, _, _, _) = setup_logic_with_mocks();

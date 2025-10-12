@@ -91,8 +91,7 @@ mod tests {
         );
         assert!(path.is_dir());
         assert!(
-            path
-                .to_string_lossy()
+            path.to_string_lossy()
                 .to_lowercase()
                 .contains(&unique_app_name.to_lowercase()),
             "Path should contain the app name. Path: {:?}",

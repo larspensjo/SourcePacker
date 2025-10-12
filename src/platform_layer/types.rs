@@ -283,6 +283,17 @@ pub enum PlatformCommand {
         default_text: Option<String>,
         context_tag: Option<String>,
     },
+    /*
+     * Shows a simple modal message box from the platform layer.
+     * The application logic provides the window owner, title, body text,
+     * and a severity that the platform layer maps to the appropriate icon.
+     */
+    ShowMessageBox {
+        window_id: WindowId,
+        title: String,
+        message: String,
+        severity: MessageSeverity,
+    },
     ShowFolderPickerDialog {
         window_id: WindowId,
         title: String,

@@ -8,7 +8,7 @@
 
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
-use crate::platform_layer::types::{AppEvent, WindowId};
+use crate::platform_layer::types::{AppEvent, MessageSeverity, WindowId};
 use crate::platform_layer::window_common;
 
 use std::ffi::{OsString, c_void};
@@ -803,6 +803,46 @@ pub(crate) fn handle_show_input_dialog_command(
     };
 
     internal_state.send_event(event);
+    Ok(())
+}
+
+/*
+ * Handles the `ShowMessageBox` platform command by displaying a modal Win32 message box.
+ * It maps the provided `MessageSeverity` to an icon style, keeping the UX consistent
+ * with other status surfaces while ensuring the message appears prominently.
+ */
+pub(crate) fn handle_show_message_box_command(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    title: String,
+    message: String,
+    severity: MessageSeverity,
+) -> PlatformResult<()> {
+    let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
+
+    let icon_flag = match severity {
+        MessageSeverity::Error => MB_ICONERROR,
+        MessageSeverity::Warning => MB_ICONWARNING,
+        _ => MB_ICONINFORMATION,
+    };
+
+    let title_hstring = HSTRING::from(title);
+    let message_hstring = HSTRING::from(message);
+    log::debug!(
+        "DialogHandler: Showing message box with severity {:?} for window {:?}",
+        severity,
+        window_id
+    );
+
+    unsafe {
+        MessageBoxW(
+            Some(hwnd_owner),
+            PCWSTR(message_hstring.as_ptr()),
+            PCWSTR(title_hstring.as_ptr()),
+            MB_OK | icon_flag,
+        );
+    }
+
     Ok(())
 }
 

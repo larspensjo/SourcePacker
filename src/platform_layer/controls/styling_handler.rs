@@ -10,7 +10,6 @@ use crate::platform_layer::{
     styling::{Color, ControlStyle, FontWeight, ParsedControlStyle},
 };
 use windows::{
-    core::HSTRING,
     Win32::{
         Foundation::{COLORREF, GetLastError},
         Graphics::Gdi::{
@@ -20,6 +19,7 @@ use windows::{
         },
         System::WindowsProgramming::MulDiv,
     },
+    core::HSTRING,
 };
 
 /*

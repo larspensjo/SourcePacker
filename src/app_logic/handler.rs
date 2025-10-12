@@ -12,6 +12,7 @@ use crate::platform_layer::{
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, VecDeque};
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex}; // Added Mutex
 
@@ -607,7 +608,20 @@ impl MyAppLogic {
                 }
             },
             Err(e) => {
-                app_error!(self, "Failed to create archive content: {}", e);
+                if e.kind() == io::ErrorKind::NotFound {
+                    log::error!("Failed to create archive content: {}", e);
+                    if let Some(ui_state_ref) = &self.ui_state {
+                        self.synchronous_command_queue
+                            .push_back(PlatformCommand::ShowMessageBox {
+                                window_id: ui_state_ref.window_id,
+                                title: "Missing Source File".to_string(),
+                                message: format!("A selected file could not be read.\n\n{}", e),
+                                severity: MessageSeverity::Error,
+                            });
+                    }
+                } else {
+                    app_error!(self, "Failed to create archive content: {}", e);
+                }
             }
         }
     }
