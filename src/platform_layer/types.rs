@@ -43,6 +43,7 @@ pub enum MenuAction {
     NewProfile,
     SaveProfileAs,
     SetArchivePath,
+    EditExcludePatterns,
     RefreshFileList,
     GenerateArchive,
 }
@@ -191,6 +192,11 @@ pub enum AppEvent {
         text: Option<String>,
         context_tag: Option<String>,
     },
+    ExcludePatternsDialogCompleted {
+        window_id: WindowId,
+        saved: bool,
+        patterns: String,
+    },
     FolderPickerDialogCompleted {
         window_id: WindowId,
         path: Option<PathBuf>,
@@ -282,6 +288,11 @@ pub enum PlatformCommand {
         prompt: String,
         default_text: Option<String>,
         context_tag: Option<String>,
+    },
+    ShowExcludePatternsDialog {
+        window_id: WindowId,
+        title: String,
+        patterns: String,
     },
     /*
      * Shows a simple modal message box from the platform layer.

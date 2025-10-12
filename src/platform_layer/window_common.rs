@@ -43,6 +43,8 @@ use std::sync::Arc;
 // but ideally, they should be private to dialog_handler or within a shared constants scope for dialogs.
 pub(crate) const ID_DIALOG_INPUT_EDIT: i32 = 3001;
 pub(crate) const ID_DIALOG_INPUT_PROMPT_STATIC: i32 = 3002;
+pub(crate) const ID_DIALOG_EXCLUDE_PATTERNS_EDIT: i32 = 3003;
+pub(crate) const ID_DIALOG_EXCLUDE_PATTERNS_PROMPT_STATIC: i32 = 3004;
 
 // Common control class names
 pub(crate) const WC_STATIC: PCWSTR = windows::core::w!("STATIC");

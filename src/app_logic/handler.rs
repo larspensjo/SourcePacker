@@ -1437,6 +1437,28 @@ impl MyAppLogic {
         }
     }
 
+    /*
+     * Handles completion of the exclude patterns dialog. Step 3 only needs to acknowledge the
+     * user's intent, so this function currently logs the interaction while the persistence logic
+     * is introduced in the next development step.
+     */
+    fn handle_exclude_patterns_dialog_completed(
+        &mut self,
+        window_id: WindowId,
+        saved: bool,
+        patterns: String,
+    ) {
+        log::debug!(
+            "Exclude patterns dialog completed for window {:?}, saved: {}, first line preview: {:?}",
+            window_id,
+            saved,
+            patterns.lines().next()
+        );
+        if !saved {
+            log::debug!("Exclude patterns dialog was cancelled; no action taken.");
+        }
+    }
+
     fn handle_folder_picker_dialog_completed(
         &mut self,
         window_id: WindowId,
@@ -1588,6 +1610,58 @@ impl MyAppLogic {
                 default_filename,
                 filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0".to_string(),
                 initial_dir: initial_dir_for_dialog,
+            });
+    }
+
+    /*
+     * Handles the "Edit Exclude Patterns..." menu action by launching a modal dialog pre-populated
+     * with the current profile's exclude patterns. When no profile is active the command is ignored
+     * and the user receives a warning through the status surface.
+     */
+    fn handle_menu_edit_exclude_patterns_clicked(&mut self) {
+        let ui_state_mut = match self.ui_state.as_mut() {
+            Some(state) => state,
+            None => {
+                log::warn!("Cannot edit exclude patterns: No UI state (main window).");
+                return;
+            }
+        };
+
+        log::debug!("MenuAction::EditExcludePatterns action received by AppLogic.");
+        let (active_profile_name, exclude_patterns) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            let profile_name = data.get_profile_name();
+            let patterns = if profile_name.is_some() {
+                data.create_profile_snapshot().exclude_patterns
+            } else {
+                Vec::new()
+            };
+            (profile_name, patterns)
+        };
+
+        if active_profile_name.is_none() {
+            app_warn!(self, "Cannot edit exclude patterns: No profile is active.");
+            return;
+        }
+
+        if let Some(profile_name) = active_profile_name.as_ref() {
+            log::debug!(
+                "Preparing exclude patterns dialog for active profile '{}'.",
+                profile_name
+            );
+        }
+
+        let patterns_text = if exclude_patterns.is_empty() {
+            String::new()
+        } else {
+            exclude_patterns.join("\r\n")
+        };
+
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowExcludePatternsDialog {
+                window_id: ui_state_mut.window_id,
+                title: "Edit Exclude Patterns".to_string(),
+                patterns: patterns_text,
             });
     }
 
@@ -1862,6 +1936,7 @@ impl PlatformEventHandler for MyAppLogic {
                 MenuAction::NewProfile => self.handle_menu_new_profile_clicked(),
                 MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
                 MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
+                MenuAction::EditExcludePatterns => self.handle_menu_edit_exclude_patterns_clicked(),
                 MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
                 MenuAction::GenerateArchive => self._do_generate_archive(),
             },
@@ -1903,6 +1978,13 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::MainWindowUISetupComplete { window_id } => {
                 self._on_ui_setup_complete(window_id);
+            }
+            AppEvent::ExcludePatternsDialogCompleted {
+                window_id,
+                saved,
+                patterns,
+            } => {
+                self.handle_exclude_patterns_dialog_completed(window_id, saved, patterns);
             }
             AppEvent::InputTextChanged {
                 window_id,

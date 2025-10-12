@@ -399,6 +399,13 @@ impl Win32ApiInternalState {
                 default_text,
                 context_tag,
             ),
+            PlatformCommand::ShowExcludePatternsDialog {
+                window_id,
+                title,
+                patterns,
+            } => dialog_handler::handle_show_exclude_patterns_dialog_command(
+                self, window_id, title, patterns,
+            ),
             PlatformCommand::ShowMessageBox {
                 window_id,
                 title,

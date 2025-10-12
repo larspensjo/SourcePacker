@@ -64,6 +64,11 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
             text: "Set Archive Path...".to_string(),
             children: Vec::new(),
         },
+        MenuItemConfig {
+            action: Some(MenuAction::EditExcludePatterns),
+            text: "Edit Exclude Patterns...".to_string(),
+            children: Vec::new(),
+        },
     ];
 
     let main_menu_command = PlatformCommand::CreateMainMenu {

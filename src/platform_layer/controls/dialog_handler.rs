@@ -545,6 +545,17 @@ struct InputDialogData {
     success: bool,
 }
 
+/*
+ * Holds runtime state for the exclude patterns dialog, including the initial text shown to the
+ * user, the final text captured from the edit control, and a flag indicating whether the dialog
+ * completed via the OK button.
+ */
+struct ExcludePatternsDialogData {
+    initial_text: String,
+    result_text: String,
+    saved: bool,
+}
+
 // Helper to extract the low word from WPARAM.
 fn loword_from_wparam(wparam: WPARAM) -> u16 {
     (wparam.0 & 0xFFFF) as u16
@@ -625,6 +636,97 @@ unsafe extern "system" fn input_dialog_proc(
                 }
                 _ => FALSE.0 as isize,
             }
+        }
+        _ => FALSE.0 as isize,
+    }
+}
+
+/*
+ * Dialog procedure for the exclude patterns editor. Responsible for seeding the multi-line edit
+ * control with the current patterns and capturing the updated text when the user confirms changes.
+ */
+unsafe extern "system" fn exclude_patterns_dialog_proc(
+    hdlg: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> isize {
+    match msg {
+        WM_INITDIALOG => {
+            unsafe {
+                SetWindowLongPtrW(hdlg, GWLP_USERDATA, lparam.0);
+            }
+            let dialog_data = unsafe { &*(lparam.0 as *const ExcludePatternsDialogData) };
+            let prompt_text =
+                HSTRING::from("Enter patterns to exclude (one per line, gitignore syntax).");
+            unsafe {
+                SetDlgItemTextW(
+                    hdlg,
+                    window_common::ID_DIALOG_EXCLUDE_PATTERNS_PROMPT_STATIC,
+                    &prompt_text,
+                )
+                .unwrap_or_default();
+            }
+
+            let seeded_text = dialog_data
+                .initial_text
+                .replace("\r\n", "\n")
+                .replace('\n', "\r\n");
+            if !seeded_text.is_empty() {
+                let edit_text = HSTRING::from(seeded_text);
+                unsafe {
+                    SetDlgItemTextW(
+                        hdlg,
+                        window_common::ID_DIALOG_EXCLUDE_PATTERNS_EDIT,
+                        &edit_text,
+                    )
+                    .unwrap_or_default();
+                }
+            }
+
+            TRUE.0 as isize
+        }
+        WM_COMMAND => {
+            let command_id = loword_from_wparam(wparam);
+            match command_id {
+                x if x == IDOK.0 as u16 => {
+                    let dialog_data_ptr = unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) }
+                        as *mut ExcludePatternsDialogData;
+                    if !dialog_data_ptr.is_null() {
+                        if let Ok(edit_hwnd) = unsafe {
+                            GetDlgItem(Some(hdlg), window_common::ID_DIALOG_EXCLUDE_PATTERNS_EDIT)
+                        } {
+                            let text_len = unsafe { GetWindowTextLengthW(edit_hwnd) } as usize;
+                            let mut buffer: Vec<u16> = vec![0; text_len + 1];
+                            let written =
+                                unsafe { GetWindowTextW(edit_hwnd, buffer.as_mut_slice()) };
+                            buffer.truncate(written as usize);
+                            let mut result = String::from_utf16_lossy(&buffer);
+                            result = result.replace("\r\n", "\n");
+                            unsafe {
+                                (*dialog_data_ptr).result_text = result;
+                                (*dialog_data_ptr).saved = true;
+                            }
+                        }
+                    }
+                    unsafe { EndDialog(hdlg, IDOK.0 as isize).unwrap_or_default() };
+                    TRUE.0 as isize
+                }
+                x if x == IDCANCEL.0 as u16 => {
+                    let dialog_data_ptr = unsafe { GetWindowLongPtrW(hdlg, GWLP_USERDATA) }
+                        as *mut ExcludePatternsDialogData;
+                    if !dialog_data_ptr.is_null() {
+                        unsafe { (*dialog_data_ptr).saved = false };
+                    }
+                    unsafe { EndDialog(hdlg, IDCANCEL.0 as isize).unwrap_or_default() };
+                    TRUE.0 as isize
+                }
+                _ => FALSE.0 as isize,
+            }
+        }
+        WM_CLOSE => {
+            unsafe { EndDialog(hdlg, IDCANCEL.0 as isize).unwrap_or_default() };
+            TRUE.0 as isize
         }
         _ => FALSE.0 as isize,
     }
@@ -753,6 +855,115 @@ fn build_input_dialog_template(
 }
 
 /*
+ * Builds the dialog template used by the exclude patterns editor. The layout contains a descriptive
+ * prompt label, a multi-line edit control with a vertical scrollbar, and standard OK/Cancel buttons.
+ */
+fn build_exclude_patterns_dialog_template(
+    template_bytes: &mut Vec<u8>,
+    title_str: &str,
+) -> PlatformResult<()> {
+    let style = DS_CENTER | DS_MODALFRAME | DS_SETFONT;
+    let dlg_template = DLGTEMPLATE {
+        style: style as u32 | WS_CAPTION.0 | WS_SYSMENU.0 | WS_POPUP.0,
+        cdit: 4,
+        x: 0,
+        y: 0,
+        cx: 220,
+        cy: 170,
+        ..Default::default()
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(dlg_template) as *const [u8; size_of::<DLGTEMPLATE>()])
+    });
+    push_word(template_bytes, 0);
+    push_word(template_bytes, 0);
+    push_str_utf16(template_bytes, title_str);
+    push_word(template_bytes, 8);
+    push_str_utf16(template_bytes, "MS Shell Dlg");
+
+    // Prompt label
+    align_to_dword(template_bytes);
+    let prompt_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | window_common::SS_LEFT.0,
+        id: window_common::ID_DIALOG_EXCLUDE_PATTERNS_PROMPT_STATIC as u16,
+        x: 10,
+        y: 10,
+        cx: 200,
+        cy: 16,
+        ..Default::default()
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(prompt_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Static");
+    push_word(template_bytes, 0);
+    push_word(template_bytes, 0);
+
+    // Multi-line edit control
+    align_to_dword(template_bytes);
+    let edit_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0
+            | WS_VISIBLE.0
+            | WS_BORDER.0
+            | WS_VSCROLL.0
+            | WS_TABSTOP.0
+            | ES_MULTILINE as u32
+            | ES_AUTOVSCROLL as u32
+            | ES_WANTRETURN as u32,
+        id: window_common::ID_DIALOG_EXCLUDE_PATTERNS_EDIT as u16,
+        x: 10,
+        y: 28,
+        cx: 200,
+        cy: 110,
+        ..Default::default()
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(edit_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Edit");
+    push_word(template_bytes, 0);
+    push_word(template_bytes, 0);
+
+    // OK button
+    align_to_dword(template_bytes);
+    let ok_button_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | BS_DEFPUSHBUTTON as u32,
+        id: IDOK.0 as u16,
+        x: 50,
+        y: 145,
+        cx: 60,
+        cy: 16,
+        ..Default::default()
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(ok_button_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Button");
+    push_str_utf16(template_bytes, "OK");
+    push_word(template_bytes, 0);
+
+    // Cancel button
+    align_to_dword(template_bytes);
+    let cancel_button_item = DLGITEMTEMPLATE {
+        style: WS_CHILD.0 | WS_VISIBLE.0 | BS_PUSHBUTTON as u32,
+        id: IDCANCEL.0 as u16,
+        x: 120,
+        y: 145,
+        cx: 60,
+        cy: 16,
+        ..Default::default()
+    };
+    template_bytes.extend_from_slice(unsafe {
+        &*(std::ptr::addr_of!(cancel_button_item) as *const [u8; size_of::<DLGITEMTEMPLATE>()])
+    });
+    push_str_utf16(template_bytes, "Button");
+    push_str_utf16(template_bytes, "Cancel");
+    push_word(template_bytes, 0);
+
+    Ok(())
+}
+
+/*
  * Handles the `ShowInputDialog` platform command.
  */
 pub(crate) fn handle_show_input_dialog_command(
@@ -803,6 +1014,58 @@ pub(crate) fn handle_show_input_dialog_command(
     };
 
     internal_state.send_event(event);
+    Ok(())
+}
+
+/*
+ * Handles the `ShowExcludePatternsDialog` platform command by displaying a modal dialog that lets
+ * the user edit gitignore-style exclude patterns associated with the active profile.
+ */
+pub(crate) fn handle_show_exclude_patterns_dialog_command(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    title: String,
+    patterns: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "DialogHandler: Showing Exclude Patterns Dialog. Title: '{}'.",
+        title
+    );
+    let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
+
+    let mut dialog_data = ExcludePatternsDialogData {
+        initial_text: patterns.replace("\r\n", "\n"),
+        result_text: String::new(),
+        saved: false,
+    };
+
+    let mut template_bytes = Vec::<u8>::new();
+    build_exclude_patterns_dialog_template(&mut template_bytes, &title)?;
+
+    let dialog_result = unsafe {
+        DialogBoxIndirectParamW(
+            Some(internal_state.h_instance()),
+            template_bytes.as_ptr() as *const DLGTEMPLATE,
+            Some(hwnd_owner),
+            Some(exclude_patterns_dialog_proc),
+            LPARAM(&mut dialog_data as *mut _ as isize),
+        )
+    };
+
+    let dialog_saved = dialog_result != 0 && dialog_data.saved;
+    let mut initial_text = dialog_data.initial_text;
+    let mut result_text = dialog_data.result_text;
+    let final_patterns = if dialog_saved {
+        std::mem::take(&mut result_text)
+    } else {
+        std::mem::take(&mut initial_text)
+    };
+
+    internal_state.send_event(AppEvent::ExcludePatternsDialogCompleted {
+        window_id,
+        saved: dialog_saved,
+        patterns: final_patterns,
+    });
     Ok(())
 }
 
