@@ -520,6 +520,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             deselected_paths: deselected_paths_for_profile,
             archive_path: self.archive_path.clone(),
             file_details: file_details_for_save, // Use the selectively populated map
+            exclude_patterns: Vec::new(),
         }
     }
 
@@ -999,6 +1000,7 @@ mod tests {
             deselected_paths: HashSet::new(),
             archive_path: Some(PathBuf::from("/dummy/archive.txt")),
             file_details: initial_profile_file_details,
+            exclude_patterns: Vec::new(),
         };
         loaded_profile.selected_paths.insert(file1_path.clone());
         loaded_profile.selected_paths.insert(file2_path.clone());

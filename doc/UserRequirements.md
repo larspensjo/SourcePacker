@@ -6,15 +6,16 @@ This document outlines the requirements for SourcePacker, a file selection and a
 
 ## File System Monitoring and Display
 [FileSystemMonitorTreeViewV1] The application must be able to scan a user-specified root directory (defined by the active profile), detect file/folder additions, removals, and modifications (primarily via a manual "Refresh" action initially), and display its relevant file and folder structure in a tree view.
-**[FileStateNewDetectedV2] New files detected within the monitored directory (e.g., after a "Refresh," or when no profile is loaded) that are not already part of the current profile's explicit selection state shall initially be presented in a distinct "New" state, requiring user classification.**
+[FileStateNewDetectedV2] New files detected within the monitored directory (e.g., after a "Refresh," or when no profile is loaded) that are not already part of the current profile's explicit selection state shall initially be presented in a distinct "New" state, requiring user classification.
+[FileSystemIgnoreUserPatternsV1] The file system scan must ignore all files and directories that match the exclude patterns defined in the active profile.
 
 ## File Selection
 The application shall support three distinct states for files and folders within the tree view regarding their inclusion in an archive:
 [FileSelStateSelectedV2] *   **Selected:** The item is explicitly included in the profile's archive. This state must be clearly visually indicated (e.g., a checked checkbox).
 [FileSelStateDeselectedV2] *   **Deselected:** The item is explicitly excluded from the profile's archive. This state must be clearly visually indicated (e.g., an unchecked checkbox).
-**[FileSelStateNewV1] *   **New:** The item's inclusion in the profile's archive is not yet determined. This applies to files newly detected on disk that are not part of an active profile's saved selections, or all files when no profile is loaded. This state must have its own distinct visual indicator, separate from "Selected" or "Deselected" (e.g., a special icon, text styling, or overlay).**
+[FileSelStateNewV1] * The item's inclusion in the profile's archive is not yet determined. This applies to files newly detected on disk that are not part of an active profile's saved selections, or all files when no profile is loaded. This state must have its own distinct visual indicator, separate from "Selected" or "Deselected" (e.g., a special icon, text styling, or overlay).**
 [FileSelFolderRecursiveStateV2] * Selecting or deselecting a folder shall recursively apply the same state (Selected or Deselected) to all its child files and folders within the current view. Items previously in a "New" state will transition to "Selected" or "Deselected" accordingly.
-**[FileSelTransitionFromNewV1] * When a user explicitly interacts with an item in the "New" state to select or deselect it, the item shall transition to the "Selected" or "Deselected" state respectively, and its "New" state indicator shall be removed.**
+[FileSelTransitionFromNewV1] * When a user explicitly interacts with an item in the "New" state to select or deselect it, the item shall transition to the "Selected" or "Deselected" state respectively, and its "New" state indicator shall be removed.
 
 ## Text File Focus
 [TextFileFocusUTF8V1] The application is intended for text-based source code. It should primarily handle files assumed to be UTF-8 encoded.
@@ -38,8 +39,9 @@ The application shall support three distinct states for files and folders within
 ## Profile Definition
 A profile encapsulates:
 [ProfileDefRootFolderV2] * A root folder path to be monitored. This is set during profile creation or loaded from an existing profile.
-**[ProfileDefSelectionStateV3] * The selection state (Selected/Deselected) of files and folders within that root folder for that specific profile. "New" state items are not explicitly persisted as "New" in the profile; upon next load, they would re-evaluate to "New" if not explicitly selected/deselected in the saved profile.**
+[ProfileDefSelectionStateV3] * The selection state (Selected/Deselected) of files and folders within that root folder for that specific profile. "New" state items are not explicitly persisted as "New" in the profile; upon next load, they would re-evaluate to "New" if not explicitly selected/deselected in the saved profile.
 [ProfileDefAssociatedArchiveV2] * Each profile shall be associated with its own specific output archive file. The path/name of this archive is set when the user first saves an archive for the profile and is then persisted with the profile.
+[ProfileDefExcludePatternsV1] * A list of user-defined, gitignore-style exclude patterns.
 
 ## Profile Storage
 [ProfileStoreJsonFilesV1] * Profiles shall be saved as individual JSON files.
@@ -71,7 +73,7 @@ A profile encapsulates:
 
 ## Tree View
 [UiTreeViewDisplayStructureV2] * Display the file and folder structure starting from the active profile's root folder.
-**[UiTreeViewVisualSelectionStateV2] * Visually indicate the selection state (Selected, Deselected, New) for each item. "Selected" and "Deselected" will typically use checkbox states. "New" items will have an additional distinct visual indicator.**
+[UiTreeViewVisualSelectionStateV2] * Visually indicate the selection state (Selected, Deselected, New) for each item. "Selected" and "Deselected" will typically use checkbox states. "New" items will have an additional distinct visual indicator.
 [UiTreeViewVisualFileStatusV1] * Visually indicate the status of files relative to the profile's selection and archive state (e.g., new, modified since last archive, included, excluded).
 
 ## File Content Viewer

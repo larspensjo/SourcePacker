@@ -1098,6 +1098,7 @@ mod handler_tests {
             deselected_paths: HashSet::new(),
             archive_path: Some(startup_archive_path.clone()),
             file_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         };
         mock_profile_manager.set_load_profile_result(
             last_profile_name_to_load,
@@ -1265,6 +1266,7 @@ mod handler_tests {
             deselected_paths: HashSet::new(),
             archive_path: Some(archive_file_for_profile.clone()),
             file_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         };
         mock_profile_manager_arc.set_load_profile_from_path_result(
             &profile_json_path_from_dialog,

@@ -458,6 +458,7 @@ mod profile_tests {
             deselected_paths: HashSet::new(),
             archive_path: Some(PathBuf::from("/mock/archive.txt")),
             file_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         };
 
         // Act: Save Profile
@@ -492,6 +493,7 @@ mod profile_tests {
             deselected_paths: HashSet::new(),
             archive_path: None,
             file_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         };
 
         manager.save_profile(&profile_to_save, app_name_for_test)?;

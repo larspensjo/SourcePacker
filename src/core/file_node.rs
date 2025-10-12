@@ -227,7 +227,8 @@ pub struct FileTokenDetails {
 /*
  * Represents a user profile, storing selection states and configurations for a specific root folder.
  * This structure is serialized to/from JSON for persistence. It now includes an `archive_path`
- * to associate the profile directly with its output archive, and no longer contains whitelist patterns.
+ * to associate the profile directly with its output archive and `exclude_patterns` that mirror
+ * gitignore-style filters for omitting files from scans.
  * TODO: Shouldn't use pub for everything.
  */
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +245,10 @@ pub struct Profile {
      * The `#[serde(default)]` attribute ensures that profiles saved before this field existed can still be loaded. */
     #[serde(default)]
     pub file_details: HashMap<PathBuf, FileTokenDetails>,
+    /* Patterns describing files/folders that should be ignored during tree scans.
+     * The `#[serde(default)]` attribute preserves compatibility with profiles saved before patterns existed. */
+    #[serde(default)]
+    pub exclude_patterns: Vec<String>,
 }
 
 impl Profile {
@@ -260,6 +265,7 @@ impl Profile {
             deselected_paths: HashSet::new(),
             archive_path: None,
             file_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         }
     }
 }
@@ -308,6 +314,8 @@ mod tests {
         assert!(profile.selected_paths.is_empty());
         assert!(profile.deselected_paths.is_empty());
         assert_eq!(profile.archive_path, None);
+        assert!(profile.file_details.is_empty());
+        assert!(profile.exclude_patterns.is_empty());
     }
 
     #[test]
@@ -326,6 +334,7 @@ mod tests {
         assert!(serialized.contains("cs1"));
         let deserialized: Profile = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.file_details.len(), 1);
+        assert!(deserialized.exclude_patterns.is_empty());
     }
 
     #[test]
