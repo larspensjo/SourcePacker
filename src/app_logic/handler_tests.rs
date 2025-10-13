@@ -41,6 +41,7 @@ mod handler_tests {
         snapshot_nodes: Vec<FileNode>,
         cached_file_token_details: HashMap<PathBuf, FileTokenDetails>,
         cached_total_token_count: usize,
+        exclude_patterns: Vec<String>,
 
         // Call counters for &self methods using AtomicUsize
         get_profile_name_calls: AtomicUsize,
@@ -82,6 +83,7 @@ mod handler_tests {
                 snapshot_nodes: Vec::new(),
                 cached_file_token_details: HashMap::new(),
                 cached_total_token_count: 0,
+                exclude_patterns: Vec::new(),
 
                 get_profile_name_calls: AtomicUsize::new(0),
                 get_archive_path_calls: AtomicUsize::new(0),
@@ -140,6 +142,14 @@ mod handler_tests {
             details: HashMap<PathBuf, FileTokenDetails>,
         ) {
             self.cached_file_token_details = details;
+        }
+        #[allow(dead_code)]
+        fn set_exclude_patterns_for_mock(&mut self, patterns: Vec<String>) {
+            self.exclude_patterns = patterns;
+        }
+        #[allow(dead_code)]
+        fn get_exclude_patterns_for_mock(&self) -> Vec<String> {
+            self.exclude_patterns.clone()
         }
         #[allow(dead_code)]
         fn set_update_node_state_and_collect_changes_result(
@@ -230,6 +240,12 @@ mod handler_tests {
             self.get_root_path_for_scan_calls
                 .fetch_add(1, Ordering::Relaxed);
             self.root_path_for_scan.clone()
+        }
+        fn get_exclude_patterns(&self) -> Vec<String> {
+            self.exclude_patterns.clone()
+        }
+        fn set_exclude_patterns(&mut self, patterns: Vec<String>) {
+            self.exclude_patterns = patterns;
         }
         fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
             self.get_snapshot_nodes_calls
@@ -445,6 +461,7 @@ mod handler_tests {
             self.update_total_token_count_for_selected_files_result
                 .store(0, Ordering::Relaxed);
             self.cached_file_token_details.clear();
+            self.exclude_patterns.clear();
         }
         fn create_profile_snapshot(&self) -> Profile {
             self.create_profile_snapshot_calls
@@ -481,6 +498,7 @@ mod handler_tests {
                 &mut profile.selected_paths,
                 &mut profile.deselected_paths,
             );
+            profile.exclude_patterns = self.exclude_patterns.clone();
             profile
         }
 
@@ -507,6 +525,7 @@ mod handler_tests {
                     self.root_path_for_scan = loaded_profile.root_folder.clone();
                     self.snapshot_nodes = scanned_nodes; // <<< KEY CHANGE: Populate snapshot_nodes from scanner
                     self.cached_file_token_details = loaded_profile.file_details.clone();
+                    self.exclude_patterns = loaded_profile.exclude_patterns.clone();
 
                     // Simulate applying selection states (simplified for mock)
                     self.apply_selection_states_to_snapshot(
@@ -1243,6 +1262,72 @@ mod handler_tests {
             let mock_app_session = mock_app_session_mutexed.lock().unwrap();
             assert_eq!(mock_app_session.get_set_archive_path_calls_log().len(), 0);
         }
+    }
+
+    #[test]
+    fn test_exclude_patterns_dialog_saved_updates_profile_and_refreshes() {
+        // Arrange
+        let (
+            mut logic,
+            mock_app_session_mutexed,
+            _mock_config_manager,
+            mock_profile_manager_arc,
+            mock_file_system_scanner_arc,
+            _mock_archiver_arc,
+            _mock_state_manager,
+            _mock_token_counter,
+        ) = setup_logic_with_mocks();
+        let main_window_id = WindowId(7);
+        logic.test_set_main_window_id_and_init_ui_state(main_window_id);
+
+        let root_path = PathBuf::from("/mock/project");
+        {
+            let mut session = mock_app_session_mutexed.lock().unwrap();
+            session.set_profile_name_for_mock(Some("DemoProfile".to_string()));
+            session.set_root_path_for_scan_for_mock(root_path.clone());
+            session.set_exclude_patterns_for_mock(vec!["node_modules/".to_string()]);
+        }
+
+        let scan_nodes = vec![FileNode::new_test(
+            root_path.join("src"),
+            "src".into(),
+            true,
+        )];
+        mock_file_system_scanner_arc.set_scan_directory_result(&root_path, Ok(scan_nodes));
+
+        let new_patterns_input = "target/\r\n*.log\r\n\n#notes\n";
+        let expected_patterns = vec![
+            "target/".to_string(),
+            "*.log".to_string(),
+            "#notes".to_string(),
+        ];
+        let expected_patterns_for_save = expected_patterns.clone();
+
+        // Act
+        logic.handle_event(AppEvent::ExcludePatternsDialogCompleted {
+            window_id: main_window_id,
+            saved: true,
+            patterns: new_patterns_input.to_string(),
+        });
+
+        // Assert - profile save contains updated patterns
+        let saved_profiles = mock_profile_manager_arc.get_save_profile_calls();
+        assert_eq!(saved_profiles.len(), 1);
+        let (saved_profile, app_name) = &saved_profiles[0];
+        assert_eq!(app_name, APP_NAME_FOR_PROFILES);
+        assert_eq!(saved_profile.exclude_patterns, expected_patterns_for_save);
+
+        // Assert - runtime data updated
+        let session_after = mock_app_session_mutexed.lock().unwrap();
+        assert_eq!(
+            session_after.get_exclude_patterns_for_mock(),
+            expected_patterns
+        );
+        drop(session_after);
+
+        // Assert - refresh triggered a new scan
+        let scan_calls = mock_file_system_scanner_arc.get_scan_directory_calls();
+        assert_eq!(scan_calls, vec![root_path]);
     }
 
     #[test]

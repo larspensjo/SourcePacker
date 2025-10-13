@@ -32,6 +32,8 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
 
     // Root scan path
     fn get_root_path_for_scan(&self) -> PathBuf;
+    fn get_exclude_patterns(&self) -> Vec<String>;
+    fn set_exclude_patterns(&mut self, patterns: Vec<String>);
 
     // File system snapshot (nodes)
     fn get_snapshot_nodes(&self) -> &Vec<FileNode>;
@@ -87,6 +89,7 @@ pub struct ProfileRuntimeData {
     root_path_for_scan: PathBuf,
     cached_token_count: usize,
     cached_file_token_details: HashMap<PathBuf, FileTokenDetails>,
+    exclude_patterns: Vec<String>,
 }
 
 impl ProfileRuntimeData {
@@ -104,6 +107,7 @@ impl ProfileRuntimeData {
             root_path_for_scan: PathBuf::from("."), // Default to current directory
             cached_token_count: 0,
             cached_file_token_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         }
     }
 
@@ -272,6 +276,14 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.root_path_for_scan.clone()
     }
 
+    fn get_exclude_patterns(&self) -> Vec<String> {
+        self.exclude_patterns.clone()
+    }
+
+    fn set_exclude_patterns(&mut self, patterns: Vec<String>) {
+        self.exclude_patterns = patterns;
+    }
+
     fn get_snapshot_nodes(&self) -> &Vec<FileNode> {
         &self.file_system_snapshot_nodes
     }
@@ -421,6 +433,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.root_path_for_scan = PathBuf::from("."); // Reset to default current directory
         self.cached_token_count = 0;
         self.cached_file_token_details.clear();
+        self.exclude_patterns.clear();
     }
 
     /*
@@ -520,7 +533,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             deselected_paths: deselected_paths_for_profile,
             archive_path: self.archive_path.clone(),
             file_details: file_details_for_save, // Use the selectively populated map
-            exclude_patterns: Vec::new(),
+            exclude_patterns: self.exclude_patterns.clone(),
         }
     }
 
@@ -546,10 +559,9 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.root_path_for_scan = loaded_profile.root_folder.clone();
         self.archive_path = loaded_profile.archive_path.clone();
         self.cached_file_token_details = loaded_profile.file_details.clone(); // Initial copy
+        self.exclude_patterns = loaded_profile.exclude_patterns.clone();
 
-        match file_system_scanner
-            .scan_directory(&self.root_path_for_scan, &loaded_profile.exclude_patterns)
-        {
+        match file_system_scanner.scan_directory(&self.root_path_for_scan, &self.exclude_patterns) {
             Ok(nodes) => {
                 self.file_system_snapshot_nodes = nodes;
                 log::debug!(
@@ -858,6 +870,7 @@ mod tests {
             ],
             cached_token_count: 0, // Not directly used by create_profile_snapshot itself
             cached_file_token_details: HashMap::new(),
+            exclude_patterns: Vec::new(),
         };
         // Populate cached_file_token_details as update_total_token_count_for_selected_files would
         session_data.cached_file_token_details.insert(
@@ -946,6 +959,7 @@ mod tests {
                 ),
             ],
             cached_token_count: 0,
+            exclude_patterns: Vec::new(),
         };
         let mock_token_counter = MockTokenCounter::new(0); // Default, should not be used
 
@@ -1193,6 +1207,7 @@ mod tests {
                 checksum_v2.clone(), // Current checksum on disk
             )],
             cached_token_count: 0,
+            exclude_patterns: Vec::new(),
         };
         mock_token_counter.clear_call_log();
 
@@ -1253,6 +1268,7 @@ mod tests {
                 checksum_v2.clone(), // Current checksum on disk is v2
             )],
             cached_token_count: 0,
+            exclude_patterns: Vec::new(),
         };
         mock_token_counter.clear_call_log();
 

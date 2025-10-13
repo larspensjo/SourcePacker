@@ -1,0 +1,9 @@
+*** Begin Patch
+*** Update File: src/core/profile_runtime_data.rs
+@@
+-            cached_token_count: 0,
+-        };
++            cached_token_count: 0,
++            exclude_patterns: Vec::new(),
++        };
+*** End Patch

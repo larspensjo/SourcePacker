@@ -1039,7 +1039,7 @@ impl MyAppLogic {
             }
 
             let (selected, deselected) = data.get_current_selection_paths();
-            let exclude_patterns = data.create_profile_snapshot().exclude_patterns;
+            let exclude_patterns = data.get_exclude_patterns();
 
             (
                 name,
@@ -1438,9 +1438,9 @@ impl MyAppLogic {
     }
 
     /*
-     * Handles completion of the exclude patterns dialog. Step 3 only needs to acknowledge the
-     * user's intent, so this function currently logs the interaction while the persistence logic
-     * is introduced in the next development step.
+     * Handles completion of the exclude patterns dialog. When the user saves changes the updated
+     * patterns are persisted to disk, cached in the active session, and a refresh is triggered so
+     * the file tree immediately reflects the new rules.
      */
     fn handle_exclude_patterns_dialog_completed(
         &mut self,
@@ -1448,14 +1448,79 @@ impl MyAppLogic {
         saved: bool,
         patterns: String,
     ) {
+        if !self
+            .ui_state
+            .as_ref()
+            .is_some_and(|s| s.window_id == window_id)
+        {
+            log::warn!(
+                "ExcludePatternsDialogCompleted received for an unknown window {:?}. Ignoring.",
+                window_id
+            );
+            return;
+        }
+
         log::debug!(
             "Exclude patterns dialog completed for window {:?}, saved: {}, first line preview: {:?}",
             window_id,
             saved,
             patterns.lines().next()
         );
+
         if !saved {
             log::debug!("Exclude patterns dialog was cancelled; no action taken.");
+            return;
+        }
+
+        let parsed_patterns: Vec<String> = patterns
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .map(|line| line.to_string())
+            .collect();
+
+        let (profile_to_save, profile_name) = {
+            let data = self.app_session_data_ops.lock().unwrap();
+            match data.get_profile_name() {
+                Some(name) if !name.is_empty() => {
+                    let mut snapshot = data.create_profile_snapshot();
+                    snapshot.exclude_patterns = parsed_patterns.clone();
+                    (snapshot, name)
+                }
+                _ => {
+                    app_warn!(
+                        self,
+                        "Cannot update exclude patterns: No profile is active."
+                    );
+                    return;
+                }
+            }
+        };
+
+        match self
+            .profile_manager
+            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
+        {
+            Ok(_) => {
+                {
+                    let mut data = self.app_session_data_ops.lock().unwrap();
+                    data.set_exclude_patterns(parsed_patterns.clone());
+                }
+                app_info!(
+                    self,
+                    "Updated exclude patterns for profile '{}'.",
+                    profile_name
+                );
+                self.handle_menu_refresh_file_list_clicked();
+            }
+            Err(e) => {
+                app_error!(
+                    self,
+                    "Failed to save exclude patterns for profile '{}': {}",
+                    profile_name,
+                    e
+                );
+            }
         }
     }
 
@@ -1632,7 +1697,7 @@ impl MyAppLogic {
             let data = self.app_session_data_ops.lock().unwrap();
             let profile_name = data.get_profile_name();
             let patterns = if profile_name.is_some() {
-                data.create_profile_snapshot().exclude_patterns
+                data.get_exclude_patterns()
             } else {
                 Vec::new()
             };

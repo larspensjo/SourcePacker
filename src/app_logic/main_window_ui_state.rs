@@ -105,6 +105,7 @@ mod tests {
     struct MockProfileRuntimeDataOps {
         profile_name: Option<String>,
         archive_path: Option<PathBuf>,
+        exclude_patterns: Vec<String>,
         // We don't need to mock all methods, only those used by MainWindowUiState
     }
 
@@ -114,6 +115,12 @@ mod tests {
         }
         fn get_archive_path(&self) -> Option<PathBuf> {
             self.archive_path.clone()
+        }
+        fn get_exclude_patterns(&self) -> Vec<String> {
+            self.exclude_patterns.clone()
+        }
+        fn set_exclude_patterns(&mut self, patterns: Vec<String>) {
+            self.exclude_patterns = patterns;
         }
 
         // --- Unused methods for these specific tests, provide default/dummy implementations ---
