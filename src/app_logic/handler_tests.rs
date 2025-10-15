@@ -1891,9 +1891,6 @@ mod handler_tests {
                 )],
                 "".to_string(),
             )]);
-            // Mock also needs to reflect that these are "new" before the toggle
-            app_data.set_does_path_or_descendants_contain_new_file_result(&file_in_dir1_path, true); // File itself is new
-            app_data.set_does_path_or_descendants_contain_new_file_result(&dir1_path, true); // Folder contains new
         }
 
         let file_item_id = TreeItemId(10);
@@ -1914,6 +1911,8 @@ mod handler_tests {
         // Check for RedrawTreeItem for the file itself and its parent
         let mut redraw_file_found_count = 0;
         let mut redraw_dir_found_count = 0;
+        let mut file_text_updates: Vec<String> = Vec::new();
+        let mut dir_text_updates: Vec<String> = Vec::new();
         for cmd in &cmds {
             if let PlatformCommand::RedrawTreeItem {
                 item_id: cmd_item_id,
@@ -1933,6 +1932,25 @@ mod handler_tests {
                     redraw_dir_found_count += 1;
                 }
             }
+            if let PlatformCommand::UpdateTreeItemText {
+                item_id: cmd_item_id,
+                control_id,
+                text,
+                ..
+            } = cmd
+            {
+                assert_eq!(
+                    *control_id,
+                    ui_constants::ID_TREEVIEW_CTRL,
+                    "UpdateTreeItemText should target the correct TreeView"
+                );
+                if *cmd_item_id == file_item_id {
+                    file_text_updates.push(text.clone());
+                }
+                if *cmd_item_id == dir1_item_id {
+                    dir_text_updates.push(text.clone());
+                }
+            }
         }
         // The file itself might get two RedrawTreeItem: one from the direct toggle effect,
         // and one from the "was_considered_new_for_display" logic.
@@ -1947,6 +1965,21 @@ mod handler_tests {
             "Expected at least one RedrawTreeItem for the parent directory. Got: {:?}, count: {}",
             cmds,
             redraw_dir_found_count
+        );
+        let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
+        assert!(
+            file_text_updates
+                .iter()
+                .any(|t| !t.contains(&indicator_suffix)),
+            "Expected updated text for the file without the indicator. Updates: {:?}",
+            file_text_updates
+        );
+        assert!(
+            dir_text_updates
+                .iter()
+                .any(|t| !t.contains(&indicator_suffix)),
+            "Expected updated text for the parent directory without the indicator. Updates: {:?}",
+            dir_text_updates
         );
 
         // Verify state change in mock data
@@ -1998,10 +2031,14 @@ mod handler_tests {
                 assert_eq!(*cmd_win_id, window_id);
                 assert_eq!(*control_id, ui_constants::ID_TREEVIEW_CTRL);
                 assert_eq!(items.len(), 2);
-                assert_eq!(items[0].text, "file1.txt");
-                assert_eq!(items[1].text, "dir1");
+                let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
+                assert_eq!(items[0].text, format!("file1.txt{}", indicator_suffix));
+                assert_eq!(items[1].text, format!("dir1{}", indicator_suffix));
                 assert_eq!(items[1].children.len(), 1);
-                assert_eq!(items[1].children[0].text, "file2.txt");
+                assert_eq!(
+                    items[1].children[0].text,
+                    format!("file2.txt{}", indicator_suffix)
+                );
             }
             _ => panic!("Expected PopulateTreeView command, got {:?}", cmds[0]),
         }
@@ -2535,9 +2572,13 @@ mod handler_tests {
         );
         if let Some(PlatformCommand::PopulateTreeView { items, .. }) = populate_cmd {
             assert_eq!(items.len(), 1);
-            assert_eq!(items[0].text, "dir1");
+            let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
+            assert_eq!(items[0].text, format!("dir1{}", indicator_suffix));
             assert_eq!(items[0].children.len(), 1);
-            assert_eq!(items[0].children[0].text, "match.txt");
+            assert_eq!(
+                items[0].children[0].text,
+                format!("match.txt{}", indicator_suffix)
+            );
         }
     }
 

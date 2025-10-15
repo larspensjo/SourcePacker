@@ -177,6 +177,7 @@ impl Win32ApiInternalState {
         if let Some(mut removed_data) = windows_map_guard.remove(&window_id) {
             // Perform cleanup on the GDI objects owned by the window data.
             removed_data.cleanup_status_bar_font();
+            removed_data.cleanup_treeview_new_item_font();
             log::debug!("Removed and cleaned up data for WindowId {:?}.", window_id);
         } else {
             log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
@@ -346,6 +347,14 @@ impl Win32ApiInternalState {
                 new_state,
             } => command_executor::execute_update_tree_item_visual_state(
                 self, window_id, control_id, item_id, new_state,
+            ),
+            PlatformCommand::UpdateTreeItemText {
+                window_id,
+                control_id,
+                item_id,
+                text,
+            } => command_executor::execute_update_tree_item_text(
+                self, window_id, control_id, item_id, text,
             ),
             PlatformCommand::ShowSaveFileDialog {
                 window_id,

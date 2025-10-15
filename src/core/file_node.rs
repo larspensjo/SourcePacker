@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::app_logic::handler::PathToTreeItemIdMap;
+use crate::app_logic::{handler::PathToTreeItemIdMap, ui_constants};
 use crate::platform_layer::{CheckState, TreeItemDescriptor, TreeItemId};
 /*
  * Represents the selection state of a file or folder.
@@ -86,16 +86,44 @@ impl FileNode {
         id: TreeItemId,
         children: Vec<TreeItemDescriptor>,
     ) -> TreeItemDescriptor {
+        let mut text = self.name.clone();
+        if self.should_display_new_indicator() {
+            text.push(' ');
+            text.push(ui_constants::NEW_ITEM_INDICATOR_CHAR);
+        }
+
         TreeItemDescriptor {
             id,
             is_folder: self.is_dir,
             children,
-            text: self.name.clone(),
+            text,
             state: match self.is_selected() {
                 true => CheckState::Checked,
                 false => CheckState::Unchecked,
             },
         }
+    }
+
+    /*
+     * Determines whether the UI should render the "new item" indicator for this node.
+     * Files return true when their selection state is `New`, while directories inherit the
+     * indicator whenever any descendant still needs classification.
+     *
+     * The recursion walks the tree once during descriptor construction, keeping the check cheap
+     * without maintaining supplemental bookkeeping structures or shared mutable state.
+     */
+    fn should_display_new_indicator(&self) -> bool {
+        if self.state == SelectionState::New {
+            return true;
+        }
+
+        if !self.is_dir {
+            return false;
+        }
+
+        self.children
+            .iter()
+            .any(|child| child.should_display_new_indicator())
     }
 
     #[cfg(test)]
@@ -383,7 +411,13 @@ mod tests {
             Some(&TreeItemId(100))
         );
         // Dir 1
-        assert_eq!(descriptors[1].text, "dir1");
+        assert_eq!(
+            descriptors[1].text,
+            format!(
+                "dir1 {}",
+                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
+            )
+        );
         assert_eq!(descriptors[1].id, TreeItemId(101));
         assert!(descriptors[1].is_folder);
         assert_eq!(descriptors[1].state, CheckState::Unchecked); // New/Deselected map to Unchecked
@@ -456,7 +490,13 @@ mod tests {
         );
 
         assert_eq!(descriptors.len(), 1); // Only dir1 should be top level
-        assert_eq!(descriptors[0].text, "dir1");
+        assert_eq!(
+            descriptors[0].text,
+            format!(
+                "dir1 {}",
+                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
+            )
+        );
         assert_eq!(descriptors[0].children.len(), 1);
         assert_eq!(descriptors[0].children[0].text, "match.txt");
         assert_eq!(path_to_id_map.len(), 2);
@@ -485,5 +525,54 @@ mod tests {
         assert_eq!(descriptors_wc.len(), 1);
         assert_eq!(descriptors_wc[0].children.len(), 1);
         assert_eq!(descriptors_wc[0].children[0].text, "other.txt");
+    }
+
+    #[test]
+    fn test_new_indicator_applied_to_new_file_and_parent() {
+        // Arrange
+        let new_child = FileNode::new_full(
+            PathBuf::from("/parent/new_child.txt"),
+            "new_child.txt".into(),
+            false,
+            SelectionState::New,
+            vec![],
+            "".to_string(),
+        );
+        let parent = FileNode::new_full(
+            PathBuf::from("/parent"),
+            "parent".into(),
+            true,
+            SelectionState::Deselected,
+            vec![new_child],
+            "".to_string(),
+        );
+        let nodes = vec![parent];
+        let mut path_to_id_map = HashMap::new();
+        let mut id_counter = 1;
+
+        // Act
+        let descriptors = FileNode::build_tree_item_descriptors_recursive(
+            &nodes,
+            &mut path_to_id_map,
+            &mut id_counter,
+        );
+
+        // Assert
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(
+            descriptors[0].text,
+            format!(
+                "parent {}",
+                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
+            )
+        );
+        assert_eq!(descriptors[0].children.len(), 1);
+        assert_eq!(
+            descriptors[0].children[0].text,
+            format!(
+                "new_child.txt {}",
+                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
+            )
+        );
     }
 }

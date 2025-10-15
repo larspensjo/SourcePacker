@@ -211,6 +211,22 @@ pub(crate) fn execute_update_tree_item_visual_state(
     )
 }
 
+pub(crate) fn execute_update_tree_item_text(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+    item_id: TreeItemId,
+    text: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_update_tree_item_text for WinID {:?}, ControlID {}, ItemID {:?}",
+        window_id,
+        control_id,
+        item_id
+    );
+    treeview_handler::update_treeview_item_text(internal_state, window_id, control_id, item_id, text)
+}
+
 pub(crate) fn execute_expand_visible_tree_items(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,

@@ -18,12 +18,9 @@ use crate::platform_layer::types::{
 use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-        Graphics::Gdi::{
-            CreateSolidBrush, DeleteObject, Ellipse, HGDIOBJ, InvalidateRect, ScreenToClient,
-            SelectObject,
-        },
+        Graphics::Gdi::{HGDIOBJ, HFONT, InvalidateRect, ScreenToClient, SelectObject},
         UI::Controls::{
-            CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT,
+            CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT,
             CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NMHDR, NMTVCUSTOMDRAW,
             TVHITTESTINFO, TVHT_ONITEMSTATEICON, TVI_LAST, TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE,
             TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMEXW,
@@ -37,13 +34,19 @@ use windows::{
 };
 
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::sync::Arc;
 
-// Constants from window_common, now perhaps better placed here or in a shared consts module if widely used.
-// TODO: This shouldn't be hardcoded. Create some mecchanism for this.
-const CIRCLE_DIAMETER: i32 = 6;
-const CIRCLE_COLOR_BLUE: windows::Win32::Foundation::COLORREF =
-    windows::Win32::Foundation::COLORREF(0x00FF0000); // BGR format for Blue
+/*
+ * --- DEACTIVATED ---
+ * The values below supported the manual blue-dot drawing for "New" items. They
+ * are preserved for future experimentation but are no longer part of the active
+ * rendering path now that font styling drives the indicator.
+ *
+ * const CIRCLE_DIAMETER: i32 = 6;
+ * const CIRCLE_COLOR_BLUE: windows::Win32::Foundation::COLORREF =
+ *     windows::Win32::Foundation::COLORREF(0x00FF0000); // BGR format for Blue
+ */
 
 /*
  * Holds internal state specific to a TreeView control instance.
@@ -399,6 +402,87 @@ pub(crate) fn update_treeview_item_visual_state(
 }
 
 /*
+ * Updates the rendered text for a single TreeView item. This reuses the stored
+ * `HTREEITEM` mapping to send a `TVM_SETITEMW` call with a new UTF-16 buffer,
+ * allowing the application logic to append or remove the indicator glyph without
+ * rebuilding the entire control.
+ */
+pub(crate) fn update_treeview_item_text(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: i32,
+    item_id: TreeItemId,
+    text: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "TreeViewHandler: update_treeview_item_text for WinID {:?}, ControlID {}, ItemID {:?}",
+        window_id,
+        control_id,
+        item_id
+    );
+
+    let (hwnd_treeview, h_item_native) =
+        internal_state.with_window_data_read(window_id, |window_data| {
+            let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "TreeView HWND not found for ControlID {}",
+                    control_id
+                ))
+            })?;
+
+            let tv_state = window_data.get_treeview_state().ok_or_else(|| {
+                PlatformError::OperationFailed(format!(
+                    "No TreeView state exists in window {:?}",
+                    window_id
+                ))
+            })?;
+
+            let h_item = tv_state
+                .item_id_to_htreeitem
+                .get(&item_id)
+                .copied()
+                .ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!("TreeItemId {:?} not found", item_id))
+                })?;
+
+            Ok((hwnd, h_item))
+        })?;
+
+    if hwnd_treeview.is_invalid() {
+        return Err(PlatformError::InvalidHandle("Invalid TreeView HWND".into()));
+    }
+
+    let mut text_buffer: Vec<u16> = text.encode_utf16().collect();
+    text_buffer.push(0);
+
+    let mut tv_item_update = TVITEMEXW {
+        mask: TVIF_TEXT,
+        hItem: h_item_native,
+        pszText: PWSTR(text_buffer.as_mut_ptr()),
+        cchTextMax: text_buffer.len() as i32,
+        ..Default::default()
+    };
+
+    let send_result = unsafe {
+        SendMessageW(
+            hwnd_treeview,
+            TVM_SETITEMW,
+            Some(WPARAM(0)),
+            Some(LPARAM(&mut tv_item_update as *mut _ as isize)),
+        )
+    };
+
+    if send_result.0 == 0 {
+        let last_error = unsafe { GetLastError() };
+        return Err(PlatformError::OperationFailed(format!(
+            "TVM_SETITEMW (text update) failed for item {:?}: {:?}",
+            item_id, last_error
+        )));
+    }
+    Ok(())
+}
+
+/*
  * Handles the TVN_ITEMCHANGEDW notification for a TreeView.
  * This notification is sent for various item state changes, but this handler
  * currently only logs the event.
@@ -646,9 +730,35 @@ pub(crate) fn expand_all_tree_items(
 }
 
 /*
+ * Determines whether a given TreeView item should display the "new item" styling.
+ * Relies on the application logic's `UiStateProvider` to keep the decision centralized.
+ */
+fn is_item_new_for_display(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    tree_item_id: TreeItemId,
+) -> bool {
+    let provider_opt = internal_state
+        .ui_state_provider()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|weak_handler| weak_handler.upgrade());
+
+    if let Some(handler_arc) = provider_opt {
+        if let Ok(handler_guard) = handler_arc.lock() {
+            return handler_guard.is_tree_item_new(window_id, tree_item_id);
+        }
+    }
+
+    false
+}
+
+/*
  * Handles the NM_CUSTOMDRAW notification for a TreeView control.
- * This function orchestrates the custom drawing stages necessary to render a "New"
- * item indicator (a blue circle) next to items identified as new by the application logic.
+ * Applies a bold/italic font to "New" items via NM_CUSTOMDRAW, replacing the former
+ * hand-drawn blue circle indicator. The old drawing logic is preserved in comments
+ * for potential future reference.
  */
 pub(crate) fn handle_nm_customdraw(
     internal_state: &Arc<Win32ApiInternalState>,
@@ -669,55 +779,69 @@ pub(crate) fn handle_nm_customdraw(
         }
         CDDS_ITEMPREPAINT => {
             let tree_item_id = TreeItemId(nmtvcd.nmcd.lItemlParam.0 as u64);
-            let provider_opt = internal_state
-                .ui_state_provider()
-                .lock()
-                .unwrap()
-                .as_ref()
-                .and_then(|weak_handler| weak_handler.upgrade());
-            if let Some(handler_arc) = provider_opt {
-                if let Ok(handler_guard) = handler_arc.lock() {
-                    if handler_guard.is_tree_item_new(window_id, tree_item_id) {
-                        return LRESULT(CDRF_NOTIFYPOSTPAINT as isize);
-                    }
+            if !is_item_new_for_display(internal_state, window_id, tree_item_id) {
+                return LRESULT(CDRF_DODEFAULT as isize);
+            }
+
+            let mut indicator_font: Option<HFONT> = internal_state
+                .with_window_data_read(window_id, |window_data| {
+                    Ok(window_data.get_treeview_new_item_font())
+                })
+                .unwrap_or(None);
+
+            if indicator_font.is_none() {
+                if let Ok(font_opt) =
+                    internal_state.with_window_data_write(window_id, |window_data| {
+                        window_data.ensure_treeview_new_item_font();
+                        Ok(window_data.get_treeview_new_item_font())
+                    })
+                {
+                    indicator_font = font_opt;
                 }
             }
-            return LRESULT(CDRF_DODEFAULT as isize);
+
+            if let Some(font_handle) = indicator_font {
+                unsafe {
+                    SelectObject(nmtvcd.nmcd.hdc, HGDIOBJ(font_handle.0));
+                }
+            }
+
+            return LRESULT((CDRF_NOTIFYPOSTPAINT | CDRF_NEWFONT) as isize);
         }
         CDDS_ITEMPOSTPAINT => {
             let hdc = nmtvcd.nmcd.hdc;
-            let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize);
             let hwnd_treeview = nmtvcd.nmcd.hdr.hwndFrom;
+            let tree_item_id = TreeItemId(nmtvcd.nmcd.lItemlParam.0 as u64);
 
-            let mut item_rect_text_part = RECT::default();
-            unsafe {
-                *((&mut item_rect_text_part as *mut RECT) as *mut HTREEITEM) = h_item_native;
-            }
-
-            let get_rect_success = unsafe {
-                SendMessageW(
-                    hwnd_treeview,
-                    TVM_GETITEMRECT,
-                    Some(WPARAM(1)), // TRUE for text-only part of the item
-                    Some(LPARAM(&mut item_rect_text_part as *mut _ as isize)),
-                )
-            };
-
-            if get_rect_success.0 != 0 {
-                let circle_offset_x = -(CIRCLE_DIAMETER + 3);
-                let x1 = item_rect_text_part.left + circle_offset_x;
-                let y1 = item_rect_text_part.top
-                    + (item_rect_text_part.bottom - item_rect_text_part.top - CIRCLE_DIAMETER) / 2;
-                let x2 = x1 + CIRCLE_DIAMETER;
-                let y2 = y1 + CIRCLE_DIAMETER;
-
-                unsafe {
-                    let h_brush = CreateSolidBrush(CIRCLE_COLOR_BLUE);
-                    if !h_brush.is_invalid() {
-                        let old_brush = SelectObject(hdc, HGDIOBJ(h_brush.0));
-                        _ = Ellipse(hdc, x1, y1, x2, y2);
-                        SelectObject(hdc, old_brush);
-                        _ = DeleteObject(HGDIOBJ(h_brush.0));
+            if is_item_new_for_display(internal_state, window_id, tree_item_id) {
+                /*
+                 * --- DEACTIVATED ---
+                 * Historical manual drawing code retained for reference:
+                 *
+                 * let h_item_native = HTREEITEM(nmtvcd.nmcd.dwItemSpec as isize);
+                 * let mut item_rect_text_part = RECT::default();
+                 * unsafe {
+                 *     *((&mut item_rect_text_part as *mut RECT) as *mut HTREEITEM) = h_item_native;
+                 * }
+                 * let get_rect_success = unsafe {
+                 *     SendMessageW(
+                 *         hwnd_treeview,
+                 *         TVM_GETITEMRECT,
+                 *         Some(WPARAM(1)),
+                 *         Some(LPARAM(&mut item_rect_text_part as *mut _ as isize)),
+                 *     )
+                 * };
+                 * if get_rect_success.0 != 0 {
+                 *     // ellipse drawing omitted
+                 * }
+                */
+                let default_font_lresult = unsafe {
+                    SendMessageW(hwnd_treeview, WM_GETFONT, Some(WPARAM(0)), Some(LPARAM(0)))
+                };
+                let default_font = HFONT(default_font_lresult.0 as usize as *mut c_void);
+                if !default_font.0.is_null() {
+                    unsafe {
+                        SelectObject(hdc, HGDIOBJ(default_font.0));
                     }
                 }
             }

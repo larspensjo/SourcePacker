@@ -23,9 +23,10 @@ use windows::{
             ERROR_INVALID_WINDOW_HANDLE, GetLastError, HWND, LPARAM, LRESULT, RECT, WPARAM,
         },
         Graphics::Gdi::{
-            BeginPaint, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, CreateFontW, DEFAULT_CHARSET,
-            DEFAULT_QUALITY, DeleteObject, EndPaint, FF_DONTCARE, FW_NORMAL, FillRect, GetDC,
-            GetDeviceCaps, HBRUSH, HDC, HFONT, HGDIOBJ, LOGPIXELSY, OUT_DEFAULT_PRECIS,
+            BeginPaint, CLIP_DEFAULT_PRECIS, COLOR_WINDOW, CreateFontIndirectW, CreateFontW,
+            DEFAULT_CHARSET, DEFAULT_GUI_FONT, DEFAULT_QUALITY, DeleteObject, EndPaint,
+            FF_DONTCARE, FW_BOLD, FW_NORMAL, FillRect, GetDC, GetDeviceCaps, GetObjectW,
+            GetStockObject, HBRUSH, HDC, HFONT, HGDIOBJ, LOGFONTW, LOGPIXELSY, OUT_DEFAULT_PRECIS,
             PAINTSTRUCT, ReleaseDC,
         },
         System::WindowsProgramming::MulDiv,
@@ -96,6 +97,7 @@ pub(crate) struct NativeWindowData {
     /// The current severity for each status label, keyed by its logical ID.
     label_severities: HashMap<i32, MessageSeverity>,
     status_bar_font: Option<HFONT>,
+    treeview_new_item_font: Option<HFONT>,
 }
 
 impl NativeWindowData {
@@ -111,6 +113,7 @@ impl NativeWindowData {
             layout_rules: None,
             label_severities: HashMap::new(),
             status_bar_font: None,
+            treeview_new_item_font: None,
         }
     }
 
@@ -472,6 +475,83 @@ impl NativeWindowData {
             if !h_font.is_invalid() {
                 log::debug!(
                     "Deleting status bar font {:?} for WinID {:?}",
+                    h_font,
+                    self.logical_window_id
+                );
+                unsafe {
+                    let _ = DeleteObject(HGDIOBJ(h_font.0));
+                }
+            }
+        }
+    }
+
+    /*
+     * Ensures the TreeView "new item" font exists. The font mirrors the default GUI font but
+     * forces a bold, italic variant so the indicator styling is consistent with system metrics.
+     * This method is idempotent and cheap to call; once the font exists it simply returns.
+     */
+    pub(crate) fn ensure_treeview_new_item_font(&mut self) {
+        if self.treeview_new_item_font.is_some() {
+            return;
+        }
+
+        let stock_font = unsafe { GetStockObject(DEFAULT_GUI_FONT) };
+        if stock_font.0.is_null() {
+            log::error!(
+                "Platform: DEFAULT_GUI_FONT unavailable while creating TreeView indicator font for {:?}.",
+                self.logical_window_id
+            );
+            return;
+        }
+
+        let mut base_log_font = LOGFONTW::default();
+        let copy_result = unsafe {
+            GetObjectW(
+                stock_font,
+                std::mem::size_of::<LOGFONTW>() as i32,
+                Some(&mut base_log_font as *mut _ as *mut c_void),
+            )
+        };
+
+        if copy_result == 0 {
+            log::error!(
+                "Platform: GetObjectW failed while cloning default GUI font for TreeView indicator (WinID {:?}). LastError={:?}",
+                self.logical_window_id,
+                unsafe { GetLastError() }
+            );
+            return;
+        }
+
+        base_log_font.lfWeight = FW_BOLD.0 as i32;
+        base_log_font.lfItalic = 1;
+
+        let new_font = unsafe { CreateFontIndirectW(&base_log_font) };
+        if new_font.is_invalid() {
+            log::error!(
+                "Platform: CreateFontIndirectW failed for TreeView indicator font (WinID {:?}). LastError={:?}",
+                self.logical_window_id,
+                unsafe { GetLastError() }
+            );
+            return;
+        }
+
+        log::debug!(
+            "Platform: TreeView 'new item' font created {:?} for WinID {:?}.",
+            new_font,
+            self.logical_window_id
+        );
+        self.treeview_new_item_font = Some(new_font);
+    }
+
+    pub(crate) fn get_treeview_new_item_font(&self) -> Option<HFONT> {
+        self.treeview_new_item_font
+    }
+
+    pub(crate) fn cleanup_treeview_new_item_font(&mut self) {
+        if let Some(h_font) = self.treeview_new_item_font.take() {
+            if !h_font.is_invalid() {
+                log::debug!(
+                    "Deleting TreeView 'new item' font {:?} for WinID {:?}.",
                     h_font,
                     self.logical_window_id
                 );
@@ -852,6 +932,7 @@ impl Win32ApiInternalState {
         );
         if let Err(e) = self.with_window_data_write(window_id, |window_data| {
             window_data.ensure_status_bar_font();
+            window_data.ensure_treeview_new_item_font();
             Ok(())
         }) {
             log::error!(

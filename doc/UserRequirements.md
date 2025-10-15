@@ -2,6 +2,8 @@
 
 This document outlines the requirements for SourcePacker, a file selection and archive tool designed to package source code for AI prompts. The tool actively monitors source code hierarchies, helps manage subsets of files through profiles, and ensures archives reflect the latest selected changes.
 
+All requirements have a unique tag, in the form `[NameVn]`, where 'Vn' is the version number. This number shall be increased any time the requirement changes. The IDs shall also be used inside the source code, as a way to reference why things are done.
+
 # Core Functionality
 
 ## File System Monitoring and Display
@@ -13,7 +15,7 @@ This document outlines the requirements for SourcePacker, a file selection and a
 The application shall support three distinct states for files and folders within the tree view regarding their inclusion in an archive:
 [FileSelStateSelectedV2] *   **Selected:** The item is explicitly included in the profile's archive. This state must be clearly visually indicated (e.g., a checked checkbox).
 [FileSelStateDeselectedV2] *   **Deselected:** The item is explicitly excluded from the profile's archive. This state must be clearly visually indicated (e.g., an unchecked checkbox).
-[FileSelStateNewV1] * The item's inclusion in the profile's archive is not yet determined. This applies to files newly detected on disk that are not part of an active profile's saved selections, or all files when no profile is loaded. This state must have its own distinct visual indicator, separate from "Selected" or "Deselected" (e.g., a special icon, text styling, or overlay).**
+[FileSelStateNewV2] * The item's inclusion in the profile's archive is not yet determined. This applies to files newly detected on disk that are not part of an active profile's saved selections, or all files when no profile is loaded. This state must have its own distinct visual indicator. Items in the "New" state, and any parent folders containing them, shall display bold and italic text appended with a filled circle character (e.g., '●').**
 [FileSelFolderRecursiveStateV2] * Selecting or deselecting a folder shall recursively apply the same state (Selected or Deselected) to all its child files and folders within the current view. Items previously in a "New" state will transition to "Selected" or "Deselected" accordingly.
 [FileSelTransitionFromNewV1] * When a user explicitly interacts with an item in the "New" state to select or deselect it, the item shall transition to the "Selected" or "Deselected" state respectively, and its "New" state indicator shall be removed.
 

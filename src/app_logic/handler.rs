@@ -13,7 +13,7 @@ use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, VecDeque};
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex}; // Added Mutex
 
 // Import log macros
@@ -469,9 +469,10 @@ impl MyAppLogic {
         );
 
         for (changed_path, new_file_state) in collected_changes {
-            if let Some(tree_item_id_to_update) =
+            if let Some(tree_item_id_to_update_ref) =
                 ui_state_ref.path_to_tree_item_id.get(&changed_path)
             {
+                let tree_item_id_to_update = *tree_item_id_to_update_ref;
                 let check_state_for_ui = match new_file_state {
                     SelectionState::Selected => CheckState::Checked,
                     _ => CheckState::Unchecked,
@@ -480,10 +481,18 @@ impl MyAppLogic {
                     PlatformCommand::UpdateTreeItemVisualState {
                         window_id,
                         control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
-                        item_id: *tree_item_id_to_update,
+                        item_id: tree_item_id_to_update,
                         new_state: check_state_for_ui,
                     },
                 );
+                let updated_text = self.build_tree_item_display_text(&changed_path);
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::UpdateTreeItemText {
+                        window_id,
+                        control_id: ui_constants::ID_TREEVIEW_CTRL,
+                        item_id: tree_item_id_to_update,
+                        text: updated_text,
+                    });
                 // After a state change, we also need to check if the "New" indicator needs to be redrawn
                 // for this specific item (and potentially its parents, handled by is_tree_item_new).
                 // This redraw is particularly for the item whose state directly changed.
@@ -491,7 +500,7 @@ impl MyAppLogic {
                     .push_back(PlatformCommand::RedrawTreeItem {
                         window_id,
                         control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
-                        item_id: *tree_item_id_to_update,
+                        item_id: tree_item_id_to_update,
                     });
             } else {
                 log::error!(
@@ -507,6 +516,14 @@ impl MyAppLogic {
         // The actual `is_tree_item_new` check for the *current* state will determine if the dot remains.
         // The RedrawTreeItem command ensures the UI updates if the "new" status *might* have changed.
         if was_considered_new_for_display {
+            let updated_text = self.build_tree_item_display_text(&path_for_model_update);
+            self.synchronous_command_queue
+                .push_back(PlatformCommand::UpdateTreeItemText {
+                    window_id,
+                    control_id: ui_constants::ID_TREEVIEW_CTRL,
+                    item_id,
+                    text: updated_text,
+                });
             self.synchronous_command_queue
                 .push_back(PlatformCommand::RedrawTreeItem {
                     window_id,
@@ -535,12 +552,23 @@ impl MyAppLogic {
                     break;
                 }
 
-                if let Some(parent_item_id) = ui_state_ref.path_to_tree_item_id.get(parent_path) {
+                if let Some(parent_item_id_ref) =
+                    ui_state_ref.path_to_tree_item_id.get(parent_path)
+                {
+                    let parent_item_id = *parent_item_id_ref;
+                    let parent_text = self.build_tree_item_display_text(parent_path);
+                    self.synchronous_command_queue
+                        .push_back(PlatformCommand::UpdateTreeItemText {
+                            window_id,
+                            control_id: ui_constants::ID_TREEVIEW_CTRL,
+                            item_id: parent_item_id,
+                            text: parent_text,
+                        });
                     self.synchronous_command_queue
                         .push_back(PlatformCommand::RedrawTreeItem {
                             window_id,
                             control_id: ui_constants::ID_TREEVIEW_CTRL, /* Use constant for TreeView ID */
-                            item_id: *parent_item_id,
+                            item_id: parent_item_id,
                         });
                     log::debug!(
                         "AppLogic: Queueing RedrawTreeItem for ancestor {:?} (path {:?}) due to toggle of descendant.",
@@ -554,6 +582,44 @@ impl MyAppLogic {
 
         self.update_current_archive_status();
         self._update_token_count_and_request_display();
+    }
+
+    /*
+     * Builds the TreeView label for a file or folder by reusing the persisted name and
+     * appending the "new" indicator when required. This keeps ad-hoc text updates consistent
+     * with the full tree rebuilding logic without forcing a wholesale refresh.
+     *
+     * The calculation consults the session snapshot so that parent folders inherit the
+     * indicator whenever any descendant is still pending classification, matching the
+     * behavior defined for descriptor generation.
+     */
+    fn build_tree_item_display_text(&self, path: &Path) -> String {
+        let mut display = path
+            .file_name()
+            .map(|os| os.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+
+        let should_show_indicator = {
+            let data_guard = self.app_session_data_ops.lock().unwrap();
+            match data_guard.get_node_attributes_for_path(path) {
+                Some((state, is_dir)) => {
+                    if is_dir {
+                        data_guard.does_path_or_descendants_contain_new_file(path)
+                    } else {
+                        state == SelectionState::New
+                    }
+                }
+                None => false,
+            }
+        };
+
+        if should_show_indicator {
+            display.push(' ');
+            display.push(ui_constants::NEW_ITEM_INDICATOR_CHAR);
+        }
+
+        display
     }
 
     fn _do_generate_archive(&mut self) {

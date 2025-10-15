@@ -263,6 +263,12 @@ pub enum PlatformCommand {
         item_id: TreeItemId,
         new_state: CheckState,
     },
+    UpdateTreeItemText {
+        window_id: WindowId,
+        control_id: i32,
+        item_id: TreeItemId,
+        text: String,
+    },
     ShowSaveFileDialog {
         window_id: WindowId,
         title: String,

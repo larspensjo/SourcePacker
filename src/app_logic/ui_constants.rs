@@ -24,6 +24,9 @@ pub const MAIN_BACKGROUND_PANEL_ID: i32 = 1000;
 // Logical ID for the main TreeView control.
 pub const ID_TREEVIEW_CTRL: i32 = 1001; // Value from platform_layer::control_treeview
 
+// Unicode filled circle appended to "New" tree items to make the state obvious. [FileSelStateNewV2]
+pub const NEW_ITEM_INDICATOR_CHAR: char = '●';
+
 // Logical ID for the panel that will contain filter input and buttons.
 pub const FILTER_PANEL_ID: i32 = 1020;
 
