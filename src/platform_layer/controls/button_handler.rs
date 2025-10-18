@@ -38,10 +38,7 @@ pub(crate) fn handle_create_button_command(
     text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "ButtonHandler: handle_create_button_command for WinID {:?}, ControlID {}, Text: '{}'",
-        window_id,
-        control_id,
-        text
+        "ButtonHandler: handle_create_button_command for WinID {window_id:?}, ControlID {control_id}, Text: '{text}'"
     );
 
     // Phase 1: Read-only pre-checks.
@@ -50,25 +47,20 @@ pub(crate) fn handle_create_button_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             if window_data.has_control(control_id) {
                 log::warn!(
-                    "ButtonHandler: Button with ID {} already exists for window {:?}.",
-                    control_id,
-                    window_id
+                    "ButtonHandler: Button with ID {control_id} already exists for window {window_id:?}."
                 );
                 return Err(PlatformError::OperationFailed(format!(
-                    "Button with ID {} already exists for window {:?}",
-                    control_id, window_id
+                    "Button with ID {control_id} already exists for window {window_id:?}"
                 )));
             }
 
             let hwnd_parent = window_data.get_hwnd();
             if hwnd_parent.is_invalid() {
                 log::error!(
-                    "ButtonHandler: Parent HWND invalid for CreateButton (WinID: {:?})",
-                    window_id
+                    "ButtonHandler: Parent HWND invalid for CreateButton (WinID: {window_id:?})"
                 );
                 return Err(PlatformError::InvalidHandle(format!(
-                    "Parent HWND invalid for CreateButton (WinID: {:?})",
-                    window_id
+                    "Parent HWND invalid for CreateButton (WinID: {window_id:?})"
                 )));
             }
             Ok(hwnd_parent)
@@ -99,27 +91,20 @@ pub(crate) fn handle_create_button_command(
         // while we were not holding a lock.
         if window_data.has_control(control_id) {
             log::warn!(
-                "ButtonHandler: Control ID {} was created concurrently for window {:?}. Destroying new HWND.",
-                control_id,
-                window_id
+                "ButtonHandler: Control ID {control_id} was created concurrently for window {window_id:?}. Destroying new HWND."
             );
             unsafe {
                 // Safely ignore error if window is already gone.
                 DestroyWindow(hwnd_button).ok();
             }
             return Err(PlatformError::OperationFailed(format!(
-                "Button with ID {} was created concurrently for window {:?}",
-                control_id, window_id
+                "Button with ID {control_id} was created concurrently for window {window_id:?}"
             )));
         }
 
         window_data.register_control_hwnd(control_id, hwnd_button);
         log::debug!(
-            "ButtonHandler: Created button '{}' (ID {}) for window {:?} with HWND {:?}",
-            text,
-            control_id,
-            window_id,
-            hwnd_button
+            "ButtonHandler: Created button '{text}' (ID {control_id}) for window {window_id:?} with HWND {hwnd_button:?}"
         );
         Ok(())
     })
@@ -134,10 +119,7 @@ pub(crate) fn handle_bn_clicked(
     hwnd_control: HWND,
 ) -> AppEvent {
     log::debug!(
-        "ButtonHandler: BN_CLICKED for ID {} (HWND {:?}) in WinID {:?}",
-        control_id,
-        hwnd_control,
-        window_id
+        "ButtonHandler: BN_CLICKED for ID {control_id} (HWND {hwnd_control:?}) in WinID {window_id:?}"
     );
     AppEvent::ButtonClicked {
         window_id,

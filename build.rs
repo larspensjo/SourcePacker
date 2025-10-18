@@ -36,8 +36,8 @@ fn build_for_windows() {
         }
         // Combine the failure arms as they lead to the same outcome.
         CompilationResult::Failed(e) | CompilationResult::NotAttempted(e) => {
-            let error_message = format!("Failed to compile resource file: {}", e);
-            eprintln!("{}", error_message);
+            let error_message = format!("Failed to compile resource file: {e}");
+            eprintln!("{error_message}");
             // It's critical to fail the build if resources can't be compiled.
             panic!("{}", error_message);
         }

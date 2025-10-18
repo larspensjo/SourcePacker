@@ -24,6 +24,12 @@ pub(crate) struct ParsedControlStyle {
     // ... other parsed properties ...
 }
 
+// SAFETY: Parsed styles are created, consumed, and destroyed on the platform thread.
+// The contained Win32 handles (`HFONT`, `HBRUSH`) are plain value types that are only
+// used under that thread's message loop, so sharing ownership via `Arc` is safe.
+unsafe impl Send for ParsedControlStyle {}
+unsafe impl Sync for ParsedControlStyle {}
+
 impl Drop for ParsedControlStyle {
     /*
      * Ensures that native GDI resources, such as HFONTs and HBRUSHes, are properly

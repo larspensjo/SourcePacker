@@ -44,16 +44,15 @@ impl From<serde_json::Error> for ProfileError {
 impl std::fmt::Display for ProfileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProfileError::Io(e) => write!(f, "I/O error: {}", e),
-            ProfileError::Serde(e) => write!(f, "Serialization/Deserialization error: {}", e),
+            ProfileError::Io(e) => write!(f, "I/O error: {e}"),
+            ProfileError::Serde(e) => write!(f, "Serialization/Deserialization error: {e}"),
             ProfileError::NoProjectDirectory => {
                 write!(f, "Could not determine project directory for profiles")
             }
-            ProfileError::ProfileNotFound(name) => write!(f, "Profile not found: {}", name),
+            ProfileError::ProfileNotFound(name) => write!(f, "Profile not found: {name}"),
             ProfileError::InvalidProfileName(name) => write!(
                 f,
-                "Invalid profile name: {}. Contains invalid characters or is empty.",
-                name
+                "Invalid profile name: {name}. Contains invalid characters or is empty."
             ),
         }
     }
@@ -108,20 +107,16 @@ impl CoreProfileManager {
             if !profiles_path.exists() {
                 if let Err(e) = fs::create_dir_all(&profiles_path) {
                     log::error!(
-                        "CoreProfileManager: Failed to create profile storage directory {:?}: {}",
-                        profiles_path,
-                        e
+                        "CoreProfileManager: Failed to create profile storage directory {profiles_path:?}: {e}"
                     );
                     return None;
                 }
                 log::debug!(
-                    "CoreProfileManager: Created profile storage directory: {:?}",
-                    profiles_path
+                    "CoreProfileManager: Created profile storage directory: {profiles_path:?}"
                 );
             } else {
                 log::trace!(
-                    "CoreProfileManager: Profile storage directory already exists: {:?}",
-                    profiles_path
+                    "CoreProfileManager: Profile storage directory already exists: {profiles_path:?}"
                 );
             }
             Some(profiles_path)
@@ -142,11 +137,7 @@ impl ProfileManagerOperations for CoreProfileManager {
      * Profile names are sanitized before being used as filenames.
      */
     fn load_profile(&self, profile_name: &str, app_name: &str) -> Result<Profile> {
-        log::trace!(
-            "CoreProfileManager: Loading profile '{}' for app '{}'",
-            profile_name,
-            app_name
-        );
+        log::trace!("CoreProfileManager: Loading profile '{profile_name}' for app '{app_name}'");
         if profile_name.trim().is_empty() || !profile_name.chars().all(is_valid_profile_name_char) {
             return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
         }
@@ -154,13 +145,11 @@ impl ProfileManagerOperations for CoreProfileManager {
         let dir = CoreProfileManager::get_profile_storage_dir_impl(app_name)
             .ok_or(ProfileError::NoProjectDirectory)?;
         let sanitized_filename = sanitize_profile_name(profile_name);
-        let file_path = dir.join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+        let file_path = dir.join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
 
         if !file_path.exists() {
             log::debug!(
-                "CoreProfileManager: Profile file {:?} not found for profile '{}'.",
-                file_path,
-                profile_name
+                "CoreProfileManager: Profile file {file_path:?} not found for profile '{profile_name}'."
             );
             return Err(ProfileError::ProfileNotFound(profile_name.to_string()));
         }
@@ -177,7 +166,7 @@ impl ProfileManagerOperations for CoreProfileManager {
     }
 
     fn load_profile_from_path(&self, path: &Path) -> Result<Profile> {
-        log::trace!("CoreProfileManager: Loading profile from path {:?}", path);
+        log::trace!("CoreProfileManager: Loading profile from path {path:?}");
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let profile: Profile = serde_json::from_reader(reader)?;
@@ -207,7 +196,7 @@ impl ProfileManagerOperations for CoreProfileManager {
         let dir = CoreProfileManager::get_profile_storage_dir_impl(app_name)
             .ok_or(ProfileError::NoProjectDirectory)?;
         let sanitized_filename = sanitize_profile_name(&profile.name);
-        let file_path = dir.join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+        let file_path = dir.join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
 
         let file = File::create(&file_path)?;
         let writer = BufWriter::new(file);
@@ -225,16 +214,12 @@ impl ProfileManagerOperations for CoreProfileManager {
      * It scans the directory returned by `get_profile_storage_dir_impl`.
      */
     fn list_profiles(&self, app_name: &str) -> Result<Vec<String>> {
-        log::trace!(
-            "CoreProfileManager: Listing profiles for app '{}'",
-            app_name
-        );
+        log::trace!("CoreProfileManager: Listing profiles for app '{app_name}'");
         let dir = match CoreProfileManager::get_profile_storage_dir_impl(app_name) {
             Some(d) => d,
             None => {
                 log::debug!(
-                    "CoreProfileManager: Profile storage directory not found for app '{}', returning empty list.",
-                    app_name
+                    "CoreProfileManager: Profile storage directory not found for app '{app_name}', returning empty list."
                 );
                 return Ok(Vec::new());
             } // If base dir couldn't be obtained, no profiles dir exists.
@@ -311,7 +296,7 @@ mod profile_tests {
             let sanitized_filename = sanitize_profile_name(profile_name);
             let file_path = self
                 .mock_profile_dir
-                .join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+                .join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
             if !file_path.exists() {
                 return Err(ProfileError::ProfileNotFound(profile_name.to_string()));
             }
@@ -335,7 +320,7 @@ mod profile_tests {
             let sanitized_filename = sanitize_profile_name(&profile.name);
             let file_path = self
                 .mock_profile_dir
-                .join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+                .join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
             let file = File::create(file_path)?;
             let writer = BufWriter::new(file);
             serde_json::to_writer_pretty(writer, profile).map_err(ProfileError::from)
@@ -394,16 +379,13 @@ mod profile_tests {
         let dir_path = dir_opt.unwrap();
         assert!(
             dir_path.exists(),
-            "Profile directory should be created: {:?}",
-            dir_path
+            "Profile directory should be created: {dir_path:?}"
         );
-        assert!(dir_path.is_dir(), "{:?} should be a directory", dir_path);
+        assert!(dir_path.is_dir(), "{dir_path:?} should be a directory");
         assert_eq!(
             dir_path.file_name().unwrap_or_default(),
             PROFILES_SUBFOLDER_NAME,
-            "Path should end with '{}' segment. Path was: {:?}",
-            PROFILES_SUBFOLDER_NAME,
-            dir_path
+            "Path should end with '{PROFILES_SUBFOLDER_NAME}' segment. Path was: {dir_path:?}"
         );
 
         if let Some(parent_of_profiles) = dir_path.parent() {
@@ -412,16 +394,10 @@ mod profile_tests {
                 parent_of_profiles_str
                     .to_lowercase()
                     .contains(&temp_app_name.to_lowercase()),
-                "The parent directory of '{}' ({:?}) should contain the app name '{}'",
-                PROFILES_SUBFOLDER_NAME,
-                parent_of_profiles,
-                temp_app_name
+                "The parent directory of '{PROFILES_SUBFOLDER_NAME}' ({parent_of_profiles:?}) should contain the app name '{temp_app_name}'"
             );
         } else {
-            panic!(
-                "'{}' directory ({:?}) should have a parent.",
-                PROFILES_SUBFOLDER_NAME, dir_path
-            );
+            panic!("'{PROFILES_SUBFOLDER_NAME}' directory ({dir_path:?}) should have a parent.");
         }
 
         // Cleanup
@@ -431,8 +407,7 @@ mod profile_tests {
             if app_base_config_local_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&app_base_config_local_dir) {
                     eprintln!(
-                        "Test cleanup failed for app_base_config_local_dir {:?}: {}",
-                        app_base_config_local_dir, e
+                        "Test cleanup failed for app_base_config_local_dir {app_base_config_local_dir:?}: {e}"
                     );
                 }
             }
@@ -501,12 +476,11 @@ mod profile_tests {
         let sanitized_filename = sanitize_profile_name(&profile_name);
         let direct_path = manager
             .mock_profile_dir // This IS <temp_base>/profiles/
-            .join(format!("{}.{}", sanitized_filename, PROFILE_FILE_EXTENSION));
+            .join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
 
         assert!(
             direct_path.exists(),
-            "Profile file should exist at: {:?}",
-            direct_path
+            "Profile file should exist at: {direct_path:?}"
         );
 
         let loaded_profile = manager.load_profile_from_path(&direct_path)?;

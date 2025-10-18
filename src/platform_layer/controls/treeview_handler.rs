@@ -18,7 +18,7 @@ use crate::platform_layer::types::{
 use windows::{
     Win32::{
         Foundation::{GetLastError, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM},
-        Graphics::Gdi::{HGDIOBJ, HFONT, InvalidateRect, ScreenToClient, SelectObject},
+        Graphics::Gdi::{HFONT, HGDIOBJ, InvalidateRect, ScreenToClient, SelectObject},
         UI::Controls::{
             CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT,
             CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NMHDR, NMTVCUSTOMDRAW,
@@ -82,10 +82,7 @@ impl TreeViewInternalState {
         }
         self.item_id_to_htreeitem.clear();
         self.htreeitem_to_item_id.clear();
-        log::debug!(
-            "TreeViewInternalState::clear_items_impl completed for HWND {:?}",
-            hwnd_treeview
-        );
+        log::debug!("TreeViewInternalState::clear_items_impl completed for HWND {hwnd_treeview:?}");
     }
 
     fn add_item_recursive_impl(
@@ -195,10 +192,7 @@ pub(crate) fn handle_create_treeview_command(
     control_id: i32,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: handle_create_treeview_command for WinID {:?}, ParentID {:?}, ControlID {}",
-        window_id,
-        parent_control_id,
-        control_id
+        "TreeViewHandler: handle_create_treeview_command for WinID {window_id:?}, ParentID {parent_control_id:?}, ControlID {control_id}"
     );
 
     // Phase 1: Read-only pre-checks.
@@ -206,16 +200,14 @@ pub(crate) fn handle_create_treeview_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             if window_data.has_control(control_id) || window_data.has_treeview_state() {
                 return Err(PlatformError::ControlCreationFailed(format!(
-                    "TreeView with ID {} or existing treeview state already present for window {:?}",
-                    control_id, window_id
+                    "TreeView with ID {control_id} or existing treeview state already present for window {window_id:?}"
                 )));
             }
 
             let hwnd = match parent_control_id {
                 Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
                     PlatformError::InvalidHandle(format!(
-                        "Parent control with ID {} not found for CreateTreeView in WinID {:?}",
-                        id, window_id
+                        "Parent control with ID {id} not found for CreateTreeView in WinID {window_id:?}"
                     ))
                 })?,
                 None => window_data.get_hwnd(),
@@ -223,8 +215,7 @@ pub(crate) fn handle_create_treeview_command(
 
             if hwnd.is_invalid() {
                 return Err(PlatformError::InvalidHandle(format!(
-                    "Parent HWND for CreateTreeView is invalid (WinID: {:?})",
-                    window_id
+                    "Parent HWND for CreateTreeView is invalid (WinID: {window_id:?})"
                 )));
             }
             Ok(hwnd)
@@ -258,23 +249,18 @@ pub(crate) fn handle_create_treeview_command(
         // Re-check for race conditions.
         if window_data.has_control(control_id) || window_data.has_treeview_state() {
             log::warn!(
-                "TreeViewHandler: TreeView (ID {}) created concurrently. Destroying new one.",
-                control_id
+                "TreeViewHandler: TreeView (ID {control_id}) created concurrently. Destroying new one."
             );
             unsafe { DestroyWindow(hwnd_tv).ok() };
             return Err(PlatformError::ControlCreationFailed(format!(
-                "TreeView with ID {} was concurrently created for window {:?}",
-                control_id, window_id
+                "TreeView with ID {control_id} was concurrently created for window {window_id:?}"
             )));
         }
 
         window_data.register_control_hwnd(control_id, hwnd_tv);
         window_data.init_treeview_state();
         log::debug!(
-            "TreeViewHandler: Created TreeView (ID {}) for window {:?} with HWND {:?}",
-            control_id,
-            window_id,
-            hwnd_tv
+            "TreeViewHandler: Created TreeView (ID {control_id}) for window {window_id:?} with HWND {hwnd_tv:?}"
         );
         Ok(())
     })
@@ -294,15 +280,12 @@ pub(crate) fn populate_treeview(
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: populate_treeview called for WinID {:?}, ControlID {}",
-        window_id,
-        control_id
+        "TreeViewHandler: populate_treeview called for WinID {window_id:?}, ControlID {control_id}"
     );
 
     internal_state.with_treeview_state_mut(window_id, control_id, |hwnd_treeview, tv_state| {
         log::debug!(
-            "TreeViewHandler: Populating TreeView (HWND {:?}). Clearing existing items.",
-            hwnd_treeview
+            "TreeViewHandler: Populating TreeView (HWND {hwnd_treeview:?}). Clearing existing items."
         );
         tv_state.clear_items_impl(hwnd_treeview);
 
@@ -311,8 +294,7 @@ pub(crate) fn populate_treeview(
         }
 
         log::debug!(
-            "TreeViewHandler: Finished populating TreeView (HWND {:?}).",
-            hwnd_treeview
+            "TreeViewHandler: Finished populating TreeView (HWND {hwnd_treeview:?})."
         );
         Ok(())
     })
@@ -331,10 +313,7 @@ pub(crate) fn update_treeview_item_visual_state(
     new_check_state: CheckState,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: update_treeview_item_visual_state for WinID {:?}, ControlID {}, ItemID {:?}",
-        window_id,
-        control_id,
-        item_id
+        "TreeViewHandler: update_treeview_item_visual_state for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}"
     );
 
     // Get all necessary handles and data within a single read lock.
@@ -342,15 +321,13 @@ pub(crate) fn update_treeview_item_visual_state(
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for ControlID {}",
-                    control_id
+                    "TreeView HWND not found for ControlID {control_id}"
                 ))
             })?;
 
             let tv_state = window_data.get_treeview_state().ok_or_else(|| {
                 PlatformError::OperationFailed(format!(
-                    "No TreeView state exists in window {:?}",
-                    window_id
+                    "No TreeView state exists in window {window_id:?}"
                 ))
             })?;
 
@@ -359,7 +336,7 @@ pub(crate) fn update_treeview_item_visual_state(
                 .get(&item_id)
                 .copied()
                 .ok_or_else(|| {
-                    PlatformError::InvalidHandle(format!("TreeItemId {:?} not found", item_id))
+                    PlatformError::InvalidHandle(format!("TreeItemId {item_id:?} not found"))
                 })?;
 
             Ok((hwnd, h_item))
@@ -394,8 +371,7 @@ pub(crate) fn update_treeview_item_visual_state(
     if send_result.0 == 0 {
         let last_error = unsafe { GetLastError() };
         return Err(PlatformError::OperationFailed(format!(
-            "TVM_SETITEMW failed for item {:?}: {:?}",
-            item_id, last_error
+            "TVM_SETITEMW failed for item {item_id:?}: {last_error:?}"
         )));
     }
     Ok(())
@@ -415,25 +391,20 @@ pub(crate) fn update_treeview_item_text(
     text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: update_treeview_item_text for WinID {:?}, ControlID {}, ItemID {:?}",
-        window_id,
-        control_id,
-        item_id
+        "TreeViewHandler: update_treeview_item_text for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}"
     );
 
     let (hwnd_treeview, h_item_native) =
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for ControlID {}",
-                    control_id
+                    "TreeView HWND not found for ControlID {control_id}"
                 ))
             })?;
 
             let tv_state = window_data.get_treeview_state().ok_or_else(|| {
                 PlatformError::OperationFailed(format!(
-                    "No TreeView state exists in window {:?}",
-                    window_id
+                    "No TreeView state exists in window {window_id:?}"
                 ))
             })?;
 
@@ -442,7 +413,7 @@ pub(crate) fn update_treeview_item_text(
                 .get(&item_id)
                 .copied()
                 .ok_or_else(|| {
-                    PlatformError::InvalidHandle(format!("TreeItemId {:?} not found", item_id))
+                    PlatformError::InvalidHandle(format!("TreeItemId {item_id:?} not found"))
                 })?;
 
             Ok((hwnd, h_item))
@@ -475,8 +446,7 @@ pub(crate) fn update_treeview_item_text(
     if send_result.0 == 0 {
         let last_error = unsafe { GetLastError() };
         return Err(PlatformError::OperationFailed(format!(
-            "TVM_SETITEMW (text update) failed for item {:?}: {:?}",
-            item_id, last_error
+            "TVM_SETITEMW (text update) failed for item {item_id:?}: {last_error:?}"
         )));
     }
     Ok(())
@@ -494,9 +464,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
     control_id_from_notify: i32,
 ) -> Option<AppEvent> {
     log::trace!(
-        "TreeViewHandler: TVN_ITEMCHANGEDW received for WinID {:?}, ControlID {}",
-        window_id,
-        control_id_from_notify,
+        "TreeViewHandler: TVN_ITEMCHANGEDW received for WinID {window_id:?}, ControlID {control_id_from_notify}",
     );
     // Check if TreeView state exists for this window.
     if let Ok(false) =
@@ -523,24 +491,20 @@ pub(crate) fn handle_redraw_tree_item_command(
     item_id: TreeItemId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: handle_redraw_tree_item_command for WinID {:?}, ItemID {:?}",
-        window_id,
-        item_id
+        "TreeViewHandler: handle_redraw_tree_item_command for WinID {window_id:?}, ItemID {item_id:?}"
     );
 
     let (hwnd_treeview, htreeitem) =
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView control (ID {}) not found",
-                    control_id
+                    "TreeView control (ID {control_id}) not found"
                 ))
             })?;
 
             let tv_state = window_data.get_treeview_state().ok_or_else(|| {
                 PlatformError::OperationFailed(format!(
-                    "TreeView state not found for WinID {:?}",
-                    window_id
+                    "TreeView state not found for WinID {window_id:?}"
                 ))
             })?;
 
@@ -550,8 +514,7 @@ pub(crate) fn handle_redraw_tree_item_command(
                 .copied()
                 .ok_or_else(|| {
                     PlatformError::InvalidHandle(format!(
-                        "HTREEITEM not found for ItemID {:?}",
-                        item_id
+                        "HTREEITEM not found for ItemID {item_id:?}"
                     ))
                 })?;
             Ok((hwnd, h_item))
@@ -600,15 +563,13 @@ fn get_treeview_hwnd(
     internal_state.with_window_data_read(window_id, |window_data| {
         let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
             PlatformError::InvalidHandle(format!(
-                "Control ID {} not found in WinID {:?}",
-                control_id, window_id
+                "Control ID {control_id} not found in WinID {window_id:?}"
             ))
         })?;
 
         if hwnd.is_invalid() {
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND for control ID {} is invalid",
-                control_id
+                "HWND for control ID {control_id} is invalid"
             )));
         }
         Ok(hwnd)
@@ -621,9 +582,7 @@ pub(crate) fn expand_visible_tree_items(
     control_id: i32,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: expand_visible_tree_items for WinID {:?}, ControlID {}",
-        window_id,
-        control_id
+        "TreeViewHandler: expand_visible_tree_items for WinID {window_id:?}, ControlID {control_id}"
     );
     let hwnd_treeview = get_treeview_hwnd(internal_state, window_id, control_id)?;
 
@@ -665,9 +624,7 @@ pub(crate) fn expand_all_tree_items(
     control_id: i32,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: expand_all_tree_items for WinID {:?}, ControlID {}",
-        window_id,
-        control_id
+        "TreeViewHandler: expand_all_tree_items for WinID {window_id:?}, ControlID {control_id}"
     );
     let hwnd_treeview = get_treeview_hwnd(internal_state, window_id, control_id)?;
 
@@ -771,9 +728,7 @@ pub(crate) fn handle_nm_customdraw(
     match nmtvcd.nmcd.dwDrawStage {
         CDDS_PREPAINT => {
             log::trace!(
-                "TreeViewHandler NM_CUSTOMDRAW (WinID {:?}/CtrlID {}): CDDS_PREPAINT. Requesting CDRF_NOTIFYITEMDRAW.",
-                window_id,
-                control_id_of_treeview
+                "TreeViewHandler NM_CUSTOMDRAW (WinID {window_id:?}/CtrlID {control_id_of_treeview}): CDDS_PREPAINT. Requesting CDRF_NOTIFYITEMDRAW."
             );
             return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
         }
@@ -834,7 +789,7 @@ pub(crate) fn handle_nm_customdraw(
                  * if get_rect_success.0 != 0 {
                  *     // ellipse drawing omitted
                  * }
-                */
+                 */
                 let default_font_lresult = unsafe {
                     SendMessageW(hwnd_treeview, WM_GETFONT, Some(WPARAM(0)), Some(LPARAM(0)))
                 };
@@ -929,11 +884,7 @@ pub(crate) fn handle_wm_app_treeview_checkbox_clicked(
     match result {
         Ok(event) => Some(event),
         Err(e) => {
-            log::error!(
-                "Failed to handle checkbox click for HTREEITEM {:?}: {:?}",
-                h_item_clicked,
-                e
-            );
+            log::error!("Failed to handle checkbox click for HTREEITEM {h_item_clicked:?}: {e:?}");
             None
         }
     }
@@ -985,8 +936,7 @@ pub(crate) fn handle_nm_click(
 
     if h_item_hit.0 != 0 && (tvht_info.flags.0 & TVHT_ONITEMSTATEICON.0) != 0 {
         log::debug!(
-            "NM_CLICK on state icon detected for HTREEITEM {:?}. Posting deferred message.",
-            h_item_hit,
+            "NM_CLICK on state icon detected for HTREEITEM {h_item_hit:?}. Posting deferred message.",
         );
         unsafe {
             if PostMessageW(

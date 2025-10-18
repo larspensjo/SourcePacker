@@ -24,30 +24,19 @@ use std::path::PathBuf;
  *   to I/O errors or if `ProjectDirs` fails to identify a suitable location).
  */
 pub fn get_base_app_config_local_dir(app_name: &str) -> Option<PathBuf> {
-    log::trace!(
-        "PathUtils: Attempting to get base app config local dir for '{}'",
-        app_name
-    );
+    log::trace!("PathUtils: Attempting to get base app config local dir for '{app_name}'");
     ProjectDirs::from("", "", app_name).and_then(|proj_dirs| {
         let config_path = proj_dirs.config_local_dir();
         if !config_path.exists() {
             if let Err(e) = fs::create_dir_all(config_path) {
                 log::error!(
-                    "PathUtils: Failed to create base app config directory {:?}: {}",
-                    config_path,
-                    e
+                    "PathUtils: Failed to create base app config directory {config_path:?}: {e}"
                 );
                 return None;
             }
-            log::debug!(
-                "PathUtils: Created base app config directory: {:?}",
-                config_path
-            );
+            log::debug!("PathUtils: Created base app config directory: {config_path:?}");
         } else {
-            log::trace!(
-                "PathUtils: Base app config directory already exists: {:?}",
-                config_path
-            );
+            log::trace!("PathUtils: Base app config directory already exists: {config_path:?}");
         }
         Some(config_path.to_path_buf())
     })
@@ -86,16 +75,14 @@ mod tests {
         let path = path_opt.unwrap();
         assert!(
             path.exists(),
-            "Directory should have been created at {:?}",
-            path
+            "Directory should have been created at {path:?}"
         );
         assert!(path.is_dir());
         assert!(
             path.to_string_lossy()
                 .to_lowercase()
                 .contains(&unique_app_name.to_lowercase()),
-            "Path should contain the app name. Path: {:?}",
-            path
+            "Path should contain the app name. Path: {path:?}"
         );
 
         // Cleanup: Remove the created directory

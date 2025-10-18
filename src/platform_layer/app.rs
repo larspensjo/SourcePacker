@@ -103,8 +103,7 @@ impl Win32ApiInternalState {
                 && hr != windows::Win32::Foundation::RPC_E_CHANGED_MODE
             {
                 return Err(PlatformError::InitializationFailed(format!(
-                    "CoInitializeEx failed: {:?}",
-                    hr
+                    "CoInitializeEx failed: {hr:?}"
                 )));
             }
 
@@ -165,11 +164,7 @@ impl Win32ApiInternalState {
         let mut windows_map_guard = match self.active_windows.write() {
             Ok(guard) => guard,
             Err(e) => {
-                log::error!(
-                    "Failed to acquire write lock to remove WinID {:?}: {:?}",
-                    window_id,
-                    e
-                );
+                log::error!("Failed to acquire write lock to remove WinID {window_id:?}: {e:?}");
                 return; // Exit if the lock is poisoned.
             }
         };
@@ -178,9 +173,9 @@ impl Win32ApiInternalState {
             // Perform cleanup on the GDI objects owned by the window data.
             removed_data.cleanup_status_bar_font();
             removed_data.cleanup_treeview_new_item_font();
-            log::debug!("Removed and cleaned up data for WindowId {:?}.", window_id);
+            log::debug!("Removed and cleaned up data for WindowId {window_id:?}.");
         } else {
-            log::warn!("Attempted to remove non-existent WindowId {:?}.", window_id);
+            log::warn!("Attempted to remove non-existent WindowId {window_id:?}.");
         }
     }
     /*
@@ -205,17 +200,14 @@ impl Win32ApiInternalState {
         self.with_window_data_write(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for control ID {}",
-                    control_id
+                    "TreeView HWND not found for control ID {control_id}"
                 ))
             })?;
 
             // Take the state. If it doesn't exist, create a new one for the operation.
             let state = window_data.take_treeview_state().unwrap_or_else(|| {
                 log::warn!(
-                    "TreeView state was None for WinID {:?}/ControlID {}. Creating new for operation.",
-                    window_id,
-                    control_id
+                    "TreeView state was None for WinID {window_id:?}/ControlID {control_id}. Creating new for operation."
                 );
                 treeview_handler::TreeViewInternalState::new()
             });
@@ -233,9 +225,7 @@ impl Win32ApiInternalState {
             Ok(())
         }) {
             log::error!(
-                "CRITICAL: Failed to put back TreeView state for WinID {:?}. State may be lost. Error: {:?}",
-                window_id,
-                e
+                "CRITICAL: Failed to put back TreeView state for WinID {window_id:?}. State may be lost. Error: {e:?}"
             );
         }
 
@@ -250,13 +240,13 @@ impl Win32ApiInternalState {
         F: FnOnce(&window_common::NativeWindowData) -> PlatformResult<R>,
     {
         let windows_map = self.active_windows.read().map_err(|e| {
-            log::error!("Failed to acquire read lock on active_windows: {:?}", e);
+            log::error!("Failed to acquire read lock on active_windows: {e:?}");
             PlatformError::OperationFailed("RwLock poisoned".into())
         })?;
 
         let window_data = windows_map.get(&window_id).ok_or_else(|| {
-            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
-            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+            log::warn!("Attempted to access non-existent WindowId {window_id:?}");
+            PlatformError::InvalidHandle(format!("WindowId {window_id:?} not found"))
         })?;
 
         f(window_data)
@@ -273,13 +263,13 @@ impl Win32ApiInternalState {
         F: FnOnce(&mut window_common::NativeWindowData) -> PlatformResult<R>,
     {
         let mut windows_map = self.active_windows.write().map_err(|e| {
-            log::error!("Failed to acquire write lock on active_windows: {:?}", e);
+            log::error!("Failed to acquire write lock on active_windows: {e:?}");
             PlatformError::OperationFailed("RwLock poisoned".into())
         })?;
 
         let window_data = windows_map.get_mut(&window_id).ok_or_else(|| {
-            log::warn!("Attempted to access non-existent WindowId {:?}", window_id);
-            PlatformError::InvalidHandle(format!("WindowId {:?} not found", window_id))
+            log::warn!("Attempted to access non-existent WindowId {window_id:?}");
+            PlatformError::InvalidHandle(format!("WindowId {window_id:?} not found"))
         })?;
 
         f(window_data)
@@ -294,8 +284,7 @@ impl Win32ApiInternalState {
         self.active_windows.read().map_or_else(
             |poisoned_err| {
                 log::error!(
-                    "Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {:?}",
-                    poisoned_err
+                    "Win32ApiInternalState: Poisoned RwLock on active_windows during quit check: {poisoned_err:?}"
                 );
                 false
             },
@@ -324,7 +313,7 @@ impl Win32ApiInternalState {
      * or now directly to control handlers (e.g., `treeview_handler`).
      */
     fn execute_platform_command(self: &Arc<Self>, command: PlatformCommand) -> PlatformResult<()> {
-        log::trace!("Platform: Executing command: {:?}", command);
+        log::trace!("Platform: Executing command: {command:?}");
         match command {
             PlatformCommand::SetWindowTitle { window_id, title } => {
                 command_executor::execute_set_window_title(self, window_id, &title)
@@ -560,10 +549,7 @@ impl Win32ApiInternalState {
         style_id: StyleId,
         style: ControlStyle,
     ) -> PlatformResult<()> {
-        log::debug!(
-            "Win32ApiInternalState: execute_define_style for StyleId::{:?}",
-            style_id
-        );
+        log::debug!("Win32ApiInternalState: execute_define_style for StyleId::{style_id:?}");
 
         // 1. Delegate parsing to the specialized handler.
         let parsed_style = styling_handler::parse_style(style)?;
@@ -572,16 +558,10 @@ impl Win32ApiInternalState {
         match self.defined_styles.write() {
             Ok(mut styles_map) => {
                 styles_map.insert(style_id, Arc::new(parsed_style));
-                log::debug!(
-                    "Successfully stored parsed style for StyleId::{:?}",
-                    style_id
-                );
+                log::debug!("Successfully stored parsed style for StyleId::{style_id:?}");
             }
             Err(e) => {
-                log::error!(
-                    "Failed to acquire write lock on defined_styles map: {:?}",
-                    e
-                );
+                log::error!("Failed to acquire write lock on defined_styles map: {e:?}");
                 return Err(PlatformError::OperationFailed(
                     "RwLock poisoned on defined_styles map".to_string(),
                 ));
@@ -604,20 +584,14 @@ impl Win32ApiInternalState {
         control_id: i32,
         style_id: StyleId,
     ) -> PlatformResult<()> {
-        log::debug!(
-            "Applying style {:?} to ControlID {} in WinID {:?}",
-            style_id,
-            control_id,
-            window_id
-        );
+        log::debug!("Applying style {style_id:?} to ControlID {control_id} in WinID {window_id:?}");
 
         // Get the control's HWND and store the style association in the window's data.
         let control_hwnd = self.with_window_data_write(window_id, |window_data| {
             window_data.apply_style_to_control(control_id, style_id);
             window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "Control ID {} not found in WinID {:?}",
-                    control_id, window_id
+                    "Control ID {control_id} not found in WinID {window_id:?}"
                 ))
             })
         })?;
@@ -671,7 +645,7 @@ impl Win32ApiInternalState {
                 _ = InvalidateRect(Some(control_hwnd), None, true);
             }
         } else {
-            log::warn!("Attempted to apply undefined StyleId::{:?}", style_id);
+            log::warn!("Attempted to apply undefined StyleId::{style_id:?}");
         }
 
         Ok(())
@@ -741,18 +715,14 @@ impl PlatformInterface {
             .write()
             .map_err(|e| {
                 log::error!(
-                    "Platform: Failed to lock active_windows for preliminary insert: {:?}",
-                    e
+                    "Platform: Failed to lock active_windows for preliminary insert: {e:?}"
                 );
                 PlatformError::OperationFailed(
                     "Failed to lock active_windows map for preliminary insert".into(),
                 )
             })?
             .insert(window_id, preliminary_native_data);
-        log::debug!(
-            "Platform: Inserted preliminary NativeWindowData for WindowId {:?}",
-            window_id
-        );
+        log::debug!("Platform: Inserted preliminary NativeWindowData for WindowId {window_id:?}");
 
         // Now, create the actual native window.
         let hwnd = match window_common::create_native_window(
@@ -769,21 +739,17 @@ impl PlatformInterface {
                     guard.remove(&window_id);
                 } else {
                     log::error!(
-                        "Platform: Failed to lock active_windows for cleanup after window creation failure for WinID {:?}",
-                        window_id
+                        "Platform: Failed to lock active_windows for cleanup after window creation failure for WinID {window_id:?}"
                     );
                 }
                 log::debug!(
-                    "Platform: Removed (or attempted to remove) preliminary NativeWindowData for WindowId {:?} due to creation failure.",
-                    window_id
+                    "Platform: Removed (or attempted to remove) preliminary NativeWindowData for WindowId {window_id:?} due to creation failure."
                 );
                 return Err(e);
             }
         };
         log::debug!(
-            "Platform: Native window created with HWND {:?} for WindowId {:?}",
-            hwnd,
-            window_id
+            "Platform: Native window created with HWND {hwnd:?} for WindowId {window_id:?}"
         );
 
         // Update the NativeWindowData with the actual HWND.
@@ -793,15 +759,13 @@ impl PlatformInterface {
                 if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
                     window_data.set_hwnd(hwnd); // Set the actual HWND
                     log::debug!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {:?}.",
-                        window_id,
+                        "Platform: Updated HWND in NativeWindowData for WindowId {window_id:?}.",
                     );
                 } else {
                     // This should ideally not happen if preliminary insert was successful
                     // and no other thread removed it.
                     log::error!(
-                        "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {:?} vanished before HWND update.",
-                        window_id
+                        "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {window_id:?} vanished before HWND update."
                     );
                     // Attempt to destroy the orphaned window if HWND is valid
                     if !hwnd.is_invalid() {
@@ -816,10 +780,7 @@ impl PlatformInterface {
                 }
             }
             Err(e) => {
-                log::error!(
-                    "Platform: Failed to lock active_windows for HWND update: {:?}",
-                    e
-                );
+                log::error!("Platform: Failed to lock active_windows for HWND update: {e:?}");
                 // Attempt to destroy the orphaned window if HWND is valid
                 if !hwnd.is_invalid() {
                     unsafe {
@@ -851,18 +812,12 @@ impl PlatformInterface {
             .application_event_handler
             .lock()
             .map_err(|e| {
-                log::error!(
-                    "Platform: Failed to lock application_event_handler to set it: {:?}",
-                    e
-                );
+                log::error!("Platform: Failed to lock application_event_handler to set it: {e:?}");
                 PlatformError::OperationFailed("Failed to set application event handler".into())
             })? = Some(Arc::downgrade(&event_handler_param));
 
         *self.internal_state.ui_state_provider.lock().map_err(|e| {
-            log::error!(
-                "Platform: Failed to lock ui_state_provider to set it: {:?}",
-                e
-            );
+            log::error!("Platform: Failed to lock ui_state_provider to set it: {e:?}");
             PlatformError::OperationFailed("Failed to set ui_state_provider".into())
         })? = Some(Arc::downgrade(&ui_state_provider_param));
 
@@ -872,11 +827,10 @@ impl PlatformInterface {
         );
 
         for command in initial_commands_to_execute {
-            log::debug!("Platform: Executing initial command: {:?}", command);
+            log::debug!("Platform: Executing initial command: {command:?}");
             if let Err(e) = self.internal_state.execute_platform_command(command) {
                 log::error!(
-                    "Platform: Error executing initial UI command: {:?}. Halting initialization.",
-                    e
+                    "Platform: Error executing initial UI command: {e:?}. Halting initialization."
                 );
                 return Err(e);
             }
@@ -894,8 +848,7 @@ impl PlatformInterface {
                             Ok(mut logic_guard) => logic_guard.try_dequeue_command(),
                             Err(e) => {
                                 log::error!(
-                                    "Platform: Failed to lock application logic to dequeue command: {:?}. Skipping command processing for this cycle.",
-                                    e
+                                    "Platform: Failed to lock application logic to dequeue command: {e:?}. Skipping command processing for this cycle."
                                 );
                                 None // Avoid panic, try again next cycle
                             }
@@ -904,7 +857,7 @@ impl PlatformInterface {
 
                     if let Some(command) = command_to_execute {
                         if let Err(e) = self.internal_state.execute_platform_command(command) {
-                            log::error!("Platform: Error executing command from queue: {:?}", e);
+                            log::error!("Platform: Error executing command from queue: {e:?}");
                             // Decide if error is fatal. For now, continue.
                         }
                     } else {
@@ -931,8 +884,7 @@ impl PlatformInterface {
                         // Error from GetMessageW (result.0 == -1)
                         let last_error = GetLastError();
                         log::error!(
-                            "Platform: GetMessageW failed with return -1. LastError: {:?}",
-                            last_error
+                            "Platform: GetMessageW failed with return -1. LastError: {last_error:?}"
                         );
                         // Check if we should break despite error (e.g., if quitting and no windows)
                         let should_still_break =
@@ -967,8 +919,7 @@ impl PlatformInterface {
             Ok(mut guard) => *guard = None,
             Err(e) => {
                 log::error!(
-                    "Platform: Failed to lock application_event_handler to clear it (poisoned): {:?}",
-                    e
+                    "Platform: Failed to lock application_event_handler to clear it (poisoned): {e:?}"
                 );
             }
         }
@@ -977,8 +928,7 @@ impl PlatformInterface {
             Ok(mut guard) => *guard = None,
             Err(e) => {
                 log::error!(
-                    "Platform: Failed to lock ui_state_provider to clear it (poisoned): {:?}",
-                    e
+                    "Platform: Failed to lock ui_state_provider to clear it (poisoned): {e:?}"
                 );
             }
         }
@@ -1063,7 +1013,7 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_success() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
+        data.register_control_hwnd(1, HWND(std::ptr::dangling_mut::<std::ffi::c_void>()));
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();
@@ -1088,7 +1038,7 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_error() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(1 as *mut std::ffi::c_void));
+        data.register_control_hwnd(1, HWND(std::ptr::dangling_mut::<std::ffi::c_void>()));
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();

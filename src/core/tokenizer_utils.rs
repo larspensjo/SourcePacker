@@ -60,8 +60,7 @@ impl TokenCounterOperations for CoreTikTokenCounter {
             Ok(bpe) => bpe.encode_with_special_tokens(text).len(),
             Err(e) => {
                 error!(
-                    "Failed to initialize TikToken BPE (cl100k_base): {:?}. Falling back to whitespace token count.",
-                    e
+                    "Failed to initialize TikToken BPE (cl100k_base): {e:?}. Falling back to whitespace token count."
                 );
                 // Fallback to simple whitespace counting if tiktoken fails
                 text.split_whitespace().count()

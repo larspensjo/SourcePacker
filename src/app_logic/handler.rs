@@ -115,8 +115,7 @@ impl MyAppLogic {
      */
     fn _on_ui_setup_complete(&mut self, window_id: WindowId) {
         log::debug!(
-            "Main window UI setup complete (ID: {:?}). Initializing MainWindowUiState.",
-            window_id
+            "Main window UI setup complete (ID: {window_id:?}). Initializing MainWindowUiState."
         );
         self.ui_state = Some(MainWindowUiState::new(window_id));
 
@@ -125,7 +124,7 @@ impl MyAppLogic {
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
         {
             Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
-                log::debug!("Found last used profile name: {}", last_profile_name);
+                log::debug!("Found last used profile name: {last_profile_name}");
                 match self
                     .profile_manager
                     .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
@@ -249,7 +248,7 @@ impl MyAppLogic {
             ArchiveStatus::ArchiveFileMissing => "File missing.".to_string(),
             ArchiveStatus::NoFilesSelected => "No files selected.".to_string(),
             ArchiveStatus::ErrorChecking(Some(kind)) => {
-                format!("Error: {:?}.", kind)
+                format!("Error: {kind:?}.")
             }
             ArchiveStatus::ErrorChecking(None) => "Error: Unknown.".to_string(),
         }
@@ -305,7 +304,7 @@ impl MyAppLogic {
         ui_state_mut.current_archive_status_for_ui = Some(status);
 
         let plain_status_string = Self::archive_status_to_plain_string(&status);
-        let archive_label_text = format!("Archive: {}", plain_status_string);
+        let archive_label_text = format!("Archive: {plain_status_string}");
 
         let severity_for_archive_msg = match status {
             ArchiveStatus::ErrorChecking(_) => MessageSeverity::Error,
@@ -323,10 +322,7 @@ impl MyAppLogic {
         if severity_for_archive_msg == MessageSeverity::Error {
             app_error!(self, "Archive status error: {:?}", status);
         } else {
-            log::debug!(
-                "AppLogic UpdateArchiveStatus (not an error): {}",
-                plain_status_string
-            );
+            log::debug!("AppLogic UpdateArchiveStatus (not an error): {plain_status_string}");
         }
     }
 
@@ -349,7 +345,7 @@ impl MyAppLogic {
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
                     control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
-                    text: format!("Tokens: {}", token_count),
+                    text: format!("Tokens: {token_count}"),
                     severity: MessageSeverity::Information,
                 });
         }
@@ -380,8 +376,7 @@ impl MyAppLogic {
             self.ui_state = None;
         } else {
             log::debug!(
-                "AppLogic: Window (ID: {:?}) destroyed, but it was not the main window tracked by ui_state.",
-                window_id
+                "AppLogic: Window (ID: {window_id:?}) destroyed, but it was not the main window tracked by ui_state."
             );
         }
     }
@@ -396,18 +391,13 @@ impl MyAppLogic {
             Some(s) if s.window_id == window_id => s,
             _ => {
                 log::debug!(
-                    "AppLogic: TreeViewItemToggled event for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
-                    window_id
+                    "AppLogic: TreeViewItemToggled event for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
                 );
                 return;
             }
         };
 
-        log::debug!(
-            "TreeItem {:?} toggled to UI state {:?}.",
-            item_id,
-            new_check_state
-        );
+        log::debug!("TreeItem {item_id:?} toggled to UI state {new_check_state:?}.");
 
         let mut path_of_toggled_node_opt: Option<PathBuf> = None;
         for (path_candidate, id_in_map) in &ui_state_ref.path_to_tree_item_id {
@@ -421,8 +411,7 @@ impl MyAppLogic {
             Some(p) => p,
             None => {
                 log::error!(
-                    "AppLogic: Could not find path for TreeItemId {:?} from UI event.",
-                    item_id
+                    "AppLogic: Could not find path for TreeItemId {item_id:?} from UI event."
                 );
                 return;
             }
@@ -440,8 +429,7 @@ impl MyAppLogic {
                 }
             } else {
                 log::warn!(
-                    "AppLogic: Could not get original node attributes for path {:?} to check if it was New.",
-                    path_for_model_update
+                    "AppLogic: Could not get original node attributes for path {path_for_model_update:?} to check if it was New."
                 );
                 false
             }
@@ -504,8 +492,7 @@ impl MyAppLogic {
                     });
             } else {
                 log::error!(
-                    "AppLogic: Path {:?} (from collected_changes) not found in path_to_tree_item_id during TreeViewItemToggled update.",
-                    changed_path
+                    "AppLogic: Path {changed_path:?} (from collected_changes) not found in path_to_tree_item_id during TreeViewItemToggled update."
                 );
             }
         }
@@ -531,9 +518,7 @@ impl MyAppLogic {
                     item_id,
                 });
             log::debug!(
-                "AppLogic: Item {:?} (path {:?}) was considered 'New' for display and changed state. Queueing RedrawTreeItem.",
-                item_id,
-                path_for_model_update
+                "AppLogic: Item {item_id:?} (path {path_for_model_update:?}) was considered 'New' for display and changed state. Queueing RedrawTreeItem."
             );
 
             let mut current_path_for_ancestor_check = path_for_model_update.clone();
@@ -552,8 +537,7 @@ impl MyAppLogic {
                     break;
                 }
 
-                if let Some(parent_item_id_ref) =
-                    ui_state_ref.path_to_tree_item_id.get(parent_path)
+                if let Some(parent_item_id_ref) = ui_state_ref.path_to_tree_item_id.get(parent_path)
                 {
                     let parent_item_id = *parent_item_id_ref;
                     let parent_text = self.build_tree_item_display_text(parent_path);
@@ -571,9 +555,7 @@ impl MyAppLogic {
                             item_id: parent_item_id,
                         });
                     log::debug!(
-                        "AppLogic: Queueing RedrawTreeItem for ancestor {:?} (path {:?}) due to toggle of descendant.",
-                        parent_item_id,
-                        parent_path
+                        "AppLogic: Queueing RedrawTreeItem for ancestor {parent_item_id:?} (path {parent_path:?}) due to toggle of descendant."
                     );
                 }
                 current_path_for_ancestor_check = parent_path.to_path_buf();
@@ -675,13 +657,13 @@ impl MyAppLogic {
             },
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
-                    log::error!("Failed to create archive content: {}", e);
+                    log::error!("Failed to create archive content: {e}");
                     if let Some(ui_state_ref) = &self.ui_state {
                         self.synchronous_command_queue
                             .push_back(PlatformCommand::ShowMessageBox {
                                 window_id: ui_state_ref.window_id,
                                 title: "Missing Source File".to_string(),
-                                message: format!("A selected file could not be read.\n\n{}", e),
+                                message: format!("A selected file could not be read.\n\n{e}"),
                                 severity: MessageSeverity::Error,
                             });
                     }
@@ -702,9 +684,7 @@ impl MyAppLogic {
             }
             _ => {
                 log::debug!(
-                    "ButtonClicked for unhandled control_id {} on window {:?}",
-                    control_id,
-                    window_id
+                    "ButtonClicked for unhandled control_id {control_id} on window {window_id:?}"
                 );
             }
         }
@@ -715,8 +695,7 @@ impl MyAppLogic {
             Some(s) if s.window_id == window_id => s,
             _ => {
                 log::warn!(
-                    "ExpandFilteredAllClick received but no matching UI state for window {:?}",
-                    window_id
+                    "ExpandFilteredAllClick received but no matching UI state for window {window_id:?}"
                 );
                 return;
             }
@@ -782,8 +761,7 @@ impl MyAppLogic {
             .is_some_and(|s| s.window_id == window_id)
         {
             log::warn!(
-                "FileOpenProfileDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
-                window_id
+                "FileOpenProfileDialogCompleted for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
             );
             return;
         }
@@ -796,7 +774,7 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("Profile selected for load: {:?}", profile_file_path);
+        log::debug!("Profile selected for load: {profile_file_path:?}");
         match self
             .profile_manager
             .load_profile_from_path(&profile_file_path)
@@ -804,8 +782,7 @@ impl MyAppLogic {
             Ok(loaded_profile) => {
                 let profile_name_clone = loaded_profile.name.clone();
                 log::debug!(
-                    "Successfully loaded profile '{}' via manager from path.",
-                    profile_name_clone
+                    "Successfully loaded profile '{profile_name_clone}' via manager from path."
                 );
 
                 if let Err(e) = self
@@ -819,7 +796,7 @@ impl MyAppLogic {
                         e
                     );
                 }
-                let status_msg = format!("Profile '{}' loaded and scanned.", profile_name_clone);
+                let status_msg = format!("Profile '{profile_name_clone}' loaded and scanned.");
                 self._activate_profile_and_show_window(window_id, loaded_profile, status_msg);
             }
             Err(e) => {
@@ -858,7 +835,7 @@ impl MyAppLogic {
             .get_profile_name()
             .map_or_else(|| "new_profile".to_string(), |name| name.clone());
         let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
-        let default_filename = format!("{}.json", sanitized_current_name);
+        let default_filename = format!("{sanitized_current_name}.json");
 
         ui_state_mut.pending_action = Some(PendingAction::SavingProfileAs);
         self.synchronous_command_queue
@@ -881,8 +858,7 @@ impl MyAppLogic {
             Some(s) => s,
             None => {
                 log::warn!(
-                    "FileSaveDialogCompleted received for an unknown or non-main window (ID: {:?}). Ignoring event.",
-                    window_id
+                    "FileSaveDialogCompleted received for an unknown or non-main window (ID: {window_id:?}). Ignoring event."
                 );
                 return;
             }
@@ -890,9 +866,7 @@ impl MyAppLogic {
 
         let action = ui_state_mut.pending_action.take();
         log::debug!(
-            "FileSaveDialogCompleted with pending action: {:?}, for result: {:?}",
-            action,
-            result
+            "FileSaveDialogCompleted with pending action: {action:?}, for result: {result:?}"
         );
 
         match action {
@@ -937,7 +911,7 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("User selected archive path: {:?}", path);
+        log::debug!("User selected archive path: {path:?}");
 
         let profile_to_save_opt = {
             let mut profile_runtime_data = self.app_session_data_ops.lock().unwrap();
@@ -988,10 +962,7 @@ impl MyAppLogic {
         let profile_save_path =
             path.ok_or_else(|| "User cancelled the 'Save Profile As' dialog.".to_string())?;
 
-        log::debug!(
-            "User selected path for 'Save Profile As': {:?}",
-            profile_save_path
-        );
+        log::debug!("User selected path for 'Save Profile As': {profile_save_path:?}");
 
         let profile_name_osstr = profile_save_path
             .file_stem()
@@ -1008,8 +979,7 @@ impl MyAppLogic {
                 .all(core::profiles::is_valid_profile_name_char)
         {
             return Err(format!(
-                "Invalid profile name extracted from path: '{}'",
-                profile_name_str
+                "Invalid profile name extracted from path: '{profile_name_str}'"
             ));
         }
 
@@ -1073,12 +1043,7 @@ impl MyAppLogic {
     }
 
     fn handle_window_resized(&mut self, _window_id: WindowId, _width: i32, _height: i32) {
-        log::debug!(
-            "Window resized: ID {:?}, W:{}, H:{}",
-            _window_id,
-            _width,
-            _height
-        );
+        log::debug!("Window resized: ID {_window_id:?}, W:{_width}, H:{_height}");
     }
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
@@ -1131,9 +1096,7 @@ impl MyAppLogic {
         };
 
         log::debug!(
-            "Refreshing file list for profile '{}', root: {:?}",
-            current_profile_name,
-            root_path_to_scan
+            "Refreshing file list for profile '{current_profile_name}', root: {root_path_to_scan:?}"
         );
 
         // TODO: Do we really need a full new scan_directory here?
@@ -1158,8 +1121,7 @@ impl MyAppLogic {
                 }
 
                 log::debug!(
-                    "Applied selections from profile '{}' to refreshed tree and updated token cache.",
-                    current_profile_name
+                    "Applied selections from profile '{current_profile_name}' to refreshed tree and updated token cache."
                 );
 
                 self.refresh_tree_view_from_cache(main_window_id);
@@ -1303,17 +1265,13 @@ impl MyAppLogic {
             .is_some_and(|s| s.window_id == window_id)
         {
             log::debug!(
-                "ProfileSelectionDialogCompleted for non-matching or non-existent UI state. Window ID: {:?}. Ignoring.",
-                window_id
+                "ProfileSelectionDialogCompleted for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
             );
             return;
         }
 
         log::debug!(
-            "ProfileSelectionDialogCompleted event received: chosen: {:?}, create_new: {}, cancelled: {}",
-            chosen_profile_name,
-            create_new_requested,
-            user_cancelled
+            "ProfileSelectionDialogCompleted event received: chosen: {chosen_profile_name:?}, create_new: {create_new_requested}, cancelled: {user_cancelled}"
         );
 
         if user_cancelled {
@@ -1341,10 +1299,7 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!(
-            "User chose profile '{}'. Attempting to load.",
-            profile_name_to_load
-        );
+        log::debug!("User chose profile '{profile_name_to_load}'. Attempting to load.");
         match self
             .profile_manager
             .load_profile(&profile_name_to_load, APP_NAME_FOR_PROFILES)
@@ -1442,8 +1397,7 @@ impl MyAppLogic {
         }
 
         log::debug!(
-            "New profile name '{}' is valid. Proceeding to Step 2 (Get Root Folder).",
-            profile_name_text
+            "New profile name '{profile_name_text}' is valid. Proceeding to Step 2 (Get Root Folder)."
         );
         // Ensure ui_state exists
         let ui_state_mut = self.ui_state.as_mut().expect(
@@ -1472,17 +1426,12 @@ impl MyAppLogic {
             .is_some_and(|s| s.window_id == window_id)
         {
             log::warn!(
-                "InputDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
-                window_id
+                "InputDialogCompleted for an unknown or non-main window (ID: {window_id:?}). Ignoring."
             );
             return;
         }
 
-        log::debug!(
-            "InputDialogCompleted: text: {:?}, context_tag: {:?}",
-            text,
-            context_tag
-        );
+        log::debug!("InputDialogCompleted: text: {text:?}, context_tag: {context_tag:?}");
 
         match context_tag.as_deref() {
             Some("NewProfileName") => {
@@ -1520,8 +1469,7 @@ impl MyAppLogic {
             .is_some_and(|s| s.window_id == window_id)
         {
             log::warn!(
-                "ExcludePatternsDialogCompleted received for an unknown window {:?}. Ignoring.",
-                window_id
+                "ExcludePatternsDialogCompleted received for an unknown window {window_id:?}. Ignoring."
             );
             return;
         }
@@ -1599,14 +1547,13 @@ impl MyAppLogic {
             Some(s) => s,
             None => {
                 log::warn!(
-                    "FolderPickerDialogCompleted for an unknown or non-main window (ID: {:?}). Ignoring.",
-                    window_id
+                    "FolderPickerDialogCompleted for an unknown or non-main window (ID: {window_id:?}). Ignoring."
                 );
                 return;
             }
         };
 
-        log::debug!("FolderPickerDialogCompleted: path: {:?}", path);
+        log::debug!("FolderPickerDialogCompleted: path: {path:?}");
         ui_state_mut.pending_action = None;
 
         let root_folder_path = match path {
@@ -1631,11 +1578,7 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!(
-            "Creating new profile '{}' with root folder {:?}.",
-            profile_name,
-            root_folder_path
-        );
+        log::debug!("Creating new profile '{profile_name}' with root folder {root_folder_path:?}.");
         let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
 
         match self
@@ -1776,10 +1719,7 @@ impl MyAppLogic {
         }
 
         if let Some(profile_name) = active_profile_name.as_ref() {
-            log::debug!(
-                "Preparing exclude patterns dialog for active profile '{}'.",
-                profile_name
-            );
+            log::debug!("Preparing exclude patterns dialog for active profile '{profile_name}'.");
         }
 
         let patterns_text = if exclude_patterns.is_empty() {
@@ -1807,8 +1747,7 @@ impl MyAppLogic {
             Some(s) => s,
             None => {
                 log::warn!(
-                    "InputTextChanged for filter input received for an unknown or non-main window (ID: {:?}). Ignoring event.",
-                    window_id
+                    "InputTextChanged for filter input received for an unknown or non-main window (ID: {window_id:?}). Ignoring event."
                 );
                 return;
             }
@@ -1819,7 +1758,7 @@ impl MyAppLogic {
             ui_state_mut.filter_text = None;
             false
         } else {
-            log::debug!("Filter text submitted: '{}'. Storing for filtering.", text);
+            log::debug!("Filter text submitted: '{text}'. Storing for filtering.");
             ui_state_mut.filter_text = Some(text);
             true
         };
@@ -1861,7 +1800,7 @@ impl MyAppLogic {
         let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
             Some(s) => s,
             None => {
-                log::warn!("FilterClearRequested for unknown window {:?}", window_id);
+                log::warn!("FilterClearRequested for unknown window {window_id:?}");
                 return;
             }
         };
@@ -1934,6 +1873,8 @@ impl MyAppLogic {
             size: Some(9),
             weight: Some(FontWeight::Normal),
         };
+        let mut error_font = default_font.clone();
+        error_font.weight = Some(FontWeight::Bold);
 
         // --- Style Definitions ---
         self.synchronous_command_queue
@@ -2028,7 +1969,7 @@ impl MyAppLogic {
                 style_id: StyleId::StatusLabelError,
                 style: ControlStyle {
                     text_color: Some(text_error),
-                    font: Some(default_font),
+                    font: Some(error_font),
                     ..Default::default()
                 },
             });
@@ -2041,7 +1982,7 @@ impl PlatformEventHandler for MyAppLogic {
     }
 
     fn handle_event(&mut self, event: AppEvent) {
-        log::trace!("AppLogic: Handling event: {:?}", event);
+        log::trace!("AppLogic: Handling event: {event:?}");
         match event {
             AppEvent::WindowCloseRequestedByUser { window_id } => {
                 self.handle_window_close_requested(window_id);
@@ -2126,9 +2067,7 @@ impl PlatformEventHandler for MyAppLogic {
                     self.handle_filter_text_submitted(window_id, text);
                 } else {
                     log::debug!(
-                        "InputTextChanged received for unhandled control {} in window {:?}",
-                        control_id,
-                        window_id
+                        "InputTextChanged received for unhandled control {control_id} in window {window_id:?}"
                     );
                 }
             }
@@ -2144,21 +2083,17 @@ impl PlatformEventHandler for MyAppLogic {
             if !active_profile_name.is_empty() {
                 let profile_to_save = profile_runtime_data.create_profile_snapshot();
                 log::debug!(
-                    "AppLogic: Attempting to save content of active profile '{}' on exit.",
-                    active_profile_name
+                    "AppLogic: Attempting to save content of active profile '{active_profile_name}' on exit."
                 );
                 match self
                     .profile_manager
                     .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
                 {
                     Ok(_) => log::debug!(
-                        "AppLogic: Successfully saved content of profile '{}' to disk on exit.",
-                        active_profile_name
+                        "AppLogic: Successfully saved content of profile '{active_profile_name}' to disk on exit."
                     ),
                     Err(e) => log::error!(
-                        "AppLogic: Error saving content of profile '{}' on exit: {:?}",
-                        active_profile_name,
-                        e
+                        "AppLogic: Error saving content of profile '{active_profile_name}' on exit: {e:?}"
                     ),
                 }
             }
@@ -2166,8 +2101,7 @@ impl PlatformEventHandler for MyAppLogic {
 
         let profile_name_to_save_in_config = active_profile_name_opt.as_deref().unwrap_or("");
         log::debug!(
-            "AppLogic: Attempting to save last profile name '{}' to config on exit.",
-            profile_name_to_save_in_config
+            "AppLogic: Attempting to save last profile name '{profile_name_to_save_in_config}' to config on exit."
         );
         drop(profile_runtime_data);
 
@@ -2182,15 +2116,13 @@ impl PlatformEventHandler for MyAppLogic {
                     );
                 } else {
                     log::debug!(
-                        "AppLogic: Successfully saved last active profile name '{}' to config on exit.",
-                        profile_name_to_save_in_config
+                        "AppLogic: Successfully saved last active profile name '{profile_name_to_save_in_config}' to config on exit."
                     );
                 }
             }
-            Err(e) => log::error!(
-                "AppLogic: Error saving last profile name to config on exit: {:?}",
-                e
-            ),
+            Err(e) => {
+                log::error!("AppLogic: Error saving last profile name to config on exit: {e:?}")
+            }
         }
     }
 }
@@ -2201,8 +2133,7 @@ impl UiStateProvider for MyAppLogic {
             Some(s) if s.window_id == window_id => s,
             _ => {
                 log::trace!(
-                    "is_tree_item_new: UI state not found or window ID mismatch for {:?}. Returning false.",
-                    window_id
+                    "is_tree_item_new: UI state not found or window ID mismatch for {window_id:?}. Returning false."
                 );
                 return false;
             }
@@ -2218,8 +2149,7 @@ impl UiStateProvider for MyAppLogic {
             Some(p) => p,
             None => {
                 log::trace!(
-                    "is_tree_item_new: Path not found for TreeItemId {:?}. Returning false.",
-                    item_id
+                    "is_tree_item_new: Path not found for TreeItemId {item_id:?}. Returning false."
                 );
                 return false;
             }
@@ -2232,27 +2162,20 @@ impl UiStateProvider for MyAppLogic {
                     let contains_new =
                         app_data_guard.does_path_or_descendants_contain_new_file(path);
                     log::debug!(
-                        "is_tree_item_new: Directory {:?} (ItemID {:?}) contains new file: {}.",
-                        path,
-                        item_id,
-                        contains_new
+                        "is_tree_item_new: Directory {path:?} (ItemID {item_id:?}) contains new file: {contains_new}."
                     );
                     contains_new
                 } else {
                     let is_new_file = file_state == SelectionState::New;
                     log::debug!(
-                        "is_tree_item_new: File {:?} (ItemID {:?}) is new: {}.",
-                        path,
-                        item_id,
-                        is_new_file
+                        "is_tree_item_new: File {path:?} (ItemID {item_id:?}) is new: {is_new_file}."
                     );
                     is_new_file
                 }
             }
             None => {
                 log::trace!(
-                    "is_tree_item_new: FileNode attributes not found for path {:?}. Returning false.",
-                    path
+                    "is_tree_item_new: FileNode attributes not found for path {path:?}. Returning false."
                 );
                 false
             }
@@ -2281,11 +2204,7 @@ impl MyAppLogic {
 
     pub(crate) fn test_set_path_to_tree_item_id_mapping(&mut self, path: PathBuf, id: TreeItemId) {
         if let Some(ui_state) = &mut self.ui_state {
-            log::debug!(
-                "Test helper: Mapping path {:?} to TreeItemId {:?}",
-                path,
-                id
-            );
+            log::debug!("Test helper: Mapping path {path:?} to TreeItemId {id:?}");
             ui_state.path_to_tree_item_id.insert(path, id);
         } else {
             panic!(

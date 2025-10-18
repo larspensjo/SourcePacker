@@ -80,7 +80,7 @@ fn main() -> PlatformResult<()> {
     let platform_interface = match PlatformInterface::new("SourcePacker".to_string()) {
         Ok(pi) => pi,
         Err(e) => {
-            log::error!("Fatal: Failed to initialize the platform layer: {:?}", e);
+            log::error!("Fatal: Failed to initialize the platform layer: {e:?}");
             return Err(e);
         }
     };
@@ -120,11 +120,11 @@ fn main() -> PlatformResult<()> {
     let main_window_id = match platform_interface.create_window(main_window_config) {
         Ok(id) => id,
         Err(e) => {
-            log::error!("Fatal: Failed to create the main window: {:?}", e);
+            log::error!("Fatal: Failed to create the main window: {e:?}");
             return Err(e);
         }
     };
-    log::debug!("Main window requested with ID: {:?}", main_window_id);
+    log::debug!("Main window requested with ID: {main_window_id:?}");
     log::debug!("Describe and Create Static UI Structure");
 
     // Get initial UI commands from the description layer
@@ -161,7 +161,7 @@ fn main() -> PlatformResult<()> {
     match run_result {
         Ok(()) => log::debug!("Application exited cleanly."),
         Err(e) => {
-            log::error!("Application exited with an error: {:?}", e);
+            log::error!("Application exited with an error: {e:?}");
             return Err(e);
         }
     }
@@ -185,7 +185,7 @@ pub fn initialize_logging(log_level: LevelFilter) {
             let mut config_builder = ConfigBuilder::new();
 
             if let Err(err) = config_builder.set_time_offset_to_local() {
-                eprintln!("Warning: Failed to set local time offset: {:?}", err);
+                eprintln!("Warning: Failed to set local time offset: {err:?}");
                 // Ignore for now
             }
 
@@ -199,17 +199,14 @@ pub fn initialize_logging(log_level: LevelFilter) {
             if let Err(e) = simplelog::CombinedLogger::init(vec![simplelog::WriteLogger::new(
                 log_level, config, file,
             )]) {
-                eprintln!("Failed to initialize file logger: {}", e);
+                eprintln!("Failed to initialize file logger: {e}");
             }
         }
         Err(e) => {
-            eprintln!("Failed to create log file '{}': {}", log_file_path, e);
+            eprintln!("Failed to create log file '{log_file_path}': {e}");
         }
     }
-    println!(
-        "Logging initialized to file: {}, at level {}",
-        log_file_path, log_level,
-    );
+    println!("Logging initialized to file: {log_file_path}, at level {log_level}",);
 }
 
 #[cfg(test)]
@@ -218,7 +215,7 @@ pub fn initialize_logging() {
     let mut config_builder = ConfigBuilder::new();
 
     if let Err(err) = config_builder.set_time_offset_to_local() {
-        eprintln!("Warning: Failed to set local time offset: {:?}", err);
+        eprintln!("Warning: Failed to set local time offset: {err:?}");
         // Ignore for now
     }
 

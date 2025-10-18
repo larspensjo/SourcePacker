@@ -37,11 +37,11 @@ impl From<std::string::FromUtf8Error> for ConfigError {
 impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigError::Io(e) => write!(f, "Configuration I/O error: {}", e),
+            ConfigError::Io(e) => write!(f, "Configuration I/O error: {e}"),
             ConfigError::NoProjectDirectory => {
                 write!(f, "Could not determine project directory for configuration")
             }
-            ConfigError::Utf8Error(e) => write!(f, "Configuration file UTF-8 error: {}", e),
+            ConfigError::Utf8Error(e) => write!(f, "Configuration file UTF-8 error: {e}"),
         }
     }
 }
@@ -87,19 +87,13 @@ impl ConfigManagerOperations for CoreConfigManager {
      * `last_profile_name.txt` within that directory.
      */
     fn load_last_profile_name(&self, app_name: &str) -> Result<Option<String>> {
-        log::trace!(
-            "CoreConfigManager: Loading last profile name for app '{}'",
-            app_name
-        );
+        log::trace!("CoreConfigManager: Loading last profile name for app '{app_name}'");
         let config_dir = path_utils::get_base_app_config_local_dir(app_name)
             .ok_or(ConfigError::NoProjectDirectory)?;
         let file_path = config_dir.join(LAST_PROFILE_FILENAME);
 
         if !file_path.exists() {
-            log::debug!(
-                "CoreConfigManager: Last profile file {:?} does not exist.",
-                file_path
-            );
+            log::debug!("CoreConfigManager: Last profile file {file_path:?} does not exist.");
             return Ok(None);
         }
 
@@ -108,17 +102,12 @@ impl ConfigManagerOperations for CoreConfigManager {
         file.read_to_string(&mut contents)?;
 
         if contents.trim().is_empty() {
-            log::debug!(
-                "CoreConfigManager: Last profile file {:?} is empty.",
-                file_path
-            );
+            log::debug!("CoreConfigManager: Last profile file {file_path:?} is empty.");
             Ok(None)
         } else {
             let profile_name = contents.trim().to_string();
             log::debug!(
-                "CoreConfigManager: Loaded last profile name '{}' from {:?}.",
-                profile_name,
-                file_path
+                "CoreConfigManager: Loaded last profile name '{profile_name}' from {file_path:?}."
             );
             Ok(Some(profile_name))
         }
@@ -132,9 +121,7 @@ impl ConfigManagerOperations for CoreConfigManager {
      */
     fn save_last_profile_name(&self, app_name: &str, profile_name: &str) -> Result<()> {
         log::trace!(
-            "CoreConfigManager: Saving last profile name '{}' for app '{}'",
-            profile_name,
-            app_name
+            "CoreConfigManager: Saving last profile name '{profile_name}' for app '{app_name}'"
         );
         let config_dir = path_utils::get_base_app_config_local_dir(app_name)
             .ok_or(ConfigError::NoProjectDirectory)?;
@@ -143,9 +130,7 @@ impl ConfigManagerOperations for CoreConfigManager {
         let mut file = File::create(&file_path)?;
         file.write_all(profile_name.as_bytes())?;
         log::debug!(
-            "CoreConfigManager: Saved last profile name '{}' to {:?}.",
-            profile_name,
-            file_path
+            "CoreConfigManager: Saved last profile name '{profile_name}' to {file_path:?}."
         );
         Ok(())
     }
@@ -245,7 +230,7 @@ mod tests {
         match manager.load_last_profile_name(&unique_app_name) {
             Ok(Some(loaded_name)) => assert_eq!(loaded_name, profile_name),
             Ok(None) => panic!("Expected to load a profile name, but got None."),
-            Err(e) => panic!("Failed to load profile name: {:?}", e),
+            Err(e) => panic!("Failed to load profile name: {e:?}"),
         }
 
         // Verify path structure (basic check using path_utils as source of truth)
@@ -265,10 +250,7 @@ mod tests {
             if config_local_dir.exists() {
                 if let Err(e) = fs::remove_dir_all(&config_local_dir) {
                     // Pass by reference
-                    eprintln!(
-                        "Test cleanup failed for config_local_dir {:?}: {}",
-                        config_local_dir, e
-                    );
+                    eprintln!("Test cleanup failed for config_local_dir {config_local_dir:?}: {e}");
                 }
             }
         } else {
@@ -298,7 +280,7 @@ mod tests {
         match manager.load_last_profile_name(app_name) {
             Ok(Some(loaded_name)) => assert_eq!(loaded_name, profile_name),
             Ok(None) => panic!("Expected to load a profile name, but got None."),
-            Err(e) => panic!("Failed to load profile name: {:?}", e),
+            Err(e) => panic!("Failed to load profile name: {e:?}"),
         }
     }
 
@@ -314,7 +296,7 @@ mod tests {
         match manager.load_last_profile_name(app_name) {
             Ok(None) => {} // Expected outcome
             Ok(Some(_)) => panic!("Expected None when file doesn't exist, but got a name."),
-            Err(e) => panic!("Unexpected error when file doesn't exist: {:?}", e),
+            Err(e) => panic!("Unexpected error when file doesn't exist: {e:?}"),
         }
     }
 
@@ -332,8 +314,8 @@ mod tests {
         // Act & Assert
         match manager.load_last_profile_name(app_name) {
             Ok(None) => {} // Expected outcome for an empty file (after trim)
-            Ok(Some(name)) => panic!("Expected None for empty file, but got: {}", name),
-            Err(e) => panic!("Unexpected error for empty file: {:?}", e),
+            Ok(Some(name)) => panic!("Expected None for empty file, but got: {name}"),
+            Err(e) => panic!("Unexpected error for empty file: {e:?}"),
         }
     }
 

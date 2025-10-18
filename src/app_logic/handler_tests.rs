@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod handler_tests {
+mod tests {
     use crate::app_logic::handler::*;
     use crate::app_logic::ui_constants;
 
@@ -22,6 +22,18 @@ mod handler_tests {
         atomic::{AtomicUsize, Ordering},
     };
     use std::time::SystemTime;
+
+    type SelectionSnapshotLog = (Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>);
+    type MockSetupResult = (
+        MyAppLogic,
+        Arc<Mutex<MockProfileRuntimeData>>,
+        Arc<MockConfigManager>,
+        Arc<MockProfileManager>,
+        Arc<MockFileSystemScanner>,
+        Arc<MockArchiver>,
+        Arc<MockStateManager>,
+        Arc<MockTokenCounter>,
+    );
 
     /*
      * This module contains unit tests for `MyAppLogic` from the `super::handler` module.
@@ -271,7 +283,7 @@ mod handler_tests {
                 .push((selected_paths.clone(), deselected_paths.clone()));
             // Basic simulation for mock:
             fn apply_recursive(
-                nodes: &mut Vec<FileNode>,
+                nodes: &mut [FileNode],
                 selected: &HashSet<PathBuf>,
                 deselected: &HashSet<PathBuf>,
             ) {
@@ -286,11 +298,15 @@ mod handler_tests {
                         node.set_state(SelectionState::New);
                     }
                     if node.is_dir() {
-                        apply_recursive(&mut node.children, selected, deselected);
+                        apply_recursive(node.children.as_mut_slice(), selected, deselected);
                     }
                 }
             }
-            apply_recursive(&mut self.snapshot_nodes, selected_paths, deselected_paths);
+            apply_recursive(
+                self.snapshot_nodes.as_mut_slice(),
+                selected_paths,
+                deselected_paths,
+            );
         }
         fn get_node_attributes_for_path(
             &self,
@@ -330,7 +346,7 @@ mod handler_tests {
 
             let mut actual_changes = Vec::new();
             fn update_recursive(
-                nodes: &mut Vec<FileNode>,
+                nodes: &mut [FileNode],
                 target_path: &Path,
                 new_sel_state: SelectionState,
                 changes: &mut Vec<(PathBuf, SelectionState)>,
@@ -353,7 +369,12 @@ mod handler_tests {
                     // If the target_path is a descendant of the current node.is_dir, recurse
                     if node.is_dir()
                         && target_path.starts_with(node.path())
-                        && update_recursive(&mut node.children, target_path, new_sel_state, changes)
+                        && update_recursive(
+                            node.children.as_mut_slice(),
+                            target_path,
+                            new_sel_state,
+                            changes,
+                        )
                     {
                         found_target = true; // Found in children
                         // Potentially update parent's state based on children if needed by NodeStateApplicator logic
@@ -377,7 +398,7 @@ mod handler_tests {
                 }
             }
             update_recursive(
-                &mut self.snapshot_nodes,
+                self.snapshot_nodes.as_mut_slice(),
                 path,
                 new_state,
                 &mut actual_changes,
@@ -553,8 +574,7 @@ mod handler_tests {
                 Err(scan_error) => {
                     self.clear(); // Clear data on scan failure
                     log::error!(
-                        "MockProfileRuntimeData: Scan failed during load_profile_into_session: {:?}",
-                        scan_error
+                        "MockProfileRuntimeData: Scan failed during load_profile_into_session: {scan_error:?}"
                     );
                     Err(format!(
                         "Mock scan failed for root {:?}: {:?}",
@@ -720,7 +740,7 @@ mod handler_tests {
                 Some(Err(e)) => Err(clone_profile_error(e)),
                 None => Err(ProfileError::Io(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("MockProfileManager: No result set for path {:?}", path),
+                    format!("MockProfileManager: No result set for path {path:?}"),
                 ))),
             }
         }
@@ -749,7 +769,7 @@ mod handler_tests {
     }
     fn clone_profile_error(error: &ProfileError) -> ProfileError {
         match error {
-            ProfileError::Io(e) => ProfileError::Io(io::Error::new(e.kind(), format!("{}", e))),
+            ProfileError::Io(e) => ProfileError::Io(io::Error::new(e.kind(), format!("{e}"))),
             ProfileError::Serde(_e) => {
                 let representative_json_error = serde_json::from_reader::<_, serde_json::Value>(
                     std::io::Cursor::new(b"invalid json {"),
@@ -810,12 +830,10 @@ mod handler_tests {
     }
     fn clone_file_system_error(error: &FileSystemError) -> FileSystemError {
         match error {
-            FileSystemError::Io(e) => {
-                FileSystemError::Io(io::Error::new(e.kind(), format!("{}", e)))
-            }
+            FileSystemError::Io(e) => FileSystemError::Io(io::Error::new(e.kind(), format!("{e}"))),
             FileSystemError::IgnoreError(original_ignore_error) => {
-                let error_message = format!("Mocked IgnoreError: {:?}", original_ignore_error);
-                let mock_io_err = io::Error::new(io::ErrorKind::Other, error_message);
+                let error_message = format!("Mocked IgnoreError: {original_ignore_error:?}");
+                let mock_io_err = io::Error::other(error_message);
                 FileSystemError::IgnoreError(ignore::Error::from(mock_io_err))
             }
             FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
@@ -878,7 +896,7 @@ mod handler_tests {
         }
     }
     fn clone_io_error(error: &io::Error) -> io::Error {
-        io::Error::new(error.kind(), format!("{}", error))
+        io::Error::new(error.kind(), format!("{error}"))
     }
     impl ArchiverOperations for MockArchiver {
         fn create_content(
@@ -895,7 +913,7 @@ mod handler_tests {
                 .unwrap()
                 .as_ref()
                 .map(|s| s.clone())
-                .map_err(|e| clone_io_error(e))
+                .map_err(clone_io_error)
         }
         fn check_status(
             &self,
@@ -906,7 +924,7 @@ mod handler_tests {
                 archive_path_opt.map(|p| p.to_path_buf()),
                 file_nodes_tree.to_vec(),
             ));
-            self.check_archive_status_result.lock().unwrap().clone()
+            *self.check_archive_status_result.lock().unwrap()
         }
         fn save(&self, path: &Path, content: &str) -> io::Result<()> {
             self.save_archive_content_calls
@@ -918,7 +936,7 @@ mod handler_tests {
                 .unwrap()
                 .as_ref()
                 .map(|_| ())
-                .map_err(|e| clone_io_error(e))
+                .map_err(clone_io_error)
         }
         fn get_file_timestamp(&self, path: &Path) -> io::Result<SystemTime> {
             self.get_file_timestamp_calls
@@ -931,15 +949,14 @@ mod handler_tests {
                 Some(Err(e)) => Err(clone_io_error(e)),
                 None => Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("MockArchiver: No timestamp result set for path {:?}", path),
+                    format!("MockArchiver: No timestamp result set for path {path:?}"),
                 )),
             }
         }
     }
 
     struct MockStateManager {
-        apply_selection_states_to_nodes_calls:
-            Mutex<Vec<(Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>)>>,
+        apply_selection_states_to_nodes_calls: Mutex<Vec<SelectionSnapshotLog>>,
         update_folder_selection_calls: Mutex<Vec<(FileNode, SelectionState)>>,
     }
     impl MockStateManager {
@@ -950,9 +967,7 @@ mod handler_tests {
             }
         }
         #[allow(dead_code)]
-        fn get_apply_selection_states_to_nodes_calls(
-            &self,
-        ) -> Vec<(Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>)> {
+        fn get_apply_selection_states_to_nodes_calls(&self) -> Vec<SelectionSnapshotLog> {
             self.apply_selection_states_to_nodes_calls
                 .lock()
                 .unwrap()
@@ -1037,16 +1052,7 @@ mod handler_tests {
         }
     }
 
-    fn setup_logic_with_mocks() -> (
-        MyAppLogic,
-        Arc<Mutex<MockProfileRuntimeData>>,
-        Arc<MockConfigManager>,
-        Arc<MockProfileManager>,
-        Arc<MockFileSystemScanner>,
-        Arc<MockArchiver>,
-        Arc<MockStateManager>,
-        Arc<MockTokenCounter>,
-    ) {
+    fn setup_logic_with_mocks() -> MockSetupResult {
         crate::initialize_logging();
         let mock_app_session_data_for_test = Arc::new(Mutex::new(MockProfileRuntimeData::new()));
         let mock_config_manager_arc = Arc::new(MockConfigManager::new());
@@ -1206,21 +1212,19 @@ mod handler_tests {
         );
         assert!(
             find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
-                "Expected SetWindowTitle with correct title. Got: {:?}", cmds
+                "Expected SetWindowTitle with correct title. Got: {cmds:?}"
         );
         let general_token_status_text = "Token count updated";
         let dedicated_token_status_text = "Tokens: 5"; // Based on mock_app_session.set_cached_total_token_count_for_mock(5);
 
-        let profile_loaded_startup_text = format!(
-            "Successfully loaded last profile '{}' on startup.",
-            last_profile_name_to_load
-        );
-        let profile_loaded_final_text = format!("Profile '{}' loaded.", last_profile_name_to_load);
+        let profile_loaded_startup_text =
+            format!("Successfully loaded last profile '{last_profile_name_to_load}' on startup.");
+        let profile_loaded_final_text = format!("Profile '{last_profile_name_to_load}' loaded.");
 
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &profile_loaded_startup_text && *severity == MessageSeverity::Information )).is_some(), "Expected initial profile loaded message. Got: {:?}", cmds );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == general_token_status_text && *severity == MessageSeverity::Information )).is_some(), "Expected general 'Token count updated' message. Got: {:?}", cmds );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == dedicated_token_status_text )).is_some(), "Expected dedicated token label 'Tokens: 5'. Got: {:?}", cmds );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_final_text && *severity == MessageSeverity::Information )).is_some(), "Expected final profile loaded message. Got: {:?}", cmds );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &profile_loaded_startup_text && *severity == MessageSeverity::Information )).is_some(), "Expected initial profile loaded message. Got: {cmds:?}" );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == general_token_status_text && *severity == MessageSeverity::Information )).is_some(), "Expected general 'Token count updated' message. Got: {cmds:?}" );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == dedicated_token_status_text )).is_some(), "Expected dedicated token label 'Tokens: 5'. Got: {cmds:?}" );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_final_text && *severity == MessageSeverity::Information )).is_some(), "Expected final profile loaded message. Got: {cmds:?}" );
         assert!(
             find_command(&cmds, |cmd| matches!(
                 cmd,
@@ -1350,7 +1354,7 @@ mod handler_tests {
         let root_folder_for_profile = PathBuf::from("/mock/scan_root_status_mock_archiver");
         let archive_file_for_profile = PathBuf::from("/mock/my_mock_archiver_archive.txt");
         let profile_json_path_from_dialog =
-            PathBuf::from(format!("/dummy/profiles/{}.json", profile_name));
+            PathBuf::from(format!("/dummy/profiles/{profile_name}.json"));
 
         let mock_profile_to_load_dto = Profile {
             name: profile_name.to_string(),
@@ -1421,10 +1425,10 @@ mod handler_tests {
         );
         let archive_status_text_for_dedicated_label = "Archive: Error: NotFound.".to_string();
         let archive_status_text_for_general_status =
-            format!("Archive status error: {:?}", archive_error_status);
+            format!("Archive status error: {archive_error_status:?}");
 
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &archive_status_text_for_dedicated_label && *severity == MessageSeverity::Error )).is_some(), "Expected dedicated archive label update for error. Got: {:?}", cmds );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text == &archive_status_text_for_general_status )).is_some(), "Expected new general label error for archive. Got: {:?}", cmds );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &archive_status_text_for_dedicated_label && *severity == MessageSeverity::Error )).is_some(), "Expected dedicated archive label update for error. Got: {cmds:?}" );
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *severity == MessageSeverity::Error && text == &archive_status_text_for_general_status )).is_some(), "Expected new general label error for archive. Got: {cmds:?}" );
     }
 
     #[test]
@@ -1482,8 +1486,8 @@ mod handler_tests {
         let success_text = format!("Archive saved to '{}'.", archive_path.display());
         let archive_up_to_date_text = "Archive: Up to date.".to_string();
 
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Information && text == &success_text)).is_some(), "Expected general label success message. Got: {:?}", cmds);
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && severity == &MessageSeverity::Information && text == &archive_up_to_date_text)).is_some(), "Expected archive label update to 'Up to date'. Got: {:?}", cmds);
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Information && text == &success_text)).is_some(), "Expected general label success message. Got: {cmds:?}");
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && severity == &MessageSeverity::Information && text == &archive_up_to_date_text)).is_some(), "Expected archive label update to 'Up to date'. Got: {cmds:?}");
     }
 
     #[test]
@@ -1537,8 +1541,7 @@ mod handler_tests {
         });
         assert!(
             message_box_cmd.is_some(),
-            "Expected ShowMessageBox command. Got: {:?}",
-            cmds
+            "Expected ShowMessageBox command. Got: {cmds:?}"
         );
 
         assert!(
@@ -1550,8 +1553,7 @@ mod handler_tests {
                 } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID
             ))
             .is_none(),
-            "Unexpected status label update when missing file encountered. Got: {:?}",
-            cmds
+            "Unexpected status label update when missing file encountered. Got: {cmds:?}"
         );
 
         assert!(
@@ -1578,7 +1580,7 @@ mod handler_tests {
         let cmds = logic.test_drain_commands();
 
         // Assert
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No profile loaded"))).is_some(), "Expected 'No profile loaded' error status. Got: {:?}", cmds);
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No profile loaded"))).is_some(), "Expected 'No profile loaded' error status. Got: {cmds:?}");
     }
 
     #[test]
@@ -1600,7 +1602,7 @@ mod handler_tests {
         let cmds = logic.test_drain_commands();
 
         // Assert
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No archive path set"))).is_some(), "Expected 'No archive path set' error status. Got: {:?}", cmds);
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No archive path set"))).is_some(), "Expected 'No archive path set' error status. Got: {cmds:?}");
     }
 
     #[test]
@@ -1638,9 +1640,9 @@ mod handler_tests {
         let cmds_error = logic.test_drain_commands();
 
         // Assert 1
-        assert!(find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &expected_dedicated_error_text && *severity == MessageSeverity::Error )).is_some(), "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Error). Got: {:?}", cmds_error );
-        let general_error_text = format!("Archive status error: {:?}", error_status);
-        assert!(find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &general_error_text && *severity == MessageSeverity::Error )).is_some(), "Expected general status update for archive error. Got: {:?}", cmds_error );
+        assert!(find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &expected_dedicated_error_text && *severity == MessageSeverity::Error )).is_some(), "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Error). Got: {cmds_error:?}" );
+        let general_error_text = format!("Archive status error: {error_status:?}");
+        assert!(find_command(&cmds_error, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &general_error_text && *severity == MessageSeverity::Error )).is_some(), "Expected general status update for archive error. Got: {cmds_error:?}" );
         {
             let mock_app_session_guard = mock_app_session_mutexed.lock().unwrap();
             assert!(
@@ -1690,7 +1692,7 @@ mod handler_tests {
         let cmds_info = logic.test_drain_commands();
 
         // Assert 2
-        assert!(find_command(&cmds_info, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &expected_dedicated_info_text && *severity == MessageSeverity::Information )) .is_some(), "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Information). Got: {:?}", cmds_info);
+        assert!(find_command(&cmds_info, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { window_id, control_id, text, severity } if *window_id == main_window_id && *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &expected_dedicated_info_text && *severity == MessageSeverity::Information )) .is_some(), "Expected UpdateLabelText for STATUS_LABEL_ARCHIVE_ID (Information). Got: {cmds_info:?}");
         // General status is NOT updated for non-error archive status updates beyond the initial log
         let general_info_cmds = find_commands(
             &cmds_info,
@@ -1699,8 +1701,7 @@ mod handler_tests {
         assert_eq!(
             general_info_cmds.len(),
             0,
-            "General status label should not be updated for informational archive status if no error. Got: {:?}",
-            cmds_info
+            "General status label should not be updated for informational archive status if no error. Got: {cmds_info:?}"
         );
 
         {
@@ -1726,8 +1727,8 @@ mod handler_tests {
         // Assert 3
         let no_profile_archive_text = "Archive: No profile loaded".to_string();
         let no_profile_general_text = "No profile loaded".to_string();
-        assert!(find_command(&cmds_no_profile, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &no_profile_archive_text)).is_some(), "Expected archive label for 'No profile loaded'. Got: {:?}", cmds_no_profile);
-        assert!(find_command(&cmds_no_profile, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &no_profile_general_text)).is_some(), "Expected general status for 'No profile loaded'. Got: {:?}", cmds_no_profile);
+        assert!(find_command(&cmds_no_profile, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID && text == &no_profile_archive_text)).is_some(), "Expected archive label for 'No profile loaded'. Got: {cmds_no_profile:?}");
+        assert!(find_command(&cmds_no_profile, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &no_profile_general_text)).is_some(), "Expected general status for 'No profile loaded'. Got: {cmds_no_profile:?}");
 
         {
             let mock_app_session_guard = mock_app_session_mutexed.lock().unwrap();
@@ -1956,30 +1957,24 @@ mod handler_tests {
         // and one from the "was_considered_new_for_display" logic.
         assert!(
             redraw_file_found_count >= 1,
-            "Expected at least one RedrawTreeItem for the toggled file. Got: {:?}, count: {}",
-            cmds,
-            redraw_file_found_count
+            "Expected at least one RedrawTreeItem for the toggled file. Got: {cmds:?}, count: {redraw_file_found_count}"
         );
         assert!(
             redraw_dir_found_count >= 1,
-            "Expected at least one RedrawTreeItem for the parent directory. Got: {:?}, count: {}",
-            cmds,
-            redraw_dir_found_count
+            "Expected at least one RedrawTreeItem for the parent directory. Got: {cmds:?}, count: {redraw_dir_found_count}"
         );
         let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
         assert!(
             file_text_updates
                 .iter()
                 .any(|t| !t.contains(&indicator_suffix)),
-            "Expected updated text for the file without the indicator. Updates: {:?}",
-            file_text_updates
+            "Expected updated text for the file without the indicator. Updates: {file_text_updates:?}"
         );
         assert!(
             dir_text_updates
                 .iter()
                 .any(|t| !t.contains(&indicator_suffix)),
-            "Expected updated text for the parent directory without the indicator. Updates: {:?}",
-            dir_text_updates
+            "Expected updated text for the parent directory without the indicator. Updates: {dir_text_updates:?}"
         );
 
         // Verify state change in mock data
@@ -2032,12 +2027,12 @@ mod handler_tests {
                 assert_eq!(*control_id, ui_constants::ID_TREEVIEW_CTRL);
                 assert_eq!(items.len(), 2);
                 let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
-                assert_eq!(items[0].text, format!("file1.txt{}", indicator_suffix));
-                assert_eq!(items[1].text, format!("dir1{}", indicator_suffix));
+                assert_eq!(items[0].text, format!("file1.txt{indicator_suffix}"));
+                assert_eq!(items[1].text, format!("dir1{indicator_suffix}"));
                 assert_eq!(items[1].children.len(), 1);
                 assert_eq!(
                     items[1].children[0].text,
-                    format!("file2.txt{}", indicator_suffix)
+                    format!("file2.txt{indicator_suffix}")
                 );
             }
             _ => panic!("Expected PopulateTreeView command, got {:?}", cmds[0]),
@@ -2573,11 +2568,11 @@ mod handler_tests {
         if let Some(PlatformCommand::PopulateTreeView { items, .. }) = populate_cmd {
             assert_eq!(items.len(), 1);
             let indicator_suffix = format!(" {}", ui_constants::NEW_ITEM_INDICATOR_CHAR);
-            assert_eq!(items[0].text, format!("dir1{}", indicator_suffix));
+            assert_eq!(items[0].text, format!("dir1{indicator_suffix}"));
             assert_eq!(items[0].children.len(), 1);
             assert_eq!(
                 items[0].children[0].text,
-                format!("match.txt{}", indicator_suffix)
+                format!("match.txt{indicator_suffix}")
             );
         }
     }

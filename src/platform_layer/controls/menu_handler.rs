@@ -39,7 +39,7 @@ pub(crate) fn handle_create_main_menu_command(
     window_id: WindowId,
     menu_items: Vec<MenuItemConfig>,
 ) -> PlatformResult<()> {
-    log::debug!("MenuHandler: creating main menu for WinID {:?}", window_id);
+    log::debug!("MenuHandler: creating main menu for WinID {window_id:?}");
 
     let h_main_menu = unsafe { CreateMenu()? };
 
@@ -47,12 +47,10 @@ pub(crate) fn handle_create_main_menu_command(
         let hwnd = window_data.get_hwnd();
         if hwnd.is_invalid() {
             log::warn!(
-                "MenuHandler: HWND not yet valid for WindowId {:?} during menu creation.",
-                window_id
+                "MenuHandler: HWND not yet valid for WindowId {window_id:?} during menu creation."
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND not yet valid for WindowId {:?} during menu creation",
-                window_id
+                "HWND not yet valid for WindowId {window_id:?} during menu creation"
             )));
         }
 
@@ -68,20 +66,14 @@ pub(crate) fn handle_create_main_menu_command(
             DestroyMenu(h_main_menu).unwrap_or_default();
         }
         log::error!(
-            "MenuHandler: SetMenu failed for main menu on WindowId {:?}: {:?}",
-            window_id,
-            last_error
+            "MenuHandler: SetMenu failed for main menu on WindowId {window_id:?}: {last_error:?}"
         );
         return Err(PlatformError::OperationFailed(format!(
-            "SetMenu failed for main menu on WindowId {:?}: {:?}",
-            window_id, last_error
+            "SetMenu failed for main menu on WindowId {window_id:?}: {last_error:?}"
         )));
     }
 
-    log::debug!(
-        "MenuHandler: main menu created and set for WindowId {:?}",
-        window_id
-    );
+    log::debug!("MenuHandler: main menu created and set for WindowId {window_id:?}");
     Ok(())
 }
 
@@ -147,27 +139,18 @@ pub(crate) fn handle_wm_command_for_menu(
 
     match menu_action_result {
         Ok(Some(action)) => {
-            log::debug!(
-                "Menu action {:?} (ID {}) for WinID {:?}.",
-                action,
-                command_id,
-                window_id
-            );
+            log::debug!("Menu action {action:?} (ID {command_id}) for WinID {window_id:?}.");
             Some(AppEvent::MenuActionClicked { action })
         }
         Ok(None) => {
             log::warn!(
-                "WM_COMMAND (Menu/Accel) for unknown ID {} in WinID {:?}.",
-                command_id,
-                window_id
+                "WM_COMMAND (Menu/Accel) for unknown ID {command_id} in WinID {window_id:?}."
             );
             None
         }
         Err(e) => {
             log::error!(
-                "Failed to access window data for WM_COMMAND (Menu/Accel) in WinID {:?}: {:?}",
-                window_id,
-                e
+                "Failed to access window data for WM_COMMAND (Menu/Accel) in WinID {window_id:?}: {e:?}"
             );
             None
         }

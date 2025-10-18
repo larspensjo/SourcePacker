@@ -50,10 +50,7 @@ impl MainWindowUiState {
      * a starting counter for tree item IDs, and no pending actions or statuses.
      */
     pub fn new(window_id: WindowId) -> Self {
-        log::debug!(
-            "MainWindowUiState::new called for window_id: {:?}",
-            window_id
-        );
+        log::debug!("MainWindowUiState::new called for window_id: {window_id:?}");
         MainWindowUiState {
             window_id,
             path_to_tree_item_id: HashMap::new(),
@@ -75,14 +72,14 @@ impl MainWindowUiState {
     pub fn compose_window_title(app_session_data_ops: &dyn ProfileRuntimeDataOperations) -> String {
         let mut title = "SourcePacker".to_string();
         if let Some(profile_name) = app_session_data_ops.get_profile_name() {
-            title = format!("{} - [{}]", title, profile_name);
+            title = format!("{title} - [{profile_name}]");
             if let Some(archive_path) = app_session_data_ops.get_archive_path() {
                 title = format!("{} - [{}]", title, archive_path.display());
             } else {
-                title = format!("{} - [No Archive Set]", title);
+                title = format!("{title} - [No Archive Set]");
             }
         } else {
-            title = format!("{} - [No Profile Loaded]", title);
+            title = format!("{title} - [No Profile Loaded]");
         }
         title
     }

@@ -311,9 +311,7 @@ impl NativeWindowData {
         parent_rect: RECT,
     ) {
         log::trace!(
-            "Applying layout for parent_id {:?}, rect: {:?}",
-            parent_id_for_layout,
-            parent_rect
+            "Applying layout for parent_id {parent_id_for_layout:?}, rect: {parent_rect:?}"
         );
 
         let all_window_rules = match &self.layout_rules {
@@ -338,8 +336,7 @@ impl NativeWindowData {
             > 1
         {
             log::warn!(
-                "Layout: Multiple Fill controls for parent_id {:?}. Using first.",
-                parent_id_for_layout
+                "Layout: Multiple Fill controls for parent_id {parent_id_for_layout:?}. Using first."
             );
         }
 
@@ -616,10 +613,9 @@ pub(crate) fn register_window_class(
 
         if RegisterClassExW(&wc) == 0 {
             let error = GetLastError();
-            log::error!("Platform: RegisterClassExW failed: {:?}", error);
+            log::error!("Platform: RegisterClassExW failed: {error:?}");
             Err(PlatformError::InitializationFailed(format!(
-                "RegisterClassExW failed: {:?}",
-                error
+                "RegisterClassExW failed: {error:?}"
             )))
         } else {
             log::debug!(
@@ -759,25 +755,20 @@ impl Win32ApiInternalState {
             }
             WM_CLOSE => {
                 log::debug!(
-                    "WM_CLOSE received for WinID {:?}. Generating WindowCloseRequestedByUser.",
-                    window_id
+                    "WM_CLOSE received for WinID {window_id:?}. Generating WindowCloseRequestedByUser."
                 );
                 event_to_send = Some(AppEvent::WindowCloseRequestedByUser { window_id });
                 lresult_override = Some(SUCCESS_CODE);
             }
             WM_DESTROY => {
                 // DO NOT remove window data here. Just notify the app logic.
-                log::debug!(
-                    "WM_DESTROY received for WinID {:?}. Notifying app logic.",
-                    window_id
-                );
+                log::debug!("WM_DESTROY received for WinID {window_id:?}. Notifying app logic.");
                 event_to_send = Some(AppEvent::WindowDestroyed { window_id });
             }
             WM_NCDESTROY => {
                 // This is the FINAL message. Now it's safe to clean up.
                 log::debug!(
-                    "WM_NCDESTROY received for WinID {:?}. Initiating final cleanup.",
-                    window_id
+                    "WM_NCDESTROY received for WinID {window_id:?}. Initiating final cleanup."
                 );
                 self.remove_window_data(window_id);
                 self.check_if_should_quit_after_window_close();
@@ -864,8 +855,7 @@ impl Win32ApiInternalState {
             match nmhdr.code {
                 NM_CUSTOMDRAW => {
                     log::trace!(
-                        "Routing NM_CUSTOMDRAW from ControlID {} to treeview_handler.",
-                        control_id_from_notify
+                        "Routing NM_CUSTOMDRAW from ControlID {control_id_from_notify} to treeview_handler."
                     );
                     let lresult = treeview_handler::handle_nm_customdraw(
                         self,
@@ -877,16 +867,14 @@ impl Win32ApiInternalState {
                 }
                 NM_CLICK => {
                     log::trace!(
-                        "Routing NM_CLICK from ControlID {} to treeview_handler.",
-                        control_id_from_notify
+                        "Routing NM_CLICK from ControlID {control_id_from_notify} to treeview_handler."
                     );
                     treeview_handler::handle_nm_click(self, hwnd_parent_window, window_id, nmhdr);
                     return (None, None);
                 }
                 TVN_ITEMCHANGEDW => {
                     log::trace!(
-                        "Routing TVN_ITEMCHANGEDW from ControlID {} to treeview_handler.",
-                        control_id_from_notify
+                        "Routing TVN_ITEMCHANGEDW from ControlID {control_id_from_notify} to treeview_handler."
                     );
                     let event = treeview_handler::handle_treeview_itemchanged_notification(
                         self,
@@ -925,20 +913,14 @@ impl Win32ApiInternalState {
         _lparam: LPARAM,
         window_id: WindowId,
     ) {
-        log::debug!(
-            "Platform: WM_CREATE for HWND {:?}, WindowId {:?}",
-            hwnd,
-            window_id
-        );
+        log::debug!("Platform: WM_CREATE for HWND {hwnd:?}, WindowId {window_id:?}");
         if let Err(e) = self.with_window_data_write(window_id, |window_data| {
             window_data.ensure_status_bar_font();
             window_data.ensure_treeview_new_item_font();
             Ok(())
         }) {
             log::error!(
-                "Failed to access window data during WM_CREATE for WinID {:?}: {:?}",
-                window_id,
-                e
+                "Failed to access window data during WM_CREATE for WinID {window_id:?}: {e:?}"
             );
         }
     }
@@ -947,18 +929,15 @@ impl Win32ApiInternalState {
      * Triggers layout recalculation for the specified window.
      */
     pub(crate) fn trigger_layout_recalculation(self: &Arc<Self>, window_id: WindowId) {
-        log::debug!(
-            "trigger_layout_recalculation called for WinID {:?}",
-            window_id
-        );
+        log::debug!("trigger_layout_recalculation called for WinID {window_id:?}");
 
         if let Err(e) = self.with_window_data_read(window_id, |window_data| {
             if window_data.get_hwnd().is_invalid() {
-                log::warn!("HWND invalid for layout: {:?}", window_id);
+                log::warn!("HWND invalid for layout: {window_id:?}");
                 return Ok(()); // Not an error, just can't do anything.
             }
             if window_data.layout_rules.is_none() {
-                log::debug!("No layout rules for WinID {:?}", window_id);
+                log::debug!("No layout rules for WinID {window_id:?}");
                 return Ok(());
             }
 
@@ -971,17 +950,13 @@ impl Win32ApiInternalState {
             }
 
             log::trace!(
-                "Applying layout with client_rect: {:?}, for WinID {:?}",
-                client_rect,
-                window_id
+                "Applying layout with client_rect: {client_rect:?}, for WinID {window_id:?}"
             );
             window_data.apply_layout_rules_for_children(None, client_rect);
             Ok(())
         }) {
             log::error!(
-                "Failed to access window data for layout recalculation of WinID {:?}: {:?}",
-                window_id,
-                e
+                "Failed to access window data for layout recalculation of WinID {window_id:?}: {e:?}"
             );
         }
     }
@@ -999,11 +974,7 @@ impl Win32ApiInternalState {
         let client_width = loword_from_lparam(width_height);
         let client_height = hiword_from_lparam(width_height);
         log::debug!(
-            "Platform: WM_SIZE for WinID {:?}, HWND {:?}. Client: {}x{}",
-            window_id,
-            hwnd,
-            client_width,
-            client_height
+            "Platform: WM_SIZE for WinID {window_id:?}, HWND {hwnd:?}. Client: {client_width}x{client_height}"
         );
         self.trigger_layout_recalculation(window_id);
         Some(AppEvent::WindowResized {
@@ -1042,10 +1013,7 @@ impl Win32ApiInternalState {
                     hwnd_control,
                 ));
             } else if notification_code == EN_CHANGE as i32 {
-                log::trace!(
-                    "Edit control ID {} changed, starting debounce timer",
-                    command_id
-                );
+                log::trace!("Edit control ID {command_id} changed, starting debounce timer");
                 unsafe {
                     SetTimer(
                         Some(_hwnd_parent),
@@ -1056,11 +1024,7 @@ impl Win32ApiInternalState {
                 }
             } else {
                 log::trace!(
-                    "Unhandled WM_COMMAND from control: ID {}, NotifyCode {}, HWND {:?}, WinID {:?}",
-                    command_id,
-                    notification_code,
-                    hwnd_control,
-                    window_id
+                    "Unhandled WM_COMMAND from control: ID {command_id}, NotifyCode {notification_code}, HWND {hwnd_control:?}, WinID {window_id:?}"
                 );
             }
         }
@@ -1081,7 +1045,7 @@ impl Win32ApiInternalState {
 
         let hwnd_edit_result = self.with_window_data_read(window_id, |window_data| {
             window_data.get_control_hwnd(control_id).ok_or_else(|| {
-                log::warn!("Control not found for timer ID {}", control_id);
+                log::warn!("Control not found for timer ID {control_id}");
                 PlatformError::InvalidHandle("Control not found for timer".into())
             })
         });
@@ -1097,35 +1061,6 @@ impl Win32ApiInternalState {
             });
         }
         None
-    }
-
-    /*
-     * Handles WM_DESTROY: Delegates to a helper for resource cleanup and data
-     * removal, checks if the application should quit, and generates the final
-     * WindowDestroyed event.
-     */
-    fn handle_wm_destroy(
-        self: &Arc<Self>,
-        _hwnd: HWND,
-        _wparam: WPARAM,
-        _lparam: LPARAM,
-        window_id: WindowId,
-    ) -> Option<AppEvent> {
-        log::debug!(
-            "WM_DESTROY received for WinID {:?}. Initiating cleanup.",
-            window_id
-        );
-
-        // Delegate the complex task of locking, removing, and cleaning up GDI
-        // resources to the dedicated helper method. This keeps the window
-        // procedure clean and focused on message flow.
-        self.remove_window_data(window_id);
-
-        // After removing the window, check if it was the last one.
-        self.check_if_should_quit_after_window_close();
-
-        // Notify the application logic that the window is gone.
-        Some(AppEvent::WindowDestroyed { window_id })
     }
 
     /*
@@ -1177,13 +1112,12 @@ pub(crate) fn set_window_title(
     window_id: WindowId,
     title: &str,
 ) -> PlatformResult<()> {
-    log::debug!("Setting title for WinID {:?} to '{}'", window_id, title);
+    log::debug!("Setting title for WinID {window_id:?} to '{title}'");
     internal_state.with_window_data_read(window_id, |window_data| {
         let hwnd = window_data.get_hwnd();
         if hwnd.is_invalid() {
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND for WinID {:?} is invalid in set_window_title",
-                window_id
+                "HWND for WinID {window_id:?} is invalid in set_window_title"
             )));
         }
         unsafe { SetWindowTextW(hwnd, &HSTRING::from(title))? };
@@ -1196,13 +1130,12 @@ pub(crate) fn show_window(
     window_id: WindowId,
     show: bool,
 ) -> PlatformResult<()> {
-    log::debug!("Setting visibility for WinID {:?} to {}", window_id, show);
+    log::debug!("Setting visibility for WinID {window_id:?} to {show}");
     internal_state.with_window_data_read(window_id, |window_data| {
         let hwnd = window_data.get_hwnd();
         if hwnd.is_invalid() {
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND for WinID {:?} is invalid in show_window",
-                window_id
+                "HWND for WinID {window_id:?} is invalid in show_window"
             )));
         }
         let cmd = if show { SW_SHOW } else { SW_HIDE };
@@ -1220,12 +1153,11 @@ pub(crate) fn send_close_message(
     window_id: WindowId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "Platform: send_close_message received for WindowId {:?}, attempting to destroy native window directly.",
-        window_id
+        "Platform: send_close_message received for WindowId {window_id:?}, attempting to destroy native window directly."
     );
     // This function will get the HWND and call DestroyWindow.
     // If successful, WM_DESTROY will be posted to the window's queue,
-    // and our handle_wm_destroy will eventually be called.
+    // and the cleanup path in the window procedure will run.
     destroy_native_window(internal_state, window_id)
 }
 
@@ -1237,51 +1169,39 @@ pub(crate) fn destroy_native_window(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
 ) -> PlatformResult<()> {
-    log::debug!(
-        "Attempting to destroy native window for WinID {:?}",
-        window_id
-    );
+    log::debug!("Attempting to destroy native window for WinID {window_id:?}");
 
     let hwnd_to_destroy =
         internal_state.with_window_data_read(window_id, |window_data| Ok(window_data.get_hwnd()));
 
     match hwnd_to_destroy {
         Ok(hwnd) if !hwnd.is_invalid() => {
-            log::debug!(
-                "Calling DestroyWindow for HWND {:?} (WinID {:?})",
-                hwnd,
-                window_id
-            );
+            log::debug!("Calling DestroyWindow for HWND {hwnd:?} (WinID {window_id:?})");
             unsafe {
                 if DestroyWindow(hwnd).is_err() {
                     let last_error = GetLastError();
                     // Don't error out if the handle is already invalid (e.g., already destroyed).
                     if last_error.0 != ERROR_INVALID_WINDOW_HANDLE.0 {
-                        log::error!("DestroyWindow for HWND {:?} failed: {:?}", hwnd, last_error);
+                        log::error!("DestroyWindow for HWND {hwnd:?} failed: {last_error:?}");
                     } else {
                         log::debug!(
-                            "DestroyWindow for HWND {:?} reported invalid handle (already destroyed?).",
-                            hwnd
+                            "DestroyWindow for HWND {hwnd:?} reported invalid handle (already destroyed?)."
                         );
                     }
                 } else {
                     log::debug!(
-                        "DestroyWindow call initiated for HWND {:?}. WM_DESTROY will follow.",
-                        hwnd
+                        "DestroyWindow call initiated for HWND {hwnd:?}. WM_DESTROY will follow."
                     );
                 }
             }
         }
         Ok(_) => {
             // HWND is invalid
-            log::warn!(
-                "HWND for WinID {:?} was invalid before DestroyWindow call.",
-                window_id
-            );
+            log::warn!("HWND for WinID {window_id:?} was invalid before DestroyWindow call.");
         }
         Err(_) => {
             // WindowId not found
-            log::warn!("WinID {:?} not found for destroy_native_window.", window_id);
+            log::warn!("WinID {window_id:?} not found for destroy_native_window.");
         }
     };
     // This function's purpose is to *try* to destroy, so don't bubble up "not found" as an error.

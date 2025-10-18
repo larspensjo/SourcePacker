@@ -41,9 +41,9 @@ impl From<ignore::Error> for FileSystemError {
 impl std::fmt::Display for FileSystemError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FileSystemError::Io(e) => write!(f, "I/O error: {}", e),
-            FileSystemError::IgnoreError(e) => write!(f, "Ignore pattern processing error: {}", e),
-            FileSystemError::InvalidPath(p) => write!(f, "Invalid path: {:?}", p),
+            FileSystemError::Io(e) => write!(f, "I/O error: {e}"),
+            FileSystemError::IgnoreError(e) => write!(f, "Ignore pattern processing error: {e}"),
+            FileSystemError::InvalidPath(p) => write!(f, "Invalid path: {p:?}"),
         }
     }
 }
@@ -121,8 +121,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
         }
         log::debug!(
-            "FileSystemScanner: Scanning directory {:?}, respecting local .gitignore files.",
-            root_path
+            "FileSystemScanner: Scanning directory {root_path:?}, respecting local .gitignore files."
         );
 
         let mut nodes_map: HashMap<PathBuf, FileNode> = HashMap::new();
@@ -155,15 +154,11 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                     }
                     include_pattern.to_string()
                 } else {
-                    format!("!{}", trimmed)
+                    format!("!{trimmed}")
                 };
 
                 if let Err(err) = override_builder.add(&override_pattern) {
-                    log::warn!(
-                        "FileSystemScanner: Invalid exclude pattern '{}': {}",
-                        pattern,
-                        err
-                    );
+                    log::warn!("FileSystemScanner: Invalid exclude pattern '{pattern}': {err}");
                 }
             }
 
@@ -173,8 +168,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                 }
                 Err(err) => {
                     log::warn!(
-                        "FileSystemScanner: Failed to build overrides for exclude patterns: {}",
-                        err
+                        "FileSystemScanner: Failed to build overrides for exclude patterns: {err}"
                     );
                 }
             }
@@ -203,9 +197,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                     Ok(updated_checksum) => checksum_str = updated_checksum,
                     Err(e) => {
                         log::warn!(
-                            "FileSystemScanner: Failed to calculate checksum for file {:?}: {}",
-                            path,
-                            e
+                            "FileSystemScanner: Failed to calculate checksum for file {path:?}: {e}"
                         );
                         checksum_str = String::new();
                     }
@@ -240,9 +232,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
                             // However, `ignore` crate usually yields directories if they contain non-ignored content.
                             // So, we re-insert it into nodes_map to be collected as a top-level node.
                             log::error!(
-                                "FileSystemScanner: Parent {:?} not found in map for child {:?}. Re-inserting child as potential top-level.",
-                                parent_path,
-                                child_path_ref
+                                "FileSystemScanner: Parent {parent_path:?} not found in map for child {child_path_ref:?}. Re-inserting child as potential top-level."
                             );
                             nodes_map.insert(child_path_ref.clone(), child_node_owned);
                         }
@@ -317,7 +307,7 @@ mod tests {
     fn create_gitignore(dir_path: &Path, content: &str) -> io::Result<()> {
         let gitignore_path = dir_path.join(".gitignore");
         let mut file = File::create(gitignore_path)?;
-        writeln!(file, "{}", content)?;
+        writeln!(file, "{content}")?;
         Ok(())
     }
 
@@ -369,8 +359,7 @@ mod tests {
         assert_eq!(
             top_level_names.len(),
             6,
-            "Expected 6 top-level non-ignored items. Found names: {:?}",
-            top_level_names
+            "Expected 6 top-level non-ignored items. Found names: {top_level_names:?}"
         );
         assert!(top_level_names.contains(&"data".to_string()));
         assert!(top_level_names.contains(&"doc".to_string()));

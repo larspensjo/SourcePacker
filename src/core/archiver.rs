@@ -109,7 +109,7 @@ impl ArchiverOperations for CoreArchiver {
                     .unwrap_or(node.path())
                     .to_string_lossy();
 
-                archive_content.push_str(&format!("// ===== File: {} =====\n", display_path));
+                archive_content.push_str(&format!("// ===== File: {display_path} =====\n"));
 
                 match fs::read_to_string(node.path()) {
                     Ok(content) => {
@@ -154,16 +154,13 @@ impl ArchiverOperations for CoreArchiver {
             Ok(ts) => ts,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 log::debug!(
-                    "Archiver: check_archive_status - Archive file {:?} missing.",
-                    current_archive_path
+                    "Archiver: check_archive_status - Archive file {current_archive_path:?} missing."
                 );
                 return ArchiveStatus::ArchiveFileMissing;
             }
             Err(e) => {
                 log::error!(
-                    "Archiver: Error getting archive timestamp for {:?}: {}",
-                    current_archive_path,
-                    e
+                    "Archiver: Error getting archive timestamp for {current_archive_path:?}: {e}"
                 );
                 return ArchiveStatus::ErrorChecking(Some(e.kind()));
             }
@@ -209,7 +206,7 @@ impl ArchiverOperations for CoreArchiver {
             &mut newest_selected_file_timestamp,
             &mut has_selected_files,
         ) {
-            log::error!("Archiver: Error checking source file timestamps: {}", e);
+            log::error!("Archiver: Error checking source file timestamps: {e}");
             return ArchiveStatus::ErrorChecking(Some(e.kind()));
         }
 
@@ -222,14 +219,12 @@ impl ArchiverOperations for CoreArchiver {
             Some(newest_src_ts) => {
                 if newest_src_ts > archive_timestamp {
                     log::debug!(
-                        "Archiver: check_archive_status - Archive {:?} is OUTDATED.",
-                        current_archive_path
+                        "Archiver: check_archive_status - Archive {current_archive_path:?} is OUTDATED."
                     );
                     ArchiveStatus::OutdatedRequiresUpdate
                 } else {
                     log::debug!(
-                        "Archiver: check_archive_status - Archive {:?} is UP TO DATE.",
-                        current_archive_path
+                        "Archiver: check_archive_status - Archive {current_archive_path:?} is UP TO DATE."
                     );
                     ArchiveStatus::UpToDate
                 }
@@ -239,8 +234,7 @@ impl ArchiverOperations for CoreArchiver {
                  * but implies an issue like a selected file not having a timestamp.
                  * find_newest_selected would usually return Err in such a case. */
                 log::warn!(
-                    "Archiver: check_archive_status - Files selected, but newest_selected_file_timestamp is None for archive {:?}. Defaulting to ErrorChecking.",
-                    current_archive_path
+                    "Archiver: check_archive_status - Files selected, but newest_selected_file_timestamp is None for archive {current_archive_path:?}. Defaulting to ErrorChecking."
                 );
                 ArchiveStatus::ErrorChecking(None)
             }
@@ -354,13 +348,12 @@ mod archiver_tests {
             let root_display_str = base_path.display();
 
             let expected_content = format!(
-                "// Combined files from {}\n\
-                 // ===== File: {} =====\n\
+                "// Combined files from {root_display_str}\n\
+                 // ===== File: {path1_display} =====\n\
                  Content of file1.\n\
-                 // ===== File: {} =====\n\
+                 // ===== File: {path2_display_str} =====\n\
                  Content of file2 (Rust).\n\
-                 Another line.\n",
-                root_display_str, path1_display, path2_display_str
+                 Another line.\n"
             );
             assert_eq!(archive, expected_content);
             Ok(())
@@ -696,10 +689,9 @@ mod archiver_tests {
             // Assert
             let root_display_str = base_path.display();
             let expected_content = format!(
-                "// Combined files from {}\n\
+                "// Combined files from {root_display_str}\n\
                  // ===== File: no_newline.txt =====\n\
-                 Line without trailing newline\n",
-                root_display_str
+                 Line without trailing newline\n"
             );
             assert_eq!(archive, expected_content);
             Ok(())

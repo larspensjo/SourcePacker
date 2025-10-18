@@ -325,8 +325,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             Self::collect_node_states_recursive(node_to_update, &mut collected_changes);
         } else {
             log::error!(
-                "ProfileRuntimeData: Node not found for path {:?} to update state and collect changes.",
-                path
+                "ProfileRuntimeData: Node not found for path {path:?} to update state and collect changes."
             );
         }
         collected_changes
@@ -339,15 +338,13 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
      */
     fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool {
         log::trace!(
-            "ProfileRuntimeData: Checking if path or descendants contain new file for: {:?}",
-            path
+            "ProfileRuntimeData: Checking if path or descendants contain new file for: {path:?}"
         );
         match Self::find_node_recursive_ref(&self.file_system_snapshot_nodes, path) {
             Some(node) => Self::does_node_contain_new_file_recursive(node),
             None => {
                 log::warn!(
-                    "ProfileRuntimeData: Path {:?} not found in snapshot for new file check.",
-                    path
+                    "ProfileRuntimeData: Path {path:?} not found in snapshot for new file check."
                 );
                 false
             }
@@ -588,7 +585,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     "Failed to scan directory {:?} for profile '{:?}': {:?}",
                     self.root_path_for_scan, self.profile_name, e
                 );
-                log::error!("ProfileRuntimeData: {}", error_message);
+                log::error!("ProfileRuntimeData: {error_message}");
                 self.clear(); // Clear all session data on scan failure
                 Err(error_message)
             }
@@ -621,6 +618,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use tempfile::{NamedTempFile, tempdir};
+
+    type ApplyProfileCallLog = (HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>);
 
     /*
      * This module contains unit tests for `ProfileRuntimeData` and its implementation
@@ -672,12 +671,9 @@ mod tests {
                     FileSystemError::Io(io_err) => {
                         FileSystemError::Io(io::Error::new(io_err.kind(), "mock io error"))
                     }
-                    FileSystemError::IgnoreError(_) => {
-                        FileSystemError::IgnoreError(ignore::Error::from(io::Error::new(
-                            io::ErrorKind::Other,
-                            "mock ignore error",
-                        )))
-                    }
+                    FileSystemError::IgnoreError(_) => FileSystemError::IgnoreError(
+                        ignore::Error::from(io::Error::other("mock ignore error")),
+                    ),
                     FileSystemError::InvalidPath(p) => FileSystemError::InvalidPath(p.clone()),
                 }),
                 None => Ok(Vec::new()),
@@ -686,8 +682,7 @@ mod tests {
     }
 
     struct MockStateManager {
-        apply_profile_to_tree_calls:
-            Mutex<Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)>>,
+        apply_profile_to_tree_calls: Mutex<Vec<ApplyProfileCallLog>>,
         update_folder_selection_calls: Mutex<Vec<(PathBuf, SelectionState)>>,
     }
 
@@ -699,9 +694,7 @@ mod tests {
             }
         }
 
-        fn get_apply_profile_to_tree_calls(
-            &self,
-        ) -> Vec<(HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>)> {
+        fn get_apply_profile_to_tree_calls(&self) -> Vec<ApplyProfileCallLog> {
             self.apply_profile_to_tree_calls.lock().unwrap().clone()
         }
         fn get_update_folder_selection_calls(&self) -> Vec<(PathBuf, SelectionState)> {
@@ -768,11 +761,7 @@ mod tests {
             }
         }
         fn set_count_for_content(&mut self, content: &str, count: usize) {
-            log::debug!(
-                "MockTokenCounter: Setting count {} for content {:?}",
-                count,
-                content
-            );
+            log::debug!("MockTokenCounter: Setting count {count} for content {content:?}");
             self.counts_for_content.insert(content.to_string(), count);
         }
 
@@ -785,14 +774,10 @@ mod tests {
     }
     impl TokenCounterOperations for MockTokenCounter {
         fn count_tokens(&self, text: &str) -> usize {
-            log::debug!("MockTokenCounter: Counting tokens for text {:?}", text);
+            log::debug!("MockTokenCounter: Counting tokens for text {text:?}");
             self.call_log.lock().unwrap().push(text.to_string());
             if let Some(count) = self.counts_for_content.get(text) {
-                log::debug!(
-                    "MockTokenCounter: Found specific count {} for text {:?}",
-                    count,
-                    text
-                );
+                log::debug!("MockTokenCounter: Found specific count {count} for text {text:?}");
                 *count
             } else {
                 log::debug!(
@@ -815,7 +800,7 @@ mod tests {
             .suffix(".txt")
             .tempfile_in(dir.path())
             .unwrap();
-        writeln!(temp_file, "{}", content).unwrap();
+        writeln!(temp_file, "{content}").unwrap();
         (temp_file.path().to_path_buf(), temp_file)
     }
 
@@ -991,12 +976,12 @@ mod tests {
         let content1 = "file one content"; // 10 tokens
         let (file1_path, _g1) = create_temp_file_with_content(&temp_dir, "f1", content1);
         let file1_checksum_disk = "cs1_disk_final".to_string();
-        mock_token_counter.set_count_for_content(&format!("{}\n", content1), 10);
+        mock_token_counter.set_count_for_content(&format!("{content1}\n"), 10);
 
         let content2 = "file two changed content"; // 20 tokens
         let (file2_path, _g2) = create_temp_file_with_content(&temp_dir, "f2", content2);
         let file2_checksum_disk = "cs2_disk_new_final".to_string();
-        mock_token_counter.set_count_for_content(&format!("{}\n", content2), 20);
+        mock_token_counter.set_count_for_content(&format!("{content2}\n"), 20);
 
         let mut initial_profile_file_details = HashMap::new();
         initial_profile_file_details.insert(
@@ -1189,8 +1174,8 @@ mod tests {
         let checksum_v2 = checksum_utils::calculate_sha256_checksum(&file_path).unwrap();
 
         let mut mock_token_counter = MockTokenCounter::new(0);
-        mock_token_counter.set_count_for_content(&format!("{}\n", content_v1), 10); // For stale case
-        mock_token_counter.set_count_for_content(&format!("{}\n", content_v2), 20); // For miss/stale update
+        mock_token_counter.set_count_for_content(&format!("{content_v1}\n"), 10); // For stale case
+        mock_token_counter.set_count_for_content(&format!("{content_v2}\n"), 20); // For miss/stale update
 
         // Case 1: Cache Miss
         let mut session_data_miss = ProfileRuntimeData {

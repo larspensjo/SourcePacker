@@ -63,13 +63,9 @@ pub(crate) fn get_hwnd_owner(
     internal_state.with_window_data_read(window_id, |window_data| {
         let hwnd = window_data.get_hwnd();
         if hwnd.is_invalid() {
-            log::warn!(
-                "get_hwnd_owner found an invalid HWND for WindowId {:?}",
-                window_id
-            );
+            log::warn!("get_hwnd_owner found an invalid HWND for WindowId {window_id:?}");
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND for WindowId {:?} is invalid",
-                window_id
+                "HWND for WindowId {window_id:?} is invalid"
             )));
         }
         Ok(hwnd)
@@ -147,8 +143,7 @@ where
         let error_code = unsafe { CommDlgExtendedError() };
         if error_code != COMMON_DLG_ERRORS(0) {
             log::error!(
-                "DialogHandler: Dialog function failed with error. CommDlgExtendedError: {:?}",
-                error_code
+                "DialogHandler: Dialog function failed with error. CommDlgExtendedError: {error_code:?}"
             );
         } else {
             log::debug!("DialogHandler: Dialog cancelled by user (no error).");
@@ -483,9 +478,7 @@ pub(crate) fn handle_show_profile_selection_dialog_command(
     prompt: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "DialogHandler: Showing Profile Selection Dialog. Title: '{}', Prompt: '{}'",
-        title,
-        prompt
+        "DialogHandler: Showing Profile Selection Dialog. Title: '{title}', Prompt: '{prompt}'"
     );
     let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
 
@@ -559,11 +552,6 @@ struct ExcludePatternsDialogData {
 // Helper to extract the low word from WPARAM.
 fn loword_from_wparam(wparam: WPARAM) -> u16 {
     (wparam.0 & 0xFFFF) as u16
-}
-
-// Helper to extract the high word from WPARAM.
-fn highord_from_wparam(wparam: WPARAM) -> u16 {
-    (wparam.0 >> 16) as u16
 }
 
 /*
@@ -974,7 +962,7 @@ pub(crate) fn handle_show_input_dialog_command(
     default_text: Option<String>,
     context_tag: Option<String>,
 ) -> PlatformResult<()> {
-    log::debug!("DialogHandler: Showing Input Dialog. Title: '{}'", title);
+    log::debug!("DialogHandler: Showing Input Dialog. Title: '{title}'");
     let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
 
     let mut dialog_data = InputDialogData {
@@ -1027,10 +1015,7 @@ pub(crate) fn handle_show_exclude_patterns_dialog_command(
     title: String,
     patterns: String,
 ) -> PlatformResult<()> {
-    log::debug!(
-        "DialogHandler: Showing Exclude Patterns Dialog. Title: '{}'.",
-        title
-    );
+    log::debug!("DialogHandler: Showing Exclude Patterns Dialog. Title: '{title}'.");
     let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
 
     let mut dialog_data = ExcludePatternsDialogData {
@@ -1092,9 +1077,7 @@ pub(crate) fn handle_show_message_box_command(
     let title_hstring = HSTRING::from(title);
     let message_hstring = HSTRING::from(message);
     log::debug!(
-        "DialogHandler: Showing message box with severity {:?} for window {:?}",
-        severity,
-        window_id
+        "DialogHandler: Showing message box with severity {severity:?} for window {window_id:?}"
     );
 
     unsafe {
@@ -1119,9 +1102,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
     initial_dir: Option<PathBuf>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "DialogHandler: Showing real Folder Picker Dialog. Title: '{}', Initial Dir: {:?}",
-        title,
-        initial_dir
+        "DialogHandler: Showing real Folder Picker Dialog. Title: '{title}', Initial Dir: {initial_dir:?}"
     );
     let hwnd_owner = get_hwnd_owner(internal_state, window_id)?;
     let mut path_result: Option<PathBuf> = None;
@@ -1132,10 +1113,10 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
     if let Ok(file_dialog) = file_dialog_result {
         unsafe {
             if let Err(e) = file_dialog.SetOptions(FOS_PICKFOLDERS) {
-                log::error!("DialogHandler: IFileOpenDialog::SetOptions failed: {:?}", e);
+                log::error!("DialogHandler: IFileOpenDialog::SetOptions failed: {e:?}");
             }
             if let Err(e) = file_dialog.SetTitle(&HSTRING::from(title.as_str())) {
-                log::error!("DialogHandler: IFileOpenDialog::SetTitle failed: {:?}", e);
+                log::error!("DialogHandler: IFileOpenDialog::SetTitle failed: {e:?}");
             }
             if let Some(dir_path) = &initial_dir {
                 if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(
@@ -1144,8 +1125,7 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
                 ) {
                     if let Err(e) = file_dialog.SetDefaultFolder(&item) {
                         log::error!(
-                            "DialogHandler: IFileOpenDialog::SetDefaultFolder failed: {:?}",
-                            e
+                            "DialogHandler: IFileOpenDialog::SetDefaultFolder failed: {e:?}"
                         );
                     }
                 }
@@ -1163,8 +1143,8 @@ pub(crate) fn handle_show_folder_picker_dialog_command(
             }
         }
     } else if let Err(e) = file_dialog_result {
-        let err_msg = format!("DialogHandler: CoCreateInstance failed: {:?}", e);
-        log::error!("{}", err_msg);
+        let err_msg = format!("DialogHandler: CoCreateInstance failed: {e:?}");
+        log::error!("{err_msg}");
         return Err(PlatformError::OperationFailed(err_msg));
     }
 

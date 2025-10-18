@@ -57,24 +57,16 @@ pub(crate) fn handle_create_label_command(
     class: LabelClass,
 ) -> PlatformResult<()> {
     log::debug!(
-        "LabelHandler: handle_create_label_command for WinID {:?}, LabelID: {}, ParentPanelID: {}, Text: '{}', Class: {:?}",
-        window_id,
-        label_id,
-        parent_panel_id,
-        initial_text,
-        class,
+        "LabelHandler: handle_create_label_command for WinID {window_id:?}, LabelID: {label_id}, ParentPanelID: {parent_panel_id}, Text: '{initial_text}', Class: {class:?}",
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
         if window_data.has_control(label_id) {
             log::warn!(
-                "LabelHandler: Label with logical ID {} already exists for window {:?}.",
-                label_id,
-                window_id
+                "LabelHandler: Label with logical ID {label_id} already exists for window {window_id:?}."
             );
             return Err(PlatformError::OperationFailed(format!(
-                "Label with logical ID {} already exists for window {:?}",
-                label_id, window_id
+                "Label with logical ID {label_id} already exists for window {window_id:?}"
             )));
         }
 
@@ -82,12 +74,10 @@ pub(crate) fn handle_create_label_command(
             .get_control_hwnd(parent_panel_id)
             .ok_or_else(|| {
                 log::warn!(
-                    "LabelHandler: Parent panel with logical ID {} not found for CreateLabel in WinID {:?}.",
-                    parent_panel_id, window_id
+                    "LabelHandler: Parent panel with logical ID {parent_panel_id} not found for CreateLabel in WinID {window_id:?}."
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Parent panel with logical ID {} not found for CreateLabel in WinID {:?}",
-                    parent_panel_id, window_id
+                    "Parent panel with logical ID {parent_panel_id} not found for CreateLabel in WinID {window_id:?}"
                 ))
             })?;
 
@@ -124,8 +114,7 @@ pub(crate) fn handle_create_label_command(
                         )
                     }; // LPARAM(1) to redraw
                     log::debug!(
-                        "LabelHandler: Applied status bar font to label ID {}",
-                        label_id
+                        "LabelHandler: Applied status bar font to label ID {label_id}"
                     );
                 }
             }
@@ -134,11 +123,7 @@ pub(crate) fn handle_create_label_command(
         window_data.register_control_hwnd(label_id, hwnd_label);
         window_data.set_label_severity(label_id, MessageSeverity::Information); // Default to Information
         log::debug!(
-            "LabelHandler: Created label '{}' (LogicalID {}) for WinID {:?} with HWND {:?}",
-            initial_text,
-            label_id,
-            window_id,
-            hwnd_label
+            "LabelHandler: Created label '{initial_text}' (LogicalID {label_id}) for WinID {window_id:?} with HWND {hwnd_label:?}"
         );
         Ok(())
     })
@@ -160,24 +145,17 @@ pub(crate) fn handle_update_label_text_command(
     severity: MessageSeverity,
 ) -> PlatformResult<()> {
     log::debug!(
-        "LabelHandler: handle_update_label_text_command for WinID {:?}, LabelID: {}, Text: '{}', Severity: {:?}",
-        window_id,
-        label_id,
-        text,
-        severity
+        "LabelHandler: handle_update_label_text_command for WinID {window_id:?}, LabelID: {label_id}, Text: '{text}', Severity: {severity:?}"
     );
 
     let hwnd_label =
         internal_state.with_window_data_write(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(label_id).ok_or_else(|| {
                 log::warn!(
-                    "LabelHandler: Label with logical ID {} not found for UpdateLabelText in WinID {:?}.",
-                    label_id,
-                    window_id
+                    "LabelHandler: Label with logical ID {label_id} not found for UpdateLabelText in WinID {window_id:?}."
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Label with logical ID {} not found for UpdateLabelText in WinID {:?}",
-                    label_id, window_id
+                    "Label with logical ID {label_id} not found for UpdateLabelText in WinID {window_id:?}"
                 ))
             })?;
 
@@ -192,13 +170,10 @@ pub(crate) fn handle_update_label_text_command(
         if SetWindowTextW(hwnd_label, &HSTRING::from(text.as_str())).is_err() {
             let last_error = GetLastError();
             log::error!(
-                "LabelHandler: SetWindowTextW for label ID {} failed: {:?}",
-                label_id,
-                last_error
+                "LabelHandler: SetWindowTextW for label ID {label_id} failed: {last_error:?}"
             );
             return Err(PlatformError::OperationFailed(format!(
-                "SetWindowTextW for label ID {} failed: {:?}",
-                label_id, last_error
+                "SetWindowTextW for label ID {label_id} failed: {last_error:?}"
             )));
         }
         // Trigger repaint for WM_CTLCOLORSTATIC to apply new severity color

@@ -204,7 +204,7 @@ impl FileNode {
     ) -> Vec<TreeItemDescriptor> {
         let mut pattern = filter_text.to_lowercase();
         if !pattern.contains('*') && !pattern.contains('?') {
-            pattern = format!("*{}*", pattern);
+            pattern = format!("*{pattern}*");
         }
         let glob =
             glob::Pattern::new(&pattern).unwrap_or_else(|_| glob::Pattern::new("*").unwrap());

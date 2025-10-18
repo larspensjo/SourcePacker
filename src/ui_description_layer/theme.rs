@@ -64,6 +64,8 @@ pub fn define_neon_night_theme() -> Vec<PlatformCommand> {
         size: Some(9),
         weight: Some(FontWeight::Normal),
     };
+    let mut error_font = default_font.clone();
+    error_font.weight = Some(FontWeight::Bold);
 
     // --- Style Definitions ---
 
@@ -158,7 +160,7 @@ pub fn define_neon_night_theme() -> Vec<PlatformCommand> {
 
     let status_error_style = ControlStyle {
         text_color: Some(text_error),
-        font: Some(default_font),
+        font: Some(error_font),
         ..Default::default()
     };
     commands.push(PlatformCommand::DefineStyle {

@@ -25,11 +25,8 @@ use std::path::Path;
  */
 pub fn calculate_sha256_checksum(file_path: &Path) -> io::Result<String> {
     if !file_path.is_file() {
-        let err_msg = format!(
-            "Path {:?} is not a file, cannot calculate checksum.",
-            file_path
-        );
-        log::warn!("ChecksumUtils: {}", err_msg);
+        let err_msg = format!("Path {file_path:?} is not a file, cannot calculate checksum.");
+        log::warn!("ChecksumUtils: {err_msg}");
         return Err(io::Error::new(io::ErrorKind::InvalidInput, err_msg));
     }
 
@@ -47,12 +44,8 @@ pub fn calculate_sha256_checksum(file_path: &Path) -> io::Result<String> {
     }
 
     let hash_bytes = hasher.finalize();
-    let hex_checksum = format!("{:x}", hash_bytes);
-    log::trace!(
-        "ChecksumUtils: Calculated checksum {} for {:?}",
-        hex_checksum,
-        file_path
-    );
+    let hex_checksum = format!("{hash_bytes:x}");
+    log::trace!("ChecksumUtils: Calculated checksum {hex_checksum} for {file_path:?}");
     Ok(hex_checksum)
 }
 

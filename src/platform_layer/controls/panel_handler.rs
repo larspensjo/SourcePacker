@@ -64,33 +64,26 @@ pub(crate) fn handle_create_panel_command(
     panel_id: i32,
 ) -> PlatformResult<()> {
     log::debug!(
-        "PanelHandler: handle_create_panel_command for WinID {:?}, PanelID: {}, ParentControlID: {:?}",
-        window_id,
-        panel_id,
-        parent_control_id
+        "PanelHandler: handle_create_panel_command for WinID {window_id:?}, PanelID: {panel_id}, ParentControlID: {parent_control_id:?}"
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
         if window_data.has_control(panel_id) {
             log::warn!(
-                "PanelHandler: Panel with logical ID {} already exists for window {:?}.",
-                panel_id, window_id
+                "PanelHandler: Panel with logical ID {panel_id} already exists for window {window_id:?}."
             );
             return Err(PlatformError::OperationFailed(format!(
-                "Panel with logical ID {} already exists for window {:?}",
-                panel_id, window_id
+                "Panel with logical ID {panel_id} already exists for window {window_id:?}"
             )));
         }
 
         let hwnd_parent = match parent_control_id {
             Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
                 log::warn!(
-                    "PanelHandler: Parent control with logical ID {} not found for CreatePanel in WinID {:?}",
-                    id, window_id
+                    "PanelHandler: Parent control with logical ID {id} not found for CreatePanel in WinID {window_id:?}"
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Parent control with logical ID {} not found for CreatePanel in WinID {:?}",
-                    id, window_id
+                    "Parent control with logical ID {id} not found for CreatePanel in WinID {window_id:?}"
                 ))
             })?,
             None => window_data.get_hwnd(),
@@ -98,12 +91,10 @@ pub(crate) fn handle_create_panel_command(
 
         if hwnd_parent.is_invalid() {
             log::error!(
-                "PanelHandler: Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
-                window_id, parent_control_id
+                "PanelHandler: Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {parent_control_id:?})"
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "Parent HWND for CreatePanel is invalid (WinID: {:?}, ParentControlID: {:?})",
-                window_id, parent_control_id
+                "Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {parent_control_id:?})"
             )));
         }
 
@@ -133,8 +124,7 @@ pub(crate) fn handle_create_panel_command(
 
         window_data.register_control_hwnd(panel_id, hwnd_panel);
         log::debug!(
-            "PanelHandler: Created panel (LogicalID {}) for WinID {:?} with HWND {:?}",
-            panel_id, window_id, hwnd_panel
+            "PanelHandler: Created panel (LogicalID {panel_id}) for WinID {window_id:?} with HWND {hwnd_panel:?}"
         );
         Ok(())
     })

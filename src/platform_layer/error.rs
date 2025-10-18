@@ -31,12 +31,12 @@ impl From<WinError> for PlatformError {
 impl std::fmt::Display for PlatformError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlatformError::Win32(e) => write!(f, "Win32 Error: {}", e),
-            PlatformError::InitializationFailed(s) => write!(f, "Initialization Failed: {}", s),
-            PlatformError::WindowCreationFailed(s) => write!(f, "Window Creation Failed: {}", s),
-            PlatformError::ControlCreationFailed(s) => write!(f, "Control Creation Failed: {}", s),
-            PlatformError::InvalidHandle(s) => write!(f, "Invalid Handle: {}", s),
-            PlatformError::OperationFailed(s) => write!(f, "Operation Failed: {}", s),
+            PlatformError::Win32(e) => write!(f, "Win32 Error: {e}"),
+            PlatformError::InitializationFailed(s) => write!(f, "Initialization Failed: {s}"),
+            PlatformError::WindowCreationFailed(s) => write!(f, "Window Creation Failed: {s}"),
+            PlatformError::ControlCreationFailed(s) => write!(f, "Control Creation Failed: {s}"),
+            PlatformError::InvalidHandle(s) => write!(f, "Invalid Handle: {s}"),
+            PlatformError::OperationFailed(s) => write!(f, "Operation Failed: {s}"),
         }
     }
 }
