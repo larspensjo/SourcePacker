@@ -7,9 +7,10 @@
  * dialog flows or pending UI actions. It interacts with ProfileRuntimeDataOperations
  * to get necessary data for UI display.
  */
-use crate::core::{ArchiveStatus, ProfileRuntimeDataOperations};
-use crate::platform_layer::{TreeItemDescriptor, WindowId};
+use crate::core::{ArchiveStatus, FileNode, ProfileRuntimeDataOperations};
+use crate::platform_layer::{TreeItemDescriptor, TreeItemId, WindowId};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use crate::core::{TokenProgress, TokenProgressChannel};
@@ -29,23 +30,23 @@ use super::handler::{PathToTreeItemIdMap, PendingAction};
 #[derive(Debug)]
 pub struct MainWindowUiState {
     /* The unique identifier for the main application window. */
-    pub window_id: WindowId,
+    window_id: WindowId,
     /* Maps file/directory paths to their corresponding TreeItemId in the UI's tree view. */
-    pub path_to_tree_item_id: PathToTreeItemIdMap,
+    path_to_tree_item_id: PathToTreeItemIdMap,
     /* A counter to generate unique TreeItemIds for the tree view. */
-    pub next_tree_item_id_counter: u64,
+    next_tree_item_id_counter: u64,
     /* A cache of the current archive status, specifically for UI display purposes. */
-    pub current_archive_status_for_ui: Option<ArchiveStatus>,
+    current_archive_status_for_ui: Option<ArchiveStatus>,
     /* Tracks any pending multi-step UI action, like saving a file or a dialog sequence. */
-    pub pending_action: Option<PendingAction>,
+    pending_action: Option<PendingAction>,
     /* Stores a temporary profile name, typically used during a new profile creation flow. */
-    pub pending_new_profile_name: Option<String>,
+    pending_new_profile_name: Option<String>,
     /* Stores the current text used for filtering the TreeView. */
-    pub filter_text: Option<String>,
+    filter_text: Option<String>,
     /* Cached descriptors from the last successful filter operation. */
-    pub last_successful_filter_result: Vec<TreeItemDescriptor>,
+    last_successful_filter_result: Vec<TreeItemDescriptor>,
     /* Indicates that the current filter text yielded no matches. */
-    pub filter_no_match: bool,
+    filter_no_match: bool,
 }
 
 impl MainWindowUiState {
@@ -87,6 +88,201 @@ impl MainWindowUiState {
             title = format!("{title} - [No Profile Loaded]");
         }
         title
+    }
+
+    /*
+     * Returns the WindowId associated with this UI state. Providing a dedicated accessor
+     * keeps the identifier immutable to callers while still enabling them to compare IDs
+     * without exposing internal fields.
+     */
+    pub fn window_id(&self) -> WindowId {
+        self.window_id
+    }
+
+    /*
+     * Associates or clears the cached archive status used for quick UI updates. Encapsulating
+     * this assignment allows future logic (such as change detection) to be centralized.
+     */
+    pub fn set_archive_status(&mut self, status: Option<ArchiveStatus>) {
+        self.current_archive_status_for_ui = status;
+    }
+
+    /*
+     * Retrieves the cached archive status if one is currently stored.
+     */
+    pub fn archive_status(&self) -> Option<&ArchiveStatus> {
+        self.current_archive_status_for_ui.as_ref()
+    }
+
+    /*
+     * Records the current multi-step UI action and cleanly replaces any existing value.
+     * Centralizing this setter ensures that logging or validation can be added later
+     * without touching call sites.
+     */
+    pub fn set_pending_action(&mut self, action: Option<PendingAction>) {
+        self.pending_action = action;
+    }
+
+    /*
+     * Removes and returns any active pending action. Using `Option::take` via this helper
+     * avoids leaking the internal option and keeps state transitions explicit.
+     */
+    pub fn take_pending_action(&mut self) -> Option<PendingAction> {
+        self.pending_action.take()
+    }
+
+    /*
+     * Provides read-only access to the current pending action, if one exists.
+     */
+    pub fn pending_action(&self) -> Option<&PendingAction> {
+        self.pending_action.as_ref()
+    }
+
+    /*
+     * Sets or clears the temporary profile name captured during the profile-creation flow.
+     */
+    pub fn set_pending_new_profile_name(&mut self, name: Option<String>) {
+        self.pending_new_profile_name = name;
+    }
+
+    /*
+     * Takes ownership of the pending profile name, clearing it from the state in the process.
+     */
+    pub fn take_pending_new_profile_name(&mut self) -> Option<String> {
+        self.pending_new_profile_name.take()
+    }
+
+    /*
+     * Returns the pending profile name reference when the name has been captured but not yet used.
+     */
+    pub fn pending_new_profile_name(&self) -> Option<&str> {
+        self.pending_new_profile_name.as_deref()
+    }
+
+    /*
+     * Updates the stored filter text and returns whether the filter should be considered active.
+     * Empty strings disable the filter entirely.
+     */
+    pub fn set_filter_text(&mut self, text: &str) -> bool {
+        if text.is_empty() {
+            self.filter_text = None;
+            self.filter_no_match = false;
+            return false;
+        }
+
+        self.filter_text = Some(text.to_string());
+        true
+    }
+
+    /*
+     * Clears the filter text and resets the associated flags so future tree rebuilds operate
+     * on the full snapshot.
+     */
+    pub fn clear_filter(&mut self) {
+        self.filter_text = None;
+        self.filter_no_match = false;
+    }
+
+    /*
+     * Returns the currently active filter text, if any.
+     */
+    pub fn filter_text(&self) -> Option<&str> {
+        self.filter_text.as_deref()
+    }
+
+    /*
+     * Indicates whether the last rebuild produced no matches for the active filter.
+     */
+    pub fn filter_had_no_match(&self) -> bool {
+        self.filter_no_match
+    }
+
+    /*
+     * Rebuilds the cached TreeView descriptors using the current filter and snapshot. The method
+     * updates internal maps, preserves the last successful filter result for reuse, and returns
+     * the list of descriptors that should be rendered.
+     */
+    pub fn rebuild_tree_descriptors(
+        &mut self,
+        snapshot_nodes: &[FileNode],
+    ) -> Vec<TreeItemDescriptor> {
+        let active_filter = self.filter_text.clone();
+        self.path_to_tree_item_id.clear();
+        self.next_tree_item_id_counter = 1;
+
+        let descriptors = if let Some(filter) = active_filter.as_deref() {
+            FileNode::build_tree_item_descriptors_filtered(
+                snapshot_nodes,
+                filter,
+                &mut self.path_to_tree_item_id,
+                &mut self.next_tree_item_id_counter,
+            )
+        } else {
+            FileNode::build_tree_item_descriptors_recursive(
+                snapshot_nodes,
+                &mut self.path_to_tree_item_id,
+                &mut self.next_tree_item_id_counter,
+            )
+        };
+
+        if active_filter.is_some() {
+            if descriptors.is_empty() {
+                self.filter_no_match = true;
+                return self.last_successful_filter_result.clone();
+            }
+            self.filter_no_match = false;
+            self.last_successful_filter_result = descriptors.clone();
+            descriptors
+        } else {
+            self.filter_no_match = false;
+            self.last_successful_filter_result = descriptors.clone();
+            descriptors
+        }
+    }
+
+    /*
+     * Returns the TreeItemId for a given path if one is registered. This avoids exposing the
+     * underlying map and keeps path lookups consistent across the application.
+     */
+    pub fn tree_item_id_for_path(&self, path: &Path) -> Option<TreeItemId> {
+        self.path_to_tree_item_id.get(path).copied()
+    }
+
+    /*
+     * Locates the original path associated with a TreeItemId. A clone of the path is returned
+     * because the mapping is stored internally and should not be exposed mutably.
+     */
+    pub fn path_for_tree_item(&self, tree_item_id: TreeItemId) -> Option<PathBuf> {
+        self.path_to_tree_item_id.iter().find_map(|(path, id)| {
+            if *id == tree_item_id {
+                Some(path.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    /*
+     * Exposes the cached descriptors from the last successful filter execution so callers
+     * can reuse them (for example, to keep the tree populated during "no match" states).
+     */
+    pub fn last_successful_filter_descriptors(&self) -> &[TreeItemDescriptor] {
+        &self.last_successful_filter_result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn path_map_for_test(&self) -> &PathToTreeItemIdMap {
+        &self.path_to_tree_item_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn next_tree_item_counter_for_test(&self) -> u64 {
+        self.next_tree_item_id_counter
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_tree_item_mapping_for_test(&mut self, path: PathBuf, id: TreeItemId) {
+        self.path_to_tree_item_id.insert(path, id);
     }
 }
 
@@ -216,15 +412,84 @@ mod tests {
         let ui_state = MainWindowUiState::new(test_window_id);
 
         // Assert
-        assert_eq!(ui_state.window_id, test_window_id);
-        assert!(ui_state.path_to_tree_item_id.is_empty());
-        assert_eq!(ui_state.next_tree_item_id_counter, 1);
-        assert!(ui_state.current_archive_status_for_ui.is_none());
-        assert!(ui_state.pending_action.is_none());
-        assert!(ui_state.pending_new_profile_name.is_none());
-        assert!(ui_state.filter_text.is_none());
-        assert!(ui_state.last_successful_filter_result.is_empty());
-        assert!(!ui_state.filter_no_match);
+        assert_eq!(ui_state.window_id(), test_window_id);
+        assert!(ui_state.path_map_for_test().is_empty());
+        assert_eq!(ui_state.next_tree_item_counter_for_test(), 1);
+        assert!(ui_state.archive_status().is_none());
+        assert!(ui_state.pending_action().is_none());
+        assert!(ui_state.pending_new_profile_name().is_none());
+        assert!(ui_state.filter_text().is_none());
+        assert!(ui_state.last_successful_filter_descriptors().is_empty());
+        assert!(!ui_state.filter_had_no_match());
+    }
+
+    #[test]
+    fn rebuild_tree_descriptors_tracks_filter_state() {
+        // Arrange
+        crate::initialize_logging();
+        let window_id = WindowId(7);
+        let mut ui_state = MainWindowUiState::new(window_id);
+
+        let base_path = PathBuf::from("/root");
+        let file_a_path = base_path.join("alpha.txt");
+        let file_b_path = base_path.join("beta.txt");
+
+        let nodes = vec![
+            FileNode::new_full(
+                file_a_path.clone(),
+                "alpha.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "".to_string(),
+            ),
+            FileNode::new_full(
+                file_b_path.clone(),
+                "beta.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "".to_string(),
+            ),
+        ];
+
+        // Act: no filter
+        let all_descriptors = ui_state.rebuild_tree_descriptors(&nodes);
+
+        // Assert: both nodes present and mappings created
+        assert_eq!(all_descriptors.len(), 2);
+        assert!(ui_state.tree_item_id_for_path(&file_a_path).is_some());
+        let first_id = all_descriptors[0].id;
+        assert_eq!(
+            ui_state.path_for_tree_item(first_id).as_deref(),
+            Some(file_a_path.as_path())
+        );
+        assert!(!ui_state.filter_had_no_match());
+
+        // Act: apply filter that matches beta
+        assert!(ui_state.set_filter_text("beta"));
+        let filtered_descriptors = ui_state.rebuild_tree_descriptors(&nodes);
+        let filtered_texts: Vec<String> = filtered_descriptors
+            .iter()
+            .map(|descriptor| descriptor.text.clone())
+            .collect();
+
+        // Assert: single descriptor returned, filter active with matches
+        assert_eq!(filtered_descriptors.len(), 1);
+        assert_eq!(filtered_descriptors[0].text, "beta.txt");
+        assert!(!ui_state.filter_had_no_match());
+
+        // Act: apply filter with no matches
+        assert!(ui_state.set_filter_text("zzz"));
+        let no_match_descriptors = ui_state.rebuild_tree_descriptors(&nodes);
+
+        // Assert: reuses last successful descriptors and flags no-match
+        let no_match_texts: Vec<String> = no_match_descriptors
+            .iter()
+            .map(|descriptor| descriptor.text.clone())
+            .collect();
+        assert_eq!(no_match_texts, filtered_texts);
+        assert!(ui_state.filter_had_no_match());
     }
 
     #[test]

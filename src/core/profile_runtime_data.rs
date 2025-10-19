@@ -347,7 +347,7 @@ impl ProfileRuntimeData {
         let pool_size = std::cmp::max(2, available_threads / 2);
         let pool: ThreadPool = ThreadPoolBuilder::new()
             .num_threads(pool_size)
-            .thread_name(|index| format!("token-worker-{}", index))
+            .thread_name(|index| format!("token-worker-{index}"))
             .build()
             .expect("Failed to build token worker thread pool");
 

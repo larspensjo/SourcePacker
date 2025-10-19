@@ -1,8 +1,7 @@
 use crate::core::{
-    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode,
-    FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations, TokenProgress,
-    TokenProgressChannel,
+    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileSystemScannerOperations,
+    NodeStateApplicatorOperations, Profile, ProfileManagerOperations, ProfileRuntimeDataOperations,
+    SelectionState, TokenCounterOperations, TokenProgress, TokenProgressChannel,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
@@ -57,7 +56,7 @@ macro_rules! status_message {
         if let Some(ui_state_ref) = &$self.ui_state {
             $self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
-                    window_id: ui_state_ref.window_id,
+                    window_id: ui_state_ref.window_id(),
                     control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
                     text,
                     severity: $severity,
@@ -196,19 +195,16 @@ impl MyAppLogic {
 
     fn repopulate_tree_view(&mut self, window_id: WindowId) {
         let ui_state = match self.ui_state.as_mut() {
-            Some(s) if s.window_id == window_id => s,
+            Some(s) if s.window_id() == window_id => s,
             _ => {
                 log::error!(
                     "AppLogic: UI state for window_id {:?} must exist to populate tree view. Current ui_state: {:?}",
                     window_id,
-                    self.ui_state.as_ref().map(|s_ref| s_ref.window_id)
+                    self.ui_state.as_ref().map(|s_ref| s_ref.window_id())
                 );
                 return;
             }
         };
-
-        ui_state.next_tree_item_id_counter = 1;
-        ui_state.path_to_tree_item_id.clear();
 
         let snapshot_nodes = self
             .app_session_data_ops
@@ -217,34 +213,7 @@ impl MyAppLogic {
             .get_snapshot_nodes()
             .to_vec();
 
-        let descriptors = if let Some(filter) = &ui_state.filter_text {
-            FileNode::build_tree_item_descriptors_filtered(
-                &snapshot_nodes,
-                filter,
-                &mut ui_state.path_to_tree_item_id,
-                &mut ui_state.next_tree_item_id_counter,
-            )
-        } else {
-            FileNode::build_tree_item_descriptors_recursive(
-                &snapshot_nodes,
-                &mut ui_state.path_to_tree_item_id,
-                &mut ui_state.next_tree_item_id_counter,
-            )
-        };
-
-        let (items_to_use, no_match) = if ui_state.filter_text.is_some() {
-            if descriptors.is_empty() {
-                (ui_state.last_successful_filter_result.clone(), true)
-            } else {
-                ui_state.last_successful_filter_result = descriptors.clone();
-                (descriptors, false)
-            }
-        } else {
-            ui_state.last_successful_filter_result = descriptors.clone();
-            (descriptors, false)
-        };
-
-        ui_state.filter_no_match = no_match;
+        let items_to_use = ui_state.rebuild_tree_descriptors(&snapshot_nodes);
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::PopulateTreeView {
@@ -283,7 +252,7 @@ impl MyAppLogic {
                 return;
             }
         };
-        let main_window_id = ui_state_mut.window_id;
+        let main_window_id = ui_state_mut.window_id();
 
         let (current_profile_name_opt, archive_path_opt, snapshot_nodes_clone) = {
             let data = self.app_session_data_ops.lock().unwrap();
@@ -295,7 +264,7 @@ impl MyAppLogic {
         };
 
         if current_profile_name_opt.is_none() {
-            ui_state_mut.current_archive_status_for_ui = None;
+            ui_state_mut.set_archive_status(None);
             app_info!(self, "No profile loaded");
 
             let archive_label_text = "Archive: No profile loaded".to_string();
@@ -319,7 +288,7 @@ impl MyAppLogic {
             status
         );
 
-        ui_state_mut.current_archive_status_for_ui = Some(status);
+        ui_state_mut.set_archive_status(Some(status));
 
         let plain_status_string = Self::archive_status_to_plain_string(&status);
         let archive_label_text = format!("Archive: {plain_status_string}");
@@ -420,7 +389,7 @@ impl MyAppLogic {
 
             self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
-                    window_id: ui_state_ref.window_id,
+                    window_id: ui_state_ref.window_id(),
                     control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
                     text: label_text,
                     severity: MessageSeverity::Information,
@@ -502,7 +471,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             return;
         }
@@ -514,11 +483,11 @@ impl MyAppLogic {
         if self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             log::debug!(
                 "AppLogic: Main window (ID: {:?}) destroyed notification received. Clearing UI state.",
-                self.ui_state.as_ref().unwrap().window_id
+                self.ui_state.as_ref().unwrap().window_id()
             );
             self.ui_state = None;
         } else {
@@ -535,7 +504,7 @@ impl MyAppLogic {
         new_check_state: CheckState,
     ) {
         let ui_state_ref = match self.ui_state.as_ref() {
-            Some(s) if s.window_id == window_id => s,
+            Some(s) if s.window_id() == window_id => s,
             _ => {
                 log::debug!(
                     "AppLogic: TreeViewItemToggled event for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
@@ -546,15 +515,7 @@ impl MyAppLogic {
 
         log::debug!("TreeItem {item_id:?} toggled to UI state {new_check_state:?}.");
 
-        let mut path_of_toggled_node_opt: Option<PathBuf> = None;
-        for (path_candidate, id_in_map) in &ui_state_ref.path_to_tree_item_id {
-            if *id_in_map == item_id {
-                path_of_toggled_node_opt = Some(path_candidate.clone());
-                break;
-            }
-        }
-
-        let path_for_model_update = match path_of_toggled_node_opt {
+        let path_for_model_update = match ui_state_ref.path_for_tree_item(item_id) {
             Some(p) => p,
             None => {
                 log::error!(
@@ -604,10 +565,8 @@ impl MyAppLogic {
         );
 
         for (changed_path, new_file_state) in collected_changes {
-            if let Some(tree_item_id_to_update_ref) =
-                ui_state_ref.path_to_tree_item_id.get(&changed_path)
+            if let Some(tree_item_id_to_update) = ui_state_ref.tree_item_id_for_path(&changed_path)
             {
-                let tree_item_id_to_update = *tree_item_id_to_update_ref;
                 let check_state_for_ui = match new_file_state {
                     SelectionState::Selected => CheckState::Checked,
                     _ => CheckState::Unchecked,
@@ -684,9 +643,7 @@ impl MyAppLogic {
                     break;
                 }
 
-                if let Some(parent_item_id_ref) = ui_state_ref.path_to_tree_item_id.get(parent_path)
-                {
-                    let parent_item_id = *parent_item_id_ref;
+                if let Some(parent_item_id) = ui_state_ref.tree_item_id_for_path(parent_path) {
                     let parent_text = self.build_tree_item_display_text(parent_path);
                     self.synchronous_command_queue
                         .push_back(PlatformCommand::UpdateTreeItemText {
@@ -808,7 +765,7 @@ impl MyAppLogic {
                     if let Some(ui_state_ref) = &self.ui_state {
                         self.synchronous_command_queue
                             .push_back(PlatformCommand::ShowMessageBox {
-                                window_id: ui_state_ref.window_id,
+                                window_id: ui_state_ref.window_id(),
                                 title: "Missing Source File".to_string(),
                                 message: format!("A selected file could not be read.\n\n{e}"),
                                 severity: MessageSeverity::Error,
@@ -840,7 +797,7 @@ impl MyAppLogic {
 
     fn handle_expand_filtered_all_click(&mut self, window_id: WindowId) {
         let ui_state_ref = match self.ui_state.as_ref() {
-            Some(s) if s.window_id == window_id => s,
+            Some(s) if s.window_id() == window_id => s,
             _ => {
                 log::warn!(
                     "ExpandFilteredAllClick received but no matching UI state for window {window_id:?}"
@@ -849,7 +806,7 @@ impl MyAppLogic {
             }
         };
 
-        if ui_state_ref.filter_text.is_some() {
+        if ui_state_ref.filter_text().is_some() {
             log::debug!("Expanding visible tree items (filtered view)");
             self.synchronous_command_queue
                 .push_back(PlatformCommand::ExpandVisibleTreeItems {
@@ -870,7 +827,7 @@ impl MyAppLogic {
         log::debug!(
             "MenuAction::LoadProfile action received by AppLogic, initiating profile selection flow."
         );
-        let window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
+        let window_id = match self.ui_state.as_ref().map(|s| s.window_id()) {
             Some(id) => id,
             None => {
                 log::warn!("Cannot handle LoadProfile: No UI state (main window).");
@@ -890,7 +847,7 @@ impl MyAppLogic {
      * name and selecting the root folder can be displayed.
      */
     fn handle_menu_new_profile_clicked(&mut self) {
-        let window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
+        let window_id = match self.ui_state.as_ref().map(|s| s.window_id()) {
             Some(id) => id,
             None => {
                 log::warn!("Cannot handle NewProfile: No UI state (main window).");
@@ -906,7 +863,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             log::warn!(
                 "FileOpenProfileDialogCompleted for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
@@ -957,7 +914,7 @@ impl MyAppLogic {
                 self.app_session_data_ops.lock().unwrap().clear();
 
                 if let Some(ui_state_mut) = self.ui_state.as_mut() {
-                    ui_state_mut.current_archive_status_for_ui = None;
+                    ui_state_mut.set_archive_status(None);
                 }
             }
         }
@@ -985,10 +942,10 @@ impl MyAppLogic {
         let sanitized_current_name = core::profiles::sanitize_profile_name(&base_name);
         let default_filename = format!("{sanitized_current_name}.json");
 
-        ui_state_mut.pending_action = Some(PendingAction::SavingProfileAs);
+        ui_state_mut.set_pending_action(Some(PendingAction::SavingProfileAs));
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {
-                window_id: ui_state_mut.window_id,
+                window_id: ui_state_mut.window_id(),
                 title: "Save Profile As".to_string(),
                 default_filename,
                 filter_spec: "Profile Files (*.json)\0*.json\0\0".to_string(),
@@ -1002,7 +959,11 @@ impl MyAppLogic {
      * This function delegates to specific handlers based on that action.
      */
     fn handle_file_save_dialog_completed(&mut self, window_id: WindowId, result: Option<PathBuf>) {
-        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+        let ui_state_mut = match self
+            .ui_state
+            .as_mut()
+            .filter(|s| s.window_id() == window_id)
+        {
             Some(s) => s,
             None => {
                 log::warn!(
@@ -1012,7 +973,7 @@ impl MyAppLogic {
             }
         };
 
-        let action = ui_state_mut.pending_action.take();
+        let action = ui_state_mut.take_pending_action();
         log::debug!(
             "FileSaveDialogCompleted with pending action: {action:?}, for result: {result:?}"
         );
@@ -1196,7 +1157,7 @@ impl MyAppLogic {
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
         log::debug!("MenuAction::RefreshFileList action received by AppLogic.");
-        let main_window_id = match self.ui_state.as_ref().map(|s| s.window_id) {
+        let main_window_id = match self.ui_state.as_ref().map(|s| s.window_id()) {
             Some(id) => id,
             None => {
                 log::error!("AppLogic: Refresh requested but no main window UI state. Ignoring.");
@@ -1301,7 +1262,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .is_some_and(|s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id() == window_id),
             "Mismatched window ID or no UI state for _activate_profile_and_show_window"
         );
 
@@ -1329,16 +1290,7 @@ impl MyAppLogic {
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowWindow { window_id });
 
-        {
-            let ui_state_mut = self
-                .ui_state
-                .as_mut()
-                .expect("UI state must exist here for _activate_profile_and_show_window");
-            ui_state_mut.next_tree_item_id_counter = 1;
-            ui_state_mut.path_to_tree_item_id.clear();
-
-            self.repopulate_tree_view(window_id);
-        }
+        self.repopulate_tree_view(window_id);
 
         self.update_current_archive_status();
         self._update_token_count_and_request_display();
@@ -1355,7 +1307,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .is_some_and(|s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id() == window_id),
             "initiate_profile_selection_or_creation called with mismatching window ID or no UI state."
         );
 
@@ -1410,7 +1362,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             log::debug!(
                 "ProfileSelectionDialogCompleted for non-matching or non-existent UI state. Window ID: {window_id:?}. Ignoring."
@@ -1489,10 +1441,10 @@ impl MyAppLogic {
         let ui_state_mut = self
             .ui_state
             .as_mut()
-            .filter(|s| s.window_id == window_id)
+            .filter(|s| s.window_id() == window_id)
             .expect("UI state must exist and match window_id for start_new_profile_creation_flow");
 
-        ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetName);
+        ui_state_mut.set_pending_action(Some(PendingAction::CreatingNewProfileGetName));
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowInputDialog {
                 window_id,
@@ -1516,8 +1468,8 @@ impl MyAppLogic {
                 let ui_state_mut = self.ui_state.as_mut().expect(
                 "ui_state should exist when _handle_input_dialog_for_new_profile_name is called",
             );
-                ui_state_mut.pending_action = None;
-                ui_state_mut.pending_new_profile_name = None;
+                ui_state_mut.set_pending_action(None);
+                ui_state_mut.set_pending_new_profile_name(None);
                 self.initiate_profile_selection_or_creation(window_id);
                 return;
             }
@@ -1551,8 +1503,8 @@ impl MyAppLogic {
         let ui_state_mut = self.ui_state.as_mut().expect(
             "ui_state should exist when _handle_input_dialog_for_new_profile_name is called (valid name case)",
         );
-        ui_state_mut.pending_new_profile_name = Some(profile_name_text);
-        ui_state_mut.pending_action = Some(PendingAction::CreatingNewProfileGetRoot);
+        ui_state_mut.set_pending_new_profile_name(Some(profile_name_text));
+        ui_state_mut.set_pending_action(Some(PendingAction::CreatingNewProfileGetRoot));
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowFolderPickerDialog {
@@ -1571,7 +1523,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             log::warn!(
                 "InputDialogCompleted for an unknown or non-main window (ID: {window_id:?}). Ignoring."
@@ -1594,7 +1546,7 @@ impl MyAppLogic {
                 );
                 // Ensure ui_state exists before modifying it, consistent with the guard at the start of the function
                 if let Some(ui_state_mut) = self.ui_state.as_mut() {
-                    ui_state_mut.pending_action = None;
+                    ui_state_mut.set_pending_action(None);
                 }
             }
         }
@@ -1614,7 +1566,7 @@ impl MyAppLogic {
         if !self
             .ui_state
             .as_ref()
-            .is_some_and(|s| s.window_id == window_id)
+            .is_some_and(|s| s.window_id() == window_id)
         {
             log::warn!(
                 "ExcludePatternsDialogCompleted received for an unknown window {window_id:?}. Ignoring."
@@ -1691,7 +1643,11 @@ impl MyAppLogic {
         window_id: WindowId,
         path: Option<PathBuf>,
     ) {
-        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+        let ui_state_mut = match self
+            .ui_state
+            .as_mut()
+            .filter(|s| s.window_id() == window_id)
+        {
             Some(s) => s,
             None => {
                 log::warn!(
@@ -1702,19 +1658,19 @@ impl MyAppLogic {
         };
 
         log::debug!("FolderPickerDialogCompleted: path: {path:?}");
-        ui_state_mut.pending_action = None;
+        ui_state_mut.set_pending_action(None);
 
         let root_folder_path = match path {
             Some(p) => p,
             None => {
                 log::debug!("Root folder selection cancelled. Returning to profile selection.");
-                ui_state_mut.pending_new_profile_name = None;
+                ui_state_mut.set_pending_new_profile_name(None);
                 self.initiate_profile_selection_or_creation(window_id);
                 return;
             }
         };
 
-        let profile_name = match ui_state_mut.pending_new_profile_name.take() {
+        let profile_name = match ui_state_mut.take_pending_new_profile_name() {
             Some(name) => name,
             None => {
                 app_warn!(
@@ -1771,7 +1727,7 @@ impl MyAppLogic {
         assert!(
             self.ui_state
                 .as_ref()
-                .is_some_and(|s| s.window_id == window_id),
+                .is_some_and(|s| s.window_id() == window_id),
             "_update_window_title_with_profile_and_archive called with mismatching window ID or no UI state."
         );
 
@@ -1807,7 +1763,7 @@ impl MyAppLogic {
             return;
         }
 
-        ui_state_mut.pending_action = Some(PendingAction::SettingArchivePath);
+        ui_state_mut.set_pending_action(Some(PendingAction::SettingArchivePath));
 
         let default_filename = current_archive_path_opt
             .as_ref()
@@ -1827,7 +1783,7 @@ impl MyAppLogic {
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowSaveFileDialog {
-                window_id: ui_state_mut.window_id,
+                window_id: ui_state_mut.window_id(),
                 title: "Set Archive File Path".to_string(),
                 default_filename,
                 filter_spec: "Text Files (*.txt)\0*.txt\0All Files (*.*)\0*.*\0\0".to_string(),
@@ -1878,7 +1834,7 @@ impl MyAppLogic {
 
         self.synchronous_command_queue
             .push_back(PlatformCommand::ShowExcludePatternsDialog {
-                window_id: ui_state_mut.window_id,
+                window_id: ui_state_mut.window_id(),
                 title: "Edit Exclude Patterns".to_string(),
                 patterns: patterns_text,
             });
@@ -1891,7 +1847,11 @@ impl MyAppLogic {
      * of the filter to the TreeView is handled separately (e.g., in Action 1.3).
      */
     fn handle_filter_text_submitted(&mut self, window_id: WindowId, text: String) {
-        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+        let ui_state_mut = match self
+            .ui_state
+            .as_mut()
+            .filter(|s| s.window_id() == window_id)
+        {
             Some(s) => s,
             None => {
                 log::warn!(
@@ -1903,12 +1863,11 @@ impl MyAppLogic {
 
         let filter_active = if text.is_empty() {
             log::debug!("Filter text submitted is empty. Clearing active filter.");
-            ui_state_mut.filter_text = None;
+            ui_state_mut.clear_filter();
             false
         } else {
             log::debug!("Filter text submitted: '{text}'. Storing for filtering.");
-            ui_state_mut.filter_text = Some(text);
-            true
+            ui_state_mut.set_filter_text(&text)
         };
 
         self.repopulate_tree_view(window_id);
@@ -1918,10 +1877,10 @@ impl MyAppLogic {
         log::debug!(
             "Filter active: {}, No match: {}",
             filter_active,
-            ui_state_ref.filter_no_match
+            ui_state_ref.filter_had_no_match()
         );
         let style_id = if filter_active {
-            if ui_state_ref.filter_no_match {
+            if ui_state_ref.filter_had_no_match() {
                 StyleId::DefaultInputError
             } else {
                 StyleId::DefaultInput
@@ -1945,14 +1904,18 @@ impl MyAppLogic {
     }
 
     fn handle_filter_clear_requested(&mut self, window_id: WindowId) {
-        let ui_state_mut = match self.ui_state.as_mut().filter(|s| s.window_id == window_id) {
+        let ui_state_mut = match self
+            .ui_state
+            .as_mut()
+            .filter(|s| s.window_id() == window_id)
+        {
             Some(s) => s,
             None => {
                 log::warn!("FilterClearRequested for unknown window {window_id:?}");
                 return;
             }
         };
-        ui_state_mut.filter_text = None;
+        ui_state_mut.clear_filter();
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetInputText {
                 window_id,
@@ -2281,7 +2244,7 @@ impl PlatformEventHandler for MyAppLogic {
 impl UiStateProvider for MyAppLogic {
     fn is_tree_item_new(&self, window_id: WindowId, item_id: TreeItemId) -> bool {
         let ui_state = match &self.ui_state {
-            Some(s) if s.window_id == window_id => s,
+            Some(s) if s.window_id() == window_id => s,
             _ => {
                 log::trace!(
                     "is_tree_item_new: UI state not found or window ID mismatch for {window_id:?}. Returning false."
@@ -2290,13 +2253,7 @@ impl UiStateProvider for MyAppLogic {
             }
         };
 
-        let path_opt = ui_state
-            .path_to_tree_item_id
-            .iter()
-            .find(|(_path_candidate, id_in_map)| **id_in_map == item_id)
-            .map(|(path_key, _id_value)| path_key);
-
-        let path = match path_opt {
+        let path = match ui_state.path_for_tree_item(item_id) {
             Some(p) => p,
             None => {
                 log::trace!(
@@ -2307,11 +2264,11 @@ impl UiStateProvider for MyAppLogic {
         };
 
         let app_data_guard = self.app_session_data_ops.lock().unwrap();
-        match app_data_guard.get_node_attributes_for_path(path) {
+        match app_data_guard.get_node_attributes_for_path(&path) {
             Some((file_state, is_dir)) => {
                 if is_dir {
                     let contains_new =
-                        app_data_guard.does_path_or_descendants_contain_new_file(path);
+                        app_data_guard.does_path_or_descendants_contain_new_file(&path);
                     log::debug!(
                         "is_tree_item_new: Directory {path:?} (ItemID {item_id:?}) contains new file: {contains_new}."
                     );
@@ -2341,12 +2298,13 @@ impl MyAppLogic {
         self.ui_state = Some(MainWindowUiState::new(id));
     }
     pub(crate) fn test_pending_action(&self) -> Option<&PendingAction> {
-        self.ui_state
-            .as_ref()
-            .and_then(|s| s.pending_action.as_ref())
+        self.ui_state.as_ref().and_then(|s| s.pending_action())
     }
     pub(crate) fn test_set_pending_action(&mut self, v: PendingAction) {
-        self.ui_state.as_mut().unwrap().pending_action = Some(v);
+        self.ui_state
+            .as_mut()
+            .expect("ui_state should exist in test_set_pending_action")
+            .set_pending_action(Some(v));
     }
 
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
@@ -2380,7 +2338,7 @@ impl MyAppLogic {
     pub(crate) fn test_set_path_to_tree_item_id_mapping(&mut self, path: PathBuf, id: TreeItemId) {
         if let Some(ui_state) = &mut self.ui_state {
             log::debug!("Test helper: Mapping path {path:?} to TreeItemId {id:?}");
-            ui_state.path_to_tree_item_id.insert(path, id);
+            ui_state.insert_tree_item_mapping_for_test(path, id);
         } else {
             panic!(
                 "ui_state not initialized in test_set_path_to_tree_item_id_mapping. Call test_set_main_window_id_and_init_ui_state first."
@@ -2451,7 +2409,7 @@ impl MyAppLogic {
     pub(crate) fn test_get_pending_new_profile_name(&self) -> Option<String> {
         self.ui_state
             .as_ref()
-            .and_then(|s| s.pending_new_profile_name.clone())
+            .and_then(|s| s.pending_new_profile_name().map(|name| name.to_string()))
     }
 
     // Accessor for make_profile_name
@@ -2460,13 +2418,17 @@ impl MyAppLogic {
     }
 
     pub(crate) fn test_get_path_to_tree_item_id(&self) -> Option<&PathToTreeItemIdMap> {
-        self.ui_state.as_ref().map(|s| &s.path_to_tree_item_id)
+        self.ui_state.as_ref().map(|s| s.path_map_for_test())
     }
     pub(crate) fn test_get_next_tree_item_id_counter(&self) -> Option<u64> {
-        self.ui_state.as_ref().map(|s| s.next_tree_item_id_counter)
+        self.ui_state
+            .as_ref()
+            .map(|s| s.next_tree_item_counter_for_test())
     }
 
     pub(crate) fn test_get_filter_text(&self) -> Option<String> {
-        self.ui_state.as_ref().and_then(|s| s.filter_text.clone())
+        self.ui_state
+            .as_ref()
+            .and_then(|s| s.filter_text().map(|t| t.to_string()))
     }
 }
