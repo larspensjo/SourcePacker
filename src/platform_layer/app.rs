@@ -5,7 +5,7 @@ use crate::platform_layer::{
         styling_handler, treeview_handler,
     },
     error::{PlatformError, Result as PlatformResult},
-    styling::{ControlStyle, ParsedControlStyle, StyleId},
+    styling::{ControlStyle, FontWeight, ParsedControlStyle, StyleId},
     types::{
         AppEvent, ControlId, PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig,
         WindowId,
@@ -16,16 +16,21 @@ use crate::platform_layer::{
 use windows::{
     Win32::{
         Foundation::{GetLastError, HINSTANCE, HWND, LPARAM, WPARAM},
-        Graphics::Gdi::InvalidateRect,
+        Graphics::Gdi::{
+            CLIP_DEFAULT_PRECIS, CreateFontW, CreateSolidBrush, DEFAULT_CHARSET, DEFAULT_QUALITY,
+            FF_DONTCARE, FW_BOLD, FW_NORMAL, GetDC, GetDeviceCaps, HBRUSH, HFONT, InvalidateRect,
+            LOGPIXELSY, OUT_DEFAULT_PRECIS, ReleaseDC,
+        },
         System::Com::{CoInitializeEx, CoUninitialize},
         System::LibraryLoader::GetModuleHandleW,
+        System::WindowsProgramming::MulDiv,
         UI::Controls::{
             ICC_TREEVIEW_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, TVM_SETBKCOLOR,
             TVM_SETTEXTCOLOR,
         },
         UI::WindowsAndMessaging::*,
     },
-    core::PCWSTR,
+    core::{HSTRING, PCWSTR},
 };
 
 use std::collections::HashMap;
@@ -67,6 +72,37 @@ impl Win32ApiInternalState {
      */
     pub(crate) fn generate_unique_window_id(&self) -> WindowId {
         WindowId(self.next_window_id_counter.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /*
+     * Creates and registers a new `NativeWindowData` entry for an upcoming window.
+     * By inserting the entry before native creation, WM_NCCREATE handlers can rely
+     * on the data being present. Lock poisoning is surfaced as a platform error.
+     */
+    pub(crate) fn prepare_new_window(&self) -> PlatformResult<WindowId> {
+        let window_id = self.generate_unique_window_id();
+        let mut windows_map = self.active_windows.write().map_err(|e| {
+            log::error!(
+                "Win32ApiInternalState: Failed to lock active_windows for preliminary insert of WinID {window_id:?}: {e:?}"
+            );
+            PlatformError::OperationFailed(
+                "Failed to lock active_windows for new window preparation".into(),
+            )
+        })?;
+
+        if let Some(previous_entry) =
+            windows_map.insert(window_id, window_common::NativeWindowData::new(window_id))
+        {
+            log::error!(
+                "Win32ApiInternalState: Replaced existing NativeWindowData while preparing WinID {window_id:?}. Old data will be dropped."
+            );
+            drop(previous_entry);
+        }
+
+        log::debug!(
+            "Win32ApiInternalState: Prepared preliminary NativeWindowData for WinID {window_id:?}."
+        );
+        Ok(window_id)
     }
 
     /*
@@ -176,6 +212,34 @@ impl Win32ApiInternalState {
             );
         } else {
             log::warn!("Attempted to remove non-existent WindowId {window_id:?}.");
+        }
+    }
+
+    /*
+     * Associates the native HWND with a prepared window entry. This keeps the HWND
+     * update logic centralized and leverages the existing write helper for safety.
+     */
+    pub(crate) fn attach_hwnd(&self, window_id: WindowId, hwnd: HWND) -> PlatformResult<()> {
+        self.with_window_data_write(window_id, |window_data| {
+            window_data.set_hwnd(hwnd);
+            log::debug!("Win32ApiInternalState: Attached HWND {hwnd:?} to WinID {window_id:?}.");
+            Ok(())
+        })
+    }
+
+    /*
+     * Returns `true` when any window entries are currently registered. In case of a
+     * poisoned lock, the method assumes windows are present and logs the failure.
+     */
+    pub(crate) fn has_active_windows(&self) -> bool {
+        match self.active_windows.read() {
+            Ok(map) => !map.is_empty(),
+            Err(e) => {
+                log::error!(
+                    "Win32ApiInternalState: Failed to read active_windows to check emptiness: {e:?}"
+                );
+                true
+            }
         }
     }
     /*
@@ -527,9 +591,7 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
-            PlatformCommand::DefineStyle { style_id, style } => {
-                self.execute_define_style(style_id, style)
-            }
+            PlatformCommand::DefineStyle { style_id, style } => self.define_style(style_id, style),
             PlatformCommand::ApplyStyleToControl {
                 window_id,
                 control_id,
@@ -539,24 +601,106 @@ impl Win32ApiInternalState {
     }
 
     /*
-     * Executes the `DefineStyle` command.
+     * Translates a platform-agnostic `ControlStyle` into native Win32 resources and stores
+     * the resulting `ParsedControlStyle` inside the shared registry. All GDI objects are
+     * wrapped by `ParsedControlStyle`, ensuring deterministic cleanup when they drop.
      *
-     * This method orchestrates the process of defining a style. It delegates the
-     * complex parsing of the `ControlStyle` to the `styling_handler`, and then
-     * performs the state modification by inserting the resulting `ParsedControlStyle`
-     * into its own `defined_styles` map. This maintains proper encapsulation.
+     * Centralizing the parsing here keeps the style map private while still allowing
+     * callers to define styles with a single method call. Early returns prevent partially
+     * constructed styles from polluting the registry.
      */
-    fn execute_define_style(
+    pub(crate) fn define_style(
         self: &Arc<Self>,
         style_id: StyleId,
         style: ControlStyle,
     ) -> PlatformResult<()> {
-        log::debug!("Win32ApiInternalState: execute_define_style for StyleId::{style_id:?}");
+        log::debug!("Win32ApiInternalState: define_style for StyleId::{style_id:?}");
 
-        // 1. Delegate parsing to the specialized handler.
-        let parsed_style = styling_handler::parse_style(style)?;
+        // --- Parse FontDescription into HFONT ---
+        let font_handle: Option<HFONT> = if let Some(font_desc) = style.font.as_ref() {
+            let hdc_screen = unsafe { GetDC(None) };
+            if hdc_screen.is_invalid() {
+                log::error!("Win32ApiInternalState: Could not acquire screen DC for style font.");
+                return Err(PlatformError::OperationFailed(
+                    "Could not acquire screen DC for font creation".to_string(),
+                ));
+            }
 
-        // 2. Modify the internal state.
+            let logical_font_height = if let Some(point_size) = font_desc.size {
+                -unsafe { MulDiv(point_size, GetDeviceCaps(Some(hdc_screen), LOGPIXELSY), 72) }
+            } else {
+                0
+            };
+
+            unsafe { ReleaseDC(None, hdc_screen) };
+
+            let weight = match font_desc.weight {
+                Some(FontWeight::Bold) => FW_BOLD.0 as i32,
+                _ => FW_NORMAL.0 as i32,
+            };
+
+            let font_name = font_desc.name.as_deref().unwrap_or("MS Shell Dlg 2");
+            let font_name_hstring = HSTRING::from(font_name);
+
+            let h_font = unsafe {
+                CreateFontW(
+                    logical_font_height,
+                    0,
+                    0,
+                    0,
+                    weight,
+                    0,
+                    0,
+                    0,
+                    DEFAULT_CHARSET,
+                    OUT_DEFAULT_PRECIS,
+                    CLIP_DEFAULT_PRECIS,
+                    DEFAULT_QUALITY,
+                    FF_DONTCARE.0 as u32,
+                    &font_name_hstring,
+                )
+            };
+
+            if h_font.is_invalid() {
+                log::error!(
+                    "Win32ApiInternalState: CreateFontW failed while defining StyleId::{style_id:?}: {:?}",
+                    unsafe { GetLastError() }
+                );
+                return Err(PlatformError::OperationFailed(
+                    "CreateFontW failed during style definition".to_string(),
+                ));
+            }
+            Some(h_font)
+        } else {
+            None
+        };
+
+        // --- Parse background_color into HBRUSH ---
+        let background_brush: Option<HBRUSH> = if let Some(color) = style.background_color.as_ref()
+        {
+            let color_ref = styling_handler::color_to_colorref(color);
+            let h_brush = unsafe { CreateSolidBrush(color_ref) };
+            if h_brush.is_invalid() {
+                log::error!(
+                    "Win32ApiInternalState: CreateSolidBrush failed while defining StyleId::{style_id:?}: {:?}",
+                    unsafe { GetLastError() }
+                );
+                return Err(PlatformError::OperationFailed(
+                    "CreateSolidBrush failed during style definition".to_string(),
+                ));
+            }
+            Some(h_brush)
+        } else {
+            None
+        };
+
+        let parsed_style = ParsedControlStyle {
+            font_handle,
+            text_color: style.text_color,
+            background_color: style.background_color,
+            background_brush,
+        };
+
         match self.defined_styles.write() {
             Ok(mut styles_map) => {
                 styles_map.insert(style_id, Arc::new(parsed_style));
@@ -708,27 +852,7 @@ impl PlatformInterface {
      * The window is not shown until a `PlatformCommand::ShowWindow` is received.
      */
     pub fn create_window(&self, config: WindowConfig) -> PlatformResult<WindowId> {
-        let window_id = self.internal_state.generate_unique_window_id();
-
-        // Create a preliminary NativeWindowData. It will be fully populated after HWND creation.
-        let preliminary_native_data = window_common::NativeWindowData::new(window_id);
-
-        // Insert preliminary data before creating the native window.
-        // This ensures that if WM_NCCREATE is processed for this window_id,
-        // its NativeWindowData entry already exists.
-        self.internal_state
-            .active_windows
-            .write()
-            .map_err(|e| {
-                log::error!(
-                    "Platform: Failed to lock active_windows for preliminary insert: {e:?}"
-                );
-                PlatformError::OperationFailed(
-                    "Failed to lock active_windows map for preliminary insert".into(),
-                )
-            })?
-            .insert(window_id, preliminary_native_data);
-        log::debug!("Platform: Inserted preliminary NativeWindowData for WindowId {window_id:?}");
+        let window_id = self.internal_state.prepare_new_window()?;
 
         // Now, create the actual native window.
         let hwnd = match window_common::create_native_window(
@@ -741,15 +865,9 @@ impl PlatformInterface {
             Ok(h) => h,
             Err(e) => {
                 // If native window creation fails, remove the preliminary data.
-                if let Ok(mut guard) = self.internal_state.active_windows.write() {
-                    guard.remove(&window_id);
-                } else {
-                    log::error!(
-                        "Platform: Failed to lock active_windows for cleanup after window creation failure for WinID {window_id:?}"
-                    );
-                }
+                self.internal_state.remove_window_data(window_id);
                 log::debug!(
-                    "Platform: Removed (or attempted to remove) preliminary NativeWindowData for WindowId {window_id:?} due to creation failure."
+                    "Platform: Rolled back prepared NativeWindowData after window creation failure for WindowId {window_id:?}."
                 );
                 return Err(e);
             }
@@ -758,46 +876,19 @@ impl PlatformInterface {
             "Platform: Native window created with HWND {hwnd:?} for WindowId {window_id:?}"
         );
 
-        // Update the NativeWindowData with the actual HWND.
-        // This is done after create_native_window returns successfully.
-        match self.internal_state.active_windows.write() {
-            Ok(mut windows_map_guard) => {
-                if let Some(window_data) = windows_map_guard.get_mut(&window_id) {
-                    window_data.set_hwnd(hwnd); // Set the actual HWND
-                    log::debug!(
-                        "Platform: Updated HWND in NativeWindowData for WindowId {window_id:?}.",
-                    );
-                } else {
-                    // This should ideally not happen if preliminary insert was successful
-                    // and no other thread removed it.
-                    log::error!(
-                        "Platform: CRITICAL - Preliminary NativeWindowData for WindowId {window_id:?} vanished before HWND update."
-                    );
-                    // Attempt to destroy the orphaned window if HWND is valid
-                    if !hwnd.is_invalid() {
-                        unsafe {
-                            DestroyWindow(hwnd).ok();
-                        }
-                    }
-                    return Err(PlatformError::WindowCreationFailed(
-                        "Failed to update HWND for preliminary window data: entry missing"
-                            .to_string(),
-                    ));
+        if let Err(e) = self.internal_state.attach_hwnd(window_id, hwnd) {
+            log::error!(
+                "Platform: Failed to attach HWND for WindowId {window_id:?}. Cleaning up. Error: {e:?}"
+            );
+            if !hwnd.is_invalid() {
+                unsafe {
+                    DestroyWindow(hwnd).ok();
                 }
             }
-            Err(e) => {
-                log::error!("Platform: Failed to lock active_windows for HWND update: {e:?}");
-                // Attempt to destroy the orphaned window if HWND is valid
-                if !hwnd.is_invalid() {
-                    unsafe {
-                        DestroyWindow(hwnd).ok();
-                    }
-                }
-                return Err(PlatformError::OperationFailed(
-                    "Failed to lock active_windows map for HWND update".into(),
-                ));
-            }
+            self.internal_state.remove_window_data(window_id);
+            return Err(e);
         }
+
         Ok(window_id)
     }
 
@@ -895,11 +986,7 @@ impl PlatformInterface {
                         // Check if we should break despite error (e.g., if quitting and no windows)
                         let should_still_break =
                             self.internal_state.is_quitting.load(Ordering::Relaxed) == 1
-                                && self
-                                    .internal_state
-                                    .active_windows
-                                    .read()
-                                    .is_ok_and(|g| g.is_empty());
+                                && !self.internal_state.has_active_windows();
                         if should_still_break {
                             log::debug!(
                                 "Platform: GetMessageW error during intended quit sequence with no windows, treating as clean exit."
@@ -987,6 +1074,49 @@ mod tests {
         let window_id = state.generate_unique_window_id();
         let native = NativeWindowData::new(window_id);
         (state, window_id, native)
+    }
+
+    #[test]
+    fn prepare_new_window_registers_entry() {
+        // Arrange
+        let state = Win32ApiInternalState::new("PrepareTest".to_string()).unwrap();
+        // Act
+        let window_id = state.prepare_new_window().expect("prepare window");
+        // Assert
+        let guard = state.active_windows().read().unwrap();
+        assert!(guard.contains_key(&window_id));
+    }
+
+    #[test]
+    fn attach_hwnd_updates_native_data() {
+        // Arrange
+        let state = Win32ApiInternalState::new("AttachTest".to_string()).unwrap();
+        let window_id = state.prepare_new_window().expect("prepare window");
+        let test_hwnd = HWND(0x1234usize as _);
+        // Act
+        state
+            .attach_hwnd(window_id, test_hwnd)
+            .expect("attach hwnd");
+        // Assert
+        let guard = state.active_windows().read().unwrap();
+        let stored = guard.get(&window_id).unwrap();
+        assert_eq!(stored.get_hwnd(), test_hwnd);
+    }
+
+    #[test]
+    fn define_style_stores_parsed_style() {
+        // Arrange
+        let state = Win32ApiInternalState::new("StyleTest".to_string()).unwrap();
+        let style = ControlStyle::default();
+        // Act
+        let result = state.define_style(StyleId::DefaultText, style);
+        // Assert
+        assert!(result.is_ok());
+        let parsed = state
+            .get_parsed_style(StyleId::DefaultText)
+            .expect("style stored");
+        assert!(parsed.font_handle.is_none());
+        assert!(parsed.background_brush.is_none());
     }
 
     #[test]
