@@ -12,7 +12,7 @@
 use super::app::Win32ApiInternalState;
 use super::controls::treeview_handler; // Ensure treeview_handler is used for its functions
 use super::error::{PlatformError, Result as PlatformResult};
-use super::types::{CheckState, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
+use super::types::{CheckState, ControlId, LayoutRule, MenuItemConfig, TreeItemId, WindowId};
 
 use std::sync::Arc;
 use windows::{
@@ -123,19 +123,22 @@ pub(crate) fn execute_signal_main_window_ui_setup_complete(
 pub(crate) fn execute_set_control_enabled(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     enabled: bool,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_set_control_enabled for WinID {window_id:?}, ControlID {control_id}, Enabled: {enabled}"
+        "CommandExecutor: execute_set_control_enabled for WinID {window_id:?}, ControlID {}, Enabled: {enabled}",
+        control_id.raw()
     );
     let hwnd_ctrl = internal_state.with_window_data_read(window_id, |window_data| {
         window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
-                "CommandExecutor: Control ID {control_id} not found in window {window_id:?} for SetControlEnabled."
+                "CommandExecutor: Control ID {} not found in window {window_id:?} for SetControlEnabled.",
+                control_id.raw()
             );
             PlatformError::InvalidHandle(format!(
-                "Control ID {control_id} not found in window {window_id:?} for SetControlEnabled"
+                "Control ID {} not found in window {window_id:?} for SetControlEnabled",
+                control_id.raw()
             ))
         })
     })?;
@@ -146,7 +149,8 @@ pub(crate) fn execute_set_control_enabled(
         // but for this operation, we usually assume it succeeds if HWND is valid.
         // We can log if we want to be more verbose.
         log::trace!(
-            "CommandExecutor: EnableWindow call for Control ID {control_id} in window {window_id:?} (enabled: {enabled})."
+            "CommandExecutor: EnableWindow call for Control ID {} in window {window_id:?} (enabled: {enabled}).",
+            control_id.raw()
         );
     }
     Ok(())
@@ -160,11 +164,12 @@ pub(crate) fn execute_set_control_enabled(
 pub(crate) fn execute_populate_treeview(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     items: Vec<super::types::TreeItemDescriptor>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_populate_treeview for WinID {window_id:?}, ControlID {control_id}, delegating to treeview_handler."
+        "CommandExecutor: execute_populate_treeview for WinID {window_id:?}, ControlID {}, delegating to treeview_handler.",
+        control_id.raw()
     );
     treeview_handler::populate_treeview(internal_state, window_id, control_id, items)
 }
@@ -176,12 +181,13 @@ pub(crate) fn execute_populate_treeview(
 pub(crate) fn execute_update_tree_item_visual_state(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     item_id: TreeItemId,
     new_state: CheckState,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_update_tree_item_visual_state for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}, delegating."
+        "CommandExecutor: execute_update_tree_item_visual_state for WinID {window_id:?}, ControlID {}, ItemID {item_id:?}, delegating.",
+        control_id.raw()
     );
     treeview_handler::update_treeview_item_visual_state(
         internal_state,
@@ -195,12 +201,13 @@ pub(crate) fn execute_update_tree_item_visual_state(
 pub(crate) fn execute_update_tree_item_text(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     item_id: TreeItemId,
     text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_update_tree_item_text for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}"
+        "CommandExecutor: execute_update_tree_item_text for WinID {window_id:?}, ControlID {}, ItemID {item_id:?}",
+        control_id.raw()
     );
     treeview_handler::update_treeview_item_text(
         internal_state,
@@ -214,10 +221,11 @@ pub(crate) fn execute_update_tree_item_text(
 pub(crate) fn execute_expand_visible_tree_items(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_expand_visible_tree_items for WinID {window_id:?}, ControlID {control_id}"
+        "CommandExecutor: execute_expand_visible_tree_items for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
     treeview_handler::expand_visible_tree_items(internal_state, window_id, control_id)
 }
@@ -225,10 +233,11 @@ pub(crate) fn execute_expand_visible_tree_items(
 pub(crate) fn execute_expand_all_tree_items(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_expand_all_tree_items for WinID {window_id:?}, ControlID {control_id}"
+        "CommandExecutor: execute_expand_all_tree_items for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
     treeview_handler::expand_all_tree_items(internal_state, window_id, control_id)
 }
@@ -240,31 +249,36 @@ pub(crate) fn execute_expand_all_tree_items(
 pub(crate) fn execute_create_input(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    parent_control_id: Option<i32>,
-    control_id: i32,
+    parent_control_id: Option<ControlId>,
+    control_id: ControlId,
     initial_text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "CommandExecutor: execute_create_input for WinID {window_id:?}, ControlID {control_id}"
+        "CommandExecutor: execute_create_input for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
         if window_data.has_control(control_id) {
             log::warn!(
-                "CommandExecutor: Input with logical ID {control_id} already exists for window {window_id:?}"
+                "CommandExecutor: Input with logical ID {} already exists for window {window_id:?}",
+                control_id.raw()
             );
             return Err(PlatformError::OperationFailed(format!(
-                "Input with logical ID {control_id} already exists for window {window_id:?}"
+                "Input with logical ID {} already exists for window {window_id:?}",
+                control_id.raw()
             )));
         }
 
         let hwnd_parent = match parent_control_id {
             Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
                 log::warn!(
-                "CommandExecutor: Parent control with ID {id} not found for CreateInput in WinID {window_id:?}"
+                "CommandExecutor: Parent control with ID {} not found for CreateInput in WinID {window_id:?}",
+                id.raw()
             );
                 PlatformError::InvalidHandle(format!(
-                    "Parent control with ID {id} not found for CreateInput in WinID {window_id:?}"
+                    "Parent control with ID {} not found for CreateInput in WinID {window_id:?}",
+                    id.raw()
                 ))
             })?,
             None => window_data.get_hwnd(),
@@ -272,10 +286,12 @@ pub(crate) fn execute_create_input(
 
         if hwnd_parent.is_invalid() {
             log::error!(
-                "CommandExecutor: Parent HWND invalid for CreateInput (WinID {window_id:?})"
+                "CommandExecutor: Parent HWND invalid for CreateInput control ID {} (WinID {window_id:?})",
+                control_id.raw()
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "Parent HWND invalid for CreateInput (WinID {window_id:?})"
+                "Parent HWND invalid for CreateInput control ID {} (WinID {window_id:?})",
+                control_id.raw()
             )));
         }
 
@@ -291,7 +307,7 @@ pub(crate) fn execute_create_input(
                 10,
                 10,
                 Some(hwnd_parent),
-                Some(HMENU(control_id as usize as *mut std::ffi::c_void)),
+                Some(HMENU(control_id.raw() as usize as *mut std::ffi::c_void)),
                 Some(h_instance),
                 None,
             )?
@@ -299,7 +315,8 @@ pub(crate) fn execute_create_input(
 
         window_data.register_control_hwnd(control_id, hwnd_edit);
         log::debug!(
-            "CommandExecutor: Created input field (ID {control_id}) for WinID {window_id:?} with HWND {hwnd_edit:?}"
+            "CommandExecutor: Created input field (ID {}) for WinID {window_id:?} with HWND {hwnd_edit:?}",
+            control_id.raw()
         );
         Ok(())
     })
@@ -311,23 +328,28 @@ pub(crate) fn execute_create_input(
 pub(crate) fn execute_set_input_text(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     text: String,
 ) -> PlatformResult<()> {
     let hwnd_edit = internal_state.with_window_data_read(window_id, |window_data| {
         window_data.get_control_hwnd(control_id).ok_or_else(|| {
             log::warn!(
-                "CommandExecutor: Control ID {control_id} not found for SetInputText in WinID {window_id:?}"
+                "CommandExecutor: Control ID {} not found for SetInputText in WinID {window_id:?}",
+                control_id.raw()
             );
             PlatformError::InvalidHandle(format!(
-                "Control ID {control_id} not found for SetInputText in WinID {window_id:?}"
+                "Control ID {} not found for SetInputText in WinID {window_id:?}",
+                control_id.raw()
             ))
         })
     })?;
 
     unsafe {
         SetWindowTextW(hwnd_edit, &HSTRING::from(text.as_str())).map_err(|e| {
-            log::error!("CommandExecutor: SetWindowTextW failed for input ID {control_id}: {e:?}");
+            log::error!(
+                "CommandExecutor: SetWindowTextW failed for input ID {}: {e:?}",
+                control_id.raw()
+            );
             PlatformError::OperationFailed(format!("SetWindowText failed: {e:?}"))
         })?;
     }
@@ -364,7 +386,7 @@ mod tests {
     use crate::platform_layer::{
         WindowId,
         app::Win32ApiInternalState,
-        types::{MenuAction, MenuItemConfig},
+        types::{ControlId, MenuAction, MenuItemConfig},
         window_common::NativeWindowData,
     };
     use std::sync::Arc;
@@ -391,7 +413,7 @@ mod tests {
         let result = execute_expand_visible_tree_items(
             &internal_state,
             window_id,
-            999, // A non-existent control ID
+            ControlId::new(999), // A non-existent control ID
         );
         assert!(result.is_err());
     }
@@ -407,7 +429,7 @@ mod tests {
         let result = execute_expand_all_tree_items(
             &internal_state,
             window_id,
-            999, // A non-existent control ID
+            ControlId::new(999), // A non-existent control ID
         );
         assert!(result.is_err());
     }

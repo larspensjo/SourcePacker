@@ -14,7 +14,7 @@ use super::{
     controls::{button_handler, input_handler, label_handler, treeview_handler},
     error::{PlatformError, Result as PlatformResult},
     styling::StyleId,
-    types::{AppEvent, DockStyle, LayoutRule, MenuAction, MessageSeverity, WindowId},
+    types::{AppEvent, ControlId, DockStyle, LayoutRule, MenuAction, MessageSeverity, WindowId},
 };
 
 use windows::{
@@ -85,17 +85,17 @@ pub(crate) struct NativeWindowData {
     // The specific internal state for the TreeView control if one exists.
     treeview_state: Option<treeview_handler::TreeViewInternalState>,
     // HWNDs for various controls (buttons, status bar, treeview, etc.)
-    control_hwnd_map: HashMap<i32, HWND>,
+    control_hwnd_map: HashMap<ControlId, HWND>,
     // Maps dynamically generated `i32` menu item IDs to their semantic `MenuAction`.
     menu_action_map: HashMap<i32, MenuAction>,
     // Maps a control's ID to the semantic StyleId applied to it.
-    applied_styles: HashMap<i32, StyleId>,
+    applied_styles: HashMap<ControlId, StyleId>,
     // Counter to generate unique `i32` IDs for menu items that have an action.
     next_menu_item_id_counter: i32,
     // Layout rules for controls within this window.
     layout_rules: Option<Vec<LayoutRule>>,
     /// The current severity for each status label, keyed by its logical ID.
-    label_severities: HashMap<i32, MessageSeverity>,
+    label_severities: HashMap<ControlId, MessageSeverity>,
     status_bar_font: Option<HFONT>,
     treeview_new_item_font: Option<HFONT>,
 }
@@ -125,15 +125,15 @@ impl NativeWindowData {
         self.this_window_hwnd = hwnd;
     }
 
-    pub(crate) fn get_control_hwnd(&self, control_id: i32) -> Option<HWND> {
+    pub(crate) fn get_control_hwnd(&self, control_id: ControlId) -> Option<HWND> {
         self.control_hwnd_map.get(&control_id).copied()
     }
 
-    pub(crate) fn register_control_hwnd(&mut self, control_id: i32, hwnd: HWND) {
+    pub(crate) fn register_control_hwnd(&mut self, control_id: ControlId, hwnd: HWND) {
         self.control_hwnd_map.insert(control_id, hwnd);
     }
 
-    pub(crate) fn has_control(&self, control_id: i32) -> bool {
+    pub(crate) fn has_control(&self, control_id: ControlId) -> bool {
         self.control_hwnd_map.contains_key(&control_id)
     }
 
@@ -162,11 +162,11 @@ impl NativeWindowData {
         self.treeview_state.as_ref()
     }
 
-    pub(crate) fn apply_style_to_control(&mut self, control_id: i32, style_id: StyleId) {
+    pub(crate) fn apply_style_to_control(&mut self, control_id: ControlId, style_id: StyleId) {
         self.applied_styles.insert(control_id, style_id);
     }
 
-    pub(crate) fn get_style_for_control(&self, control_id: i32) -> Option<StyleId> {
+    pub(crate) fn get_style_for_control(&self, control_id: ControlId) -> Option<StyleId> {
         self.applied_styles.get(&control_id).copied()
     }
 
@@ -194,7 +194,7 @@ impl NativeWindowData {
      * algorithm mirrors the runtime layout engine and is recursively
      * applied by `apply_layout_rules_for_children`.
      */
-    fn calculate_layout(parent_rect: RECT, rules: &[LayoutRule]) -> HashMap<i32, RECT> {
+    fn calculate_layout(parent_rect: RECT, rules: &[LayoutRule]) -> HashMap<ControlId, RECT> {
         let mut sorted = rules.to_vec();
         sorted.sort_by_key(|r| r.order);
 
@@ -307,7 +307,7 @@ impl NativeWindowData {
      */
     fn apply_layout_rules_for_children(
         &self,
-        parent_id_for_layout: Option<i32>,
+        parent_id_for_layout: Option<ControlId>,
         parent_rect: RECT,
     ) {
         log::trace!(
@@ -351,7 +351,7 @@ impl NativeWindowData {
             if control_hwnd_opt.is_none() || control_hwnd_opt == Some(HWND_INVALID) {
                 log::warn!(
                     "Layout: HWND for control ID {} not found or invalid.",
-                    rule.control_id
+                    rule.control_id.raw()
                 );
                 continue;
             }
@@ -399,11 +399,11 @@ impl NativeWindowData {
         self.layout_rules = Some(rules);
     }
 
-    pub(crate) fn set_label_severity(&mut self, label_id: i32, severity: MessageSeverity) {
+    pub(crate) fn set_label_severity(&mut self, label_id: ControlId, severity: MessageSeverity) {
         self.label_severities.insert(label_id, severity);
     }
 
-    pub(crate) fn get_label_severity(&self, label_id: i32) -> Option<MessageSeverity> {
+    pub(crate) fn get_label_severity(&self, label_id: ControlId) -> Option<MessageSeverity> {
         self.label_severities.get(&label_id).copied()
     }
 
@@ -844,7 +844,7 @@ impl Win32ApiInternalState {
             return (None, None);
         }
         let nmhdr = unsafe { &*nmhdr_ptr };
-        let control_id_from_notify = nmhdr.idFrom as i32;
+        let control_id_from_notify = ControlId::new(nmhdr.idFrom as i32);
 
         let is_treeview_notification = self.with_window_data_read(window_id, |window_data| {
             Ok(window_data.has_treeview_state()
@@ -855,7 +855,8 @@ impl Win32ApiInternalState {
             match nmhdr.code {
                 NM_CUSTOMDRAW => {
                     log::trace!(
-                        "Routing NM_CUSTOMDRAW from ControlID {control_id_from_notify} to treeview_handler."
+                        "Routing NM_CUSTOMDRAW from ControlID {} to treeview_handler.",
+                        control_id_from_notify.raw()
                     );
                     let lresult = treeview_handler::handle_nm_customdraw(
                         self,
@@ -867,14 +868,16 @@ impl Win32ApiInternalState {
                 }
                 NM_CLICK => {
                     log::trace!(
-                        "Routing NM_CLICK from ControlID {control_id_from_notify} to treeview_handler."
+                        "Routing NM_CLICK from ControlID {} to treeview_handler.",
+                        control_id_from_notify.raw()
                     );
                     treeview_handler::handle_nm_click(self, hwnd_parent_window, window_id, nmhdr);
                     return (None, None);
                 }
                 TVN_ITEMCHANGEDW => {
                     log::trace!(
-                        "Routing TVN_ITEMCHANGEDW from ControlID {control_id_from_notify} to treeview_handler."
+                        "Routing TVN_ITEMCHANGEDW from ControlID {} to treeview_handler.",
+                        control_id_from_notify.raw()
                     );
                     let event = treeview_handler::handle_treeview_itemchanged_notification(
                         self,
@@ -888,7 +891,7 @@ impl Win32ApiInternalState {
                     log::trace!(
                         "Unhandled WM_NOTIFY code {} from known TreeView ControlID {}.",
                         nmhdr.code,
-                        control_id_from_notify
+                        control_id_from_notify.raw()
                     );
                 }
             }
@@ -1006,25 +1009,30 @@ impl Win32ApiInternalState {
         } else {
             // Control notification
             let hwnd_control = HWND(control_hwnd.0 as *mut std::ffi::c_void);
+            let control_id = ControlId::new(command_id);
             if notification_code == BN_CLICKED as i32 {
                 return Some(button_handler::handle_bn_clicked(
                     window_id,
-                    command_id,
+                    control_id,
                     hwnd_control,
                 ));
             } else if notification_code == EN_CHANGE as i32 {
-                log::trace!("Edit control ID {command_id} changed, starting debounce timer");
+                log::trace!(
+                    "Edit control ID {} changed, starting debounce timer",
+                    control_id.raw()
+                );
                 unsafe {
                     SetTimer(
                         Some(_hwnd_parent),
-                        command_id as usize,
+                        control_id.raw() as usize,
                         INPUT_DEBOUNCE_MS,
                         None,
                     );
                 }
             } else {
                 log::trace!(
-                    "Unhandled WM_COMMAND from control: ID {command_id}, NotifyCode {notification_code}, HWND {hwnd_control:?}, WinID {window_id:?}"
+                    "Unhandled WM_COMMAND from control: ID {}, NotifyCode {notification_code}, HWND {hwnd_control:?}, WinID {window_id:?}",
+                    control_id.raw()
                 );
             }
         }
@@ -1041,11 +1049,11 @@ impl Win32ApiInternalState {
         unsafe {
             _ = KillTimer(Some(hwnd), timer_id.0);
         }
-        let control_id = timer_id.0 as i32;
+        let control_id = ControlId::new(timer_id.0 as i32);
 
         let hwnd_edit_result = self.with_window_data_read(window_id, |window_data| {
             window_data.get_control_hwnd(control_id).ok_or_else(|| {
-                log::warn!("Control not found for timer ID {control_id}");
+                log::warn!("Control not found for timer ID {}", control_id.raw());
                 PlatformError::InvalidHandle("Control not found for timer".into())
             })
         });
@@ -1224,10 +1232,11 @@ mod tests {
         let mut data = NativeWindowData::new(WindowId(1));
         let hwnd = HWND(0x1234 as *mut std::ffi::c_void);
         // Act
-        data.register_control_hwnd(42, hwnd);
+        let control_id = ControlId::new(42);
+        data.register_control_hwnd(control_id, hwnd);
         // Assert
-        assert_eq!(data.get_control_hwnd(42), Some(hwnd));
-        assert!(data.has_control(42));
+        assert_eq!(data.get_control_hwnd(control_id), Some(hwnd));
+        assert!(data.has_control(control_id));
     }
 
     #[test]
@@ -1251,9 +1260,13 @@ mod tests {
         // Arrange
         let mut data = NativeWindowData::new(WindowId(3));
         // Act
-        data.set_label_severity(7, MessageSeverity::Warning);
+        let label_id = ControlId::new(7);
+        data.set_label_severity(label_id, MessageSeverity::Warning);
         // Assert
-        assert_eq!(data.get_label_severity(7), Some(MessageSeverity::Warning));
+        assert_eq!(
+            data.get_label_severity(label_id),
+            Some(MessageSeverity::Warning)
+        );
     }
 
     /*
@@ -1266,7 +1279,7 @@ mod tests {
         // Arrange
         let rules = vec![
             LayoutRule {
-                control_id: 1,
+                control_id: ControlId::new(1),
                 parent_control_id: None,
                 dock_style: DockStyle::Top,
                 order: 0,
@@ -1274,7 +1287,7 @@ mod tests {
                 margin: (0, 0, 0, 0),
             },
             LayoutRule {
-                control_id: 2,
+                control_id: ControlId::new(2),
                 parent_control_id: None,
                 dock_style: DockStyle::Fill,
                 order: 1,
@@ -1291,9 +1304,9 @@ mod tests {
         // Act
         let map = NativeWindowData::calculate_layout(parent_rect, &rules);
         // Assert
-        assert_eq!(map.get(&1).unwrap().bottom, 20);
-        assert_eq!(map.get(&2).unwrap().top, 20);
-        assert_eq!(map.get(&2).unwrap().bottom, 100);
+        assert_eq!(map.get(&ControlId::new(1)).unwrap().bottom, 20);
+        assert_eq!(map.get(&ControlId::new(2)).unwrap().top, 20);
+        assert_eq!(map.get(&ControlId::new(2)).unwrap().bottom, 100);
     }
 
     #[test]
@@ -1301,7 +1314,7 @@ mod tests {
         // Arrange
         let rules = vec![
             LayoutRule {
-                control_id: 1,
+                control_id: ControlId::new(1),
                 parent_control_id: None,
                 dock_style: DockStyle::ProportionalFill { weight: 1.0 },
                 order: 0,
@@ -1309,7 +1322,7 @@ mod tests {
                 margin: (0, 0, 0, 0),
             },
             LayoutRule {
-                control_id: 2,
+                control_id: ControlId::new(2),
                 parent_control_id: None,
                 dock_style: DockStyle::ProportionalFill { weight: 2.0 },
                 order: 1,
@@ -1326,8 +1339,8 @@ mod tests {
         // Act
         let map = NativeWindowData::calculate_layout(parent_rect, &rules);
         // Assert
-        let rect1 = map.get(&1).unwrap();
-        let rect2 = map.get(&2).unwrap();
+        let rect1 = map.get(&ControlId::new(1)).unwrap();
+        let rect2 = map.get(&ControlId::new(2)).unwrap();
         assert_eq!(rect1.right - rect1.left, 33);
         assert_eq!(rect2.left, 33);
         assert_eq!(rect2.right - rect2.left, 66);
@@ -1337,7 +1350,7 @@ mod tests {
     fn test_calculate_layout_nested_panels() {
         // Arrange
         let outer_rule = LayoutRule {
-            control_id: 1,
+            control_id: ControlId::new(1),
             parent_control_id: None,
             dock_style: DockStyle::Fill,
             order: 0,
@@ -1346,16 +1359,16 @@ mod tests {
         };
         let inner_rules = vec![
             LayoutRule {
-                control_id: 2,
-                parent_control_id: Some(1),
+                control_id: ControlId::new(2),
+                parent_control_id: Some(ControlId::new(1)),
                 dock_style: DockStyle::Top,
                 order: 0,
                 fixed_size: Some(10),
                 margin: (0, 0, 0, 0),
             },
             LayoutRule {
-                control_id: 3,
-                parent_control_id: Some(1),
+                control_id: ControlId::new(3),
+                parent_control_id: Some(ControlId::new(1)),
                 dock_style: DockStyle::Fill,
                 order: 1,
                 fixed_size: None,
@@ -1370,7 +1383,7 @@ mod tests {
         };
         // Act
         let outer_map = NativeWindowData::calculate_layout(parent_rect, &[outer_rule.clone()]);
-        let outer_rect = outer_map.get(&1).unwrap();
+        let outer_rect = outer_map.get(&ControlId::new(1)).unwrap();
         let inner_map = NativeWindowData::calculate_layout(
             RECT {
                 left: 0,
@@ -1382,7 +1395,7 @@ mod tests {
         );
         // Assert
         assert_eq!(outer_rect.right - outer_rect.left, 50);
-        assert_eq!(inner_map.get(&2).unwrap().bottom, 10);
-        assert_eq!(inner_map.get(&3).unwrap().top, 10);
+        assert_eq!(inner_map.get(&ControlId::new(2)).unwrap().bottom, 10);
+        assert_eq!(inner_map.get(&ControlId::new(3)).unwrap().top, 10);
     }
 }

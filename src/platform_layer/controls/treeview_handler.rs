@@ -12,7 +12,7 @@
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
 use crate::platform_layer::types::{
-    AppEvent, CheckState, TreeItemDescriptor, TreeItemId, WindowId,
+    AppEvent, CheckState, ControlId, TreeItemDescriptor, TreeItemId, WindowId,
 };
 
 use windows::{
@@ -188,11 +188,13 @@ impl TreeViewInternalState {
 pub(crate) fn handle_create_treeview_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    parent_control_id: Option<i32>,
-    control_id: i32,
+    parent_control_id: Option<ControlId>,
+    control_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: handle_create_treeview_command for WinID {window_id:?}, ParentID {parent_control_id:?}, ControlID {control_id}"
+        "TreeViewHandler: handle_create_treeview_command for WinID {window_id:?}, ParentID {:?}, ControlID {}",
+        parent_control_id.as_ref().map(|id| id.raw()),
+        control_id.raw()
     );
 
     // Phase 1: Read-only pre-checks.
@@ -200,14 +202,16 @@ pub(crate) fn handle_create_treeview_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             if window_data.has_control(control_id) || window_data.has_treeview_state() {
                 return Err(PlatformError::ControlCreationFailed(format!(
-                    "TreeView with ID {control_id} or existing treeview state already present for window {window_id:?}"
+                    "TreeView with ID {} or existing treeview state already present for window {window_id:?}",
+                    control_id.raw()
                 )));
             }
 
             let hwnd = match parent_control_id {
                 Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
                     PlatformError::InvalidHandle(format!(
-                        "Parent control with ID {id} not found for CreateTreeView in WinID {window_id:?}"
+                        "Parent control with ID {} not found for CreateTreeView in WinID {window_id:?}",
+                        id.raw()
                     ))
                 })?,
                 None => window_data.get_hwnd(),
@@ -238,7 +242,7 @@ pub(crate) fn handle_create_treeview_command(
             10,
             10, // Dummy position/size, layout rules will adjust
             Some(hwnd_parent_for_creation),
-            Some(HMENU(control_id as *mut _)), // Use logical ID for HMENU
+            Some(HMENU(control_id.raw() as *mut _)), // Use logical ID for HMENU
             Some(h_instance_for_creation),
             None, // No extra creation parameters
         )?
@@ -249,18 +253,21 @@ pub(crate) fn handle_create_treeview_command(
         // Re-check for race conditions.
         if window_data.has_control(control_id) || window_data.has_treeview_state() {
             log::warn!(
-                "TreeViewHandler: TreeView (ID {control_id}) created concurrently. Destroying new one."
+                "TreeViewHandler: TreeView (ID {}) created concurrently. Destroying new one.",
+                control_id.raw()
             );
             unsafe { DestroyWindow(hwnd_tv).ok() };
             return Err(PlatformError::ControlCreationFailed(format!(
-                "TreeView with ID {control_id} was concurrently created for window {window_id:?}"
+                "TreeView with ID {} was concurrently created for window {window_id:?}",
+                control_id.raw()
             )));
         }
 
         window_data.register_control_hwnd(control_id, hwnd_tv);
         window_data.init_treeview_state();
         log::debug!(
-            "TreeViewHandler: Created TreeView (ID {control_id}) for window {window_id:?} with HWND {hwnd_tv:?}"
+            "TreeViewHandler: Created TreeView (ID {}) for window {window_id:?} with HWND {hwnd_tv:?}",
+            control_id.raw()
         );
         Ok(())
     })
@@ -276,11 +283,12 @@ pub(crate) fn handle_create_treeview_command(
 pub(crate) fn populate_treeview(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     items: Vec<TreeItemDescriptor>,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: populate_treeview called for WinID {window_id:?}, ControlID {control_id}"
+        "TreeViewHandler: populate_treeview called for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
 
     internal_state.with_treeview_state_mut(window_id, control_id, |hwnd_treeview, tv_state| {
@@ -308,12 +316,13 @@ pub(crate) fn populate_treeview(
 pub(crate) fn update_treeview_item_visual_state(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     item_id: TreeItemId,
     new_check_state: CheckState,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: update_treeview_item_visual_state for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}"
+        "TreeViewHandler: update_treeview_item_visual_state for WinID {window_id:?}, ControlID {}, ItemID {item_id:?}",
+        control_id.raw()
     );
 
     // Get all necessary handles and data within a single read lock.
@@ -321,7 +330,8 @@ pub(crate) fn update_treeview_item_visual_state(
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for ControlID {control_id}"
+                    "TreeView HWND not found for ControlID {}",
+                    control_id.raw()
                 ))
             })?;
 
@@ -386,19 +396,21 @@ pub(crate) fn update_treeview_item_visual_state(
 pub(crate) fn update_treeview_item_text(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     item_id: TreeItemId,
     text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: update_treeview_item_text for WinID {window_id:?}, ControlID {control_id}, ItemID {item_id:?}"
+        "TreeViewHandler: update_treeview_item_text for WinID {window_id:?}, ControlID {}, ItemID {item_id:?}",
+        control_id.raw()
     );
 
     let (hwnd_treeview, h_item_native) =
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for ControlID {control_id}"
+                    "TreeView HWND not found for ControlID {}",
+                    control_id.raw()
                 ))
             })?;
 
@@ -461,10 +473,11 @@ pub(crate) fn handle_treeview_itemchanged_notification(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     _lparam: LPARAM,
-    control_id_from_notify: i32,
+    control_id_from_notify: ControlId,
 ) -> Option<AppEvent> {
     log::trace!(
-        "TreeViewHandler: TVN_ITEMCHANGEDW received for WinID {window_id:?}, ControlID {control_id_from_notify}",
+        "TreeViewHandler: TVN_ITEMCHANGEDW received for WinID {window_id:?}, ControlID {}",
+        control_id_from_notify.raw()
     );
     // Check if TreeView state exists for this window.
     if let Ok(false) =
@@ -487,7 +500,7 @@ pub(crate) fn handle_treeview_itemchanged_notification(
 pub(crate) fn handle_redraw_tree_item_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     item_id: TreeItemId,
 ) -> PlatformResult<()> {
     log::debug!(
@@ -498,7 +511,8 @@ pub(crate) fn handle_redraw_tree_item_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView control (ID {control_id}) not found"
+                    "TreeView control (ID {}) not found",
+                    control_id.raw()
                 ))
             })?;
 
@@ -558,18 +572,20 @@ pub(crate) fn handle_redraw_tree_item_command(
 fn get_treeview_hwnd(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
 ) -> PlatformResult<HWND> {
     internal_state.with_window_data_read(window_id, |window_data| {
         let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
             PlatformError::InvalidHandle(format!(
-                "Control ID {control_id} not found in WinID {window_id:?}"
+                "Control ID {} not found in WinID {window_id:?}",
+                control_id.raw()
             ))
         })?;
 
         if hwnd.is_invalid() {
             return Err(PlatformError::InvalidHandle(format!(
-                "HWND for control ID {control_id} is invalid"
+                "HWND for control ID {} is invalid",
+                control_id.raw()
             )));
         }
         Ok(hwnd)
@@ -579,10 +595,11 @@ fn get_treeview_hwnd(
 pub(crate) fn expand_visible_tree_items(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: expand_visible_tree_items for WinID {window_id:?}, ControlID {control_id}"
+        "TreeViewHandler: expand_visible_tree_items for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
     let hwnd_treeview = get_treeview_hwnd(internal_state, window_id, control_id)?;
 
@@ -621,10 +638,11 @@ pub(crate) fn expand_visible_tree_items(
 pub(crate) fn expand_all_tree_items(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "TreeViewHandler: expand_all_tree_items for WinID {window_id:?}, ControlID {control_id}"
+        "TreeViewHandler: expand_all_tree_items for WinID {window_id:?}, ControlID {}",
+        control_id.raw()
     );
     let hwnd_treeview = get_treeview_hwnd(internal_state, window_id, control_id)?;
 
@@ -721,14 +739,15 @@ pub(crate) fn handle_nm_customdraw(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     lparam_nmcustomdraw: LPARAM, // This is NMTVCUSTOMDRAW*
-    control_id_of_treeview: i32,
+    control_id_of_treeview: ControlId,
 ) -> LRESULT {
     let nmtvcd = unsafe { &*(lparam_nmcustomdraw.0 as *const NMTVCUSTOMDRAW) };
 
     match nmtvcd.nmcd.dwDrawStage {
         CDDS_PREPAINT => {
             log::trace!(
-                "TreeViewHandler NM_CUSTOMDRAW (WinID {window_id:?}/CtrlID {control_id_of_treeview}): CDDS_PREPAINT. Requesting CDRF_NOTIFYITEMDRAW."
+                "TreeViewHandler NM_CUSTOMDRAW (WinID {window_id:?}/CtrlID {}): CDDS_PREPAINT. Requesting CDRF_NOTIFYITEMDRAW.",
+                control_id_of_treeview.raw()
             );
             return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
         }
@@ -822,9 +841,9 @@ pub(crate) fn handle_wm_app_treeview_checkbox_clicked(
     lparam_control_id: LPARAM,
 ) -> Option<AppEvent> {
     let h_item_clicked = HTREEITEM(wparam_htreeitem.0 as isize);
-    let control_id_of_treeview = lparam_control_id.0 as i32;
+    let control_id_of_treeview = ControlId::new(lparam_control_id.0 as i32);
 
-    if h_item_clicked.0 == 0 || control_id_of_treeview == 0 {
+    if h_item_clicked.0 == 0 || control_id_of_treeview.raw() == 0 {
         return None;
     }
 
@@ -906,7 +925,7 @@ pub(crate) fn handle_nm_click(
         return;
     }
 
-    let control_id_from_notify = nmhdr.idFrom as i32;
+    let control_id_from_notify = ControlId::new(nmhdr.idFrom as i32);
 
     let mut screen_pt_of_click = POINT::default();
     if unsafe { GetCursorPos(&mut screen_pt_of_click) }.is_err() {
@@ -943,7 +962,7 @@ pub(crate) fn handle_nm_click(
                 Some(parent_hwnd),
                 crate::platform_layer::window_common::WM_APP_TREEVIEW_CHECKBOX_CLICKED,
                 WPARAM(h_item_hit.0 as usize),
-                LPARAM(control_id_from_notify as isize),
+                LPARAM(control_id_from_notify.raw() as isize),
             )
             .is_err()
             {

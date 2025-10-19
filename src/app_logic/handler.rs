@@ -7,7 +7,7 @@ use crate::core::{
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
     PlatformCommand, PlatformEventHandler, StyleId, TreeItemId, UiStateProvider, WindowId,
-    types::MenuAction,
+    types::{ControlId, MenuAction},
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, ui_constants};
@@ -821,7 +821,7 @@ impl MyAppLogic {
         }
     }
 
-    fn handle_button_clicked(&mut self, window_id: WindowId, control_id: i32) {
+    fn handle_button_clicked(&mut self, window_id: WindowId, control_id: ControlId) {
         match control_id {
             ui_constants::FILTER_EXPAND_BUTTON_ID => {
                 self.handle_expand_filtered_all_click(window_id);
@@ -831,7 +831,8 @@ impl MyAppLogic {
             }
             _ => {
                 log::debug!(
-                    "ButtonClicked for unhandled control_id {control_id} on window {window_id:?}"
+                    "ButtonClicked for unhandled control_id {} on window {window_id:?}",
+                    control_id.raw()
                 );
             }
         }
@@ -2215,7 +2216,8 @@ impl PlatformEventHandler for MyAppLogic {
                     self.handle_filter_text_submitted(window_id, text);
                 } else {
                     log::debug!(
-                        "InputTextChanged received for unhandled control {control_id} in window {window_id:?}"
+                        "InputTextChanged received for unhandled control {} in window {window_id:?}",
+                        control_id.raw()
                     );
                 }
             }

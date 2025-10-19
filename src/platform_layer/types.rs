@@ -28,6 +28,37 @@ pub struct WindowId(pub(crate) usize);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TreeItemId(pub u64);
 
+/*
+ * Represents a logical UI control identifier shared between the app logic
+ * and the platform layer. Wrapping the raw `i32` ID prevents accidental
+ * mixing with unrelated integer values and documents the intended usage.
+ * The platform layer maps these logical IDs to native control handles.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ControlId(pub i32);
+
+impl ControlId {
+    pub const fn new(raw: i32) -> Self {
+        Self(raw)
+    }
+
+    pub const fn raw(self) -> i32 {
+        self.0
+    }
+}
+
+impl From<i32> for ControlId {
+    fn from(raw: i32) -> Self {
+        Self(raw)
+    }
+}
+
+impl From<ControlId> for i32 {
+    fn from(control_id: ControlId) -> Self {
+        control_id.0
+    }
+}
+
 // --- Semantic Menu Action Identifiers ---
 
 /*
@@ -125,8 +156,8 @@ pub enum DockStyle {
  */
 #[derive(Debug, Clone)]
 pub struct LayoutRule {
-    pub control_id: i32,                // The ID of the control this rule applies to.
-    pub parent_control_id: Option<i32>, // ID of the parent control, None for main window.
+    pub control_id: ControlId, // The ID of the control this rule applies to.
+    pub parent_control_id: Option<ControlId>, // ID of the parent control, None for main window.
     pub dock_style: DockStyle,
     pub order: u32, // Order of application (e.g., 0 for top, 1 for bottom, 10 for fill)
     pub fixed_size: Option<i32>, // For Top/Bottom, this is height. For Left/Right, this is width. Not used for Fill/None.
@@ -166,7 +197,7 @@ pub enum AppEvent {
     // Signals that a button was clicked.
     ButtonClicked {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
     },
     // Signals that a menu item was clicked, identified by its semantic `MenuAction`.
     MenuActionClicked {
@@ -208,7 +239,7 @@ pub enum AppEvent {
     // Signals that text was entered in an input control after debouncing.
     InputTextChanged {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         text: String,
     },
 }
@@ -254,18 +285,18 @@ pub enum PlatformCommand {
     },
     PopulateTreeView {
         window_id: WindowId,
-        control_id: i32, /* New: Logical ID of the TreeView to populate */
+        control_id: ControlId, /* New: Logical ID of the TreeView to populate */
         items: Vec<TreeItemDescriptor>,
     },
     UpdateTreeItemVisualState {
         window_id: WindowId,
-        control_id: i32, /* New: Logical ID of the TreeView containing the item */
+        control_id: ControlId, /* New: Logical ID of the TreeView containing the item */
         item_id: TreeItemId,
         new_state: CheckState,
     },
     UpdateTreeItemText {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         item_id: TreeItemId,
         text: String,
     },
@@ -318,7 +349,7 @@ pub enum PlatformCommand {
     },
     SetControlEnabled {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         enabled: bool,
     },
     QuitApplication,
@@ -329,14 +360,14 @@ pub enum PlatformCommand {
     },
     CreateButton {
         window_id: WindowId,
-        control_id: i32, // The existing logical ID (e.g., ID_BUTTON_GENERATE_ARCHIVE)
+        control_id: ControlId, // The existing logical ID (e.g., ID_BUTTON_GENERATE_ARCHIVE)
         text: String,
         // Position/size will be managed by DefineLayout command.
     },
     CreateTreeView {
         window_id: WindowId,
-        parent_control_id: Option<i32>, // The logical ID for the parent, None for main window
-        control_id: i32,                // The logical ID for the TreeView
+        parent_control_id: Option<ControlId>, // The logical ID for the parent, None for main window
+        control_id: ControlId,                // The logical ID for the TreeView
     },
     // Signals to the platform layer that all initial UI description commands
     // for the main window have been enqueued and processed.
@@ -350,46 +381,46 @@ pub enum PlatformCommand {
     },
     CreatePanel {
         window_id: WindowId,
-        parent_control_id: Option<i32>, // None means child of main window's client area
-        control_id: i32,                // Logical ID for this new panel
+        parent_control_id: Option<ControlId>, // None means child of main window's client area
+        control_id: ControlId,                // Logical ID for this new panel
     },
     CreateLabel {
         window_id: WindowId,
-        parent_panel_id: i32,
-        control_id: i32,
+        parent_panel_id: ControlId,
+        control_id: ControlId,
         initial_text: String,
         class: LabelClass, // Classify labels for potential specific styling
     },
     CreateInput {
         window_id: WindowId,
-        parent_control_id: Option<i32>,
-        control_id: i32,
+        parent_control_id: Option<ControlId>,
+        control_id: ControlId,
         initial_text: String,
     },
     SetInputText {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         text: String,
     },
     UpdateLabelText {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         text: String,
         severity: MessageSeverity,
     },
     // Expands only the currently visible items in a TreeView. Used when a filter is active.
     ExpandVisibleTreeItems {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
     },
     // Expands all items in a TreeView regardless of visibility.
     ExpandAllTreeItems {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
     },
     RedrawTreeItem {
         window_id: WindowId,
-        control_id: i32, /* New: Logical ID of the TreeView containing the item */
+        control_id: ControlId, /* New: Logical ID of the TreeView containing the item */
         item_id: TreeItemId,
     },
 
@@ -402,7 +433,7 @@ pub enum PlatformCommand {
     // Applies a previously defined style to a specific control.
     ApplyStyleToControl {
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         style_id: StyleId,
     },
 }

@@ -7,7 +7,7 @@
 
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
-use crate::platform_layer::types::WindowId;
+use crate::platform_layer::types::{ControlId, WindowId};
 use crate::platform_layer::window_common::WC_STATIC;
 
 use std::sync::Arc;
@@ -60,30 +60,36 @@ unsafe extern "system" fn forwarding_panel_proc(
 pub(crate) fn handle_create_panel_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    parent_control_id: Option<i32>,
-    panel_id: i32,
+    parent_control_id: Option<ControlId>,
+    panel_id: ControlId,
 ) -> PlatformResult<()> {
     log::debug!(
-        "PanelHandler: handle_create_panel_command for WinID {window_id:?}, PanelID: {panel_id}, ParentControlID: {parent_control_id:?}"
+        "PanelHandler: handle_create_panel_command for WinID {window_id:?}, PanelID: {}, ParentControlID: {:?}",
+        panel_id.raw(),
+        parent_control_id.as_ref().map(|id| id.raw())
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
         if window_data.has_control(panel_id) {
             log::warn!(
-                "PanelHandler: Panel with logical ID {panel_id} already exists for window {window_id:?}."
+                "PanelHandler: Panel with logical ID {} already exists for window {window_id:?}.",
+                panel_id.raw()
             );
             return Err(PlatformError::OperationFailed(format!(
-                "Panel with logical ID {panel_id} already exists for window {window_id:?}"
+                "Panel with logical ID {} already exists for window {window_id:?}",
+                panel_id.raw()
             )));
         }
 
         let hwnd_parent = match parent_control_id {
             Some(id) => window_data.get_control_hwnd(id).ok_or_else(|| {
                 log::warn!(
-                    "PanelHandler: Parent control with logical ID {id} not found for CreatePanel in WinID {window_id:?}"
+                    "PanelHandler: Parent control with logical ID {} not found for CreatePanel in WinID {window_id:?}",
+                    id.raw()
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Parent control with logical ID {id} not found for CreatePanel in WinID {window_id:?}"
+                    "Parent control with logical ID {} not found for CreatePanel in WinID {window_id:?}",
+                    id.raw()
                 ))
             })?,
             None => window_data.get_hwnd(),
@@ -91,10 +97,12 @@ pub(crate) fn handle_create_panel_command(
 
         if hwnd_parent.is_invalid() {
             log::error!(
-                "PanelHandler: Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {parent_control_id:?})"
+                "PanelHandler: Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {:?})",
+                parent_control_id.as_ref().map(|id| id.raw())
             );
             return Err(PlatformError::InvalidHandle(format!(
-                "Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {parent_control_id:?})"
+                "Parent HWND for CreatePanel is invalid (WinID: {window_id:?}, ParentControlID: {:?})",
+                parent_control_id.as_ref().map(|id| id.raw())
             )));
         }
 
@@ -110,7 +118,7 @@ pub(crate) fn handle_create_panel_command(
                 10,
                 10,
                 Some(hwnd_parent),
-                Some(HMENU(panel_id as *mut _)),
+                Some(HMENU(panel_id.raw() as *mut _)),
                 Some(h_instance),
                 None,
             )?
@@ -124,7 +132,8 @@ pub(crate) fn handle_create_panel_command(
 
         window_data.register_control_hwnd(panel_id, hwnd_panel);
         log::debug!(
-            "PanelHandler: Created panel (LogicalID {panel_id}) for WinID {window_id:?} with HWND {hwnd_panel:?}"
+            "PanelHandler: Created panel (LogicalID {}) for WinID {window_id:?} with HWND {hwnd_panel:?}",
+            panel_id.raw()
         );
         Ok(())
     })

@@ -14,7 +14,7 @@ use crate::platform_layer::{
     app::Win32ApiInternalState,
     error::{PlatformError, Result as PlatformResult},
     styling::Color,
-    types::{LabelClass, MessageSeverity, WindowId},
+    types::{ControlId, LabelClass, MessageSeverity, WindowId},
     window_common::{SS_LEFT, WC_STATIC},
 };
 
@@ -51,22 +51,26 @@ fn color_to_colorref(color: &Color) -> COLORREF {
 pub(crate) fn handle_create_label_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    parent_panel_id: i32,
-    label_id: i32,
+    parent_panel_id: ControlId,
+    label_id: ControlId,
     initial_text: String,
     class: LabelClass,
 ) -> PlatformResult<()> {
     log::debug!(
-        "LabelHandler: handle_create_label_command for WinID {window_id:?}, LabelID: {label_id}, ParentPanelID: {parent_panel_id}, Text: '{initial_text}', Class: {class:?}",
+        "LabelHandler: handle_create_label_command for WinID {window_id:?}, LabelID: {}, ParentPanelID: {}, Text: '{initial_text}', Class: {class:?}",
+        label_id.raw(),
+        parent_panel_id.raw()
     );
 
     internal_state.with_window_data_write(window_id, |window_data| {
         if window_data.has_control(label_id) {
             log::warn!(
-                "LabelHandler: Label with logical ID {label_id} already exists for window {window_id:?}."
+                "LabelHandler: Label with logical ID {} already exists for window {window_id:?}.",
+                label_id.raw()
             );
             return Err(PlatformError::OperationFailed(format!(
-                "Label with logical ID {label_id} already exists for window {window_id:?}"
+                "Label with logical ID {} already exists for window {window_id:?}",
+                label_id.raw()
             )));
         }
 
@@ -74,10 +78,12 @@ pub(crate) fn handle_create_label_command(
             .get_control_hwnd(parent_panel_id)
             .ok_or_else(|| {
                 log::warn!(
-                    "LabelHandler: Parent panel with logical ID {parent_panel_id} not found for CreateLabel in WinID {window_id:?}."
+                    "LabelHandler: Parent panel with logical ID {} not found for CreateLabel in WinID {window_id:?}.",
+                    parent_panel_id.raw()
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Parent panel with logical ID {parent_panel_id} not found for CreateLabel in WinID {window_id:?}"
+                    "Parent panel with logical ID {} not found for CreateLabel in WinID {window_id:?}",
+                    parent_panel_id.raw()
                 ))
             })?;
 
@@ -94,7 +100,7 @@ pub(crate) fn handle_create_label_command(
                 10, // Dummy position/size, layout rules will adjust
                 Some(hwnd_parent_panel),
                 Some(windows::Win32::UI::WindowsAndMessaging::HMENU(
-                    label_id as *mut _,
+                    label_id.raw() as *mut _,
                 )), // Use logical ID for the HMENU
                 Some(h_instance),
                 None,
@@ -114,7 +120,8 @@ pub(crate) fn handle_create_label_command(
                         )
                     }; // LPARAM(1) to redraw
                     log::debug!(
-                        "LabelHandler: Applied status bar font to label ID {label_id}"
+                        "LabelHandler: Applied status bar font to label ID {}",
+                        label_id.raw()
                     );
                 }
             }
@@ -123,7 +130,8 @@ pub(crate) fn handle_create_label_command(
         window_data.register_control_hwnd(label_id, hwnd_label);
         window_data.set_label_severity(label_id, MessageSeverity::Information); // Default to Information
         log::debug!(
-            "LabelHandler: Created label '{initial_text}' (LogicalID {label_id}) for WinID {window_id:?} with HWND {hwnd_label:?}"
+            "LabelHandler: Created label '{initial_text}' (LogicalID {}) for WinID {window_id:?} with HWND {hwnd_label:?}",
+            label_id.raw()
         );
         Ok(())
     })
@@ -140,22 +148,25 @@ pub(crate) fn handle_create_label_command(
 pub(crate) fn handle_update_label_text_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    label_id: i32,
+    label_id: ControlId,
     text: String,
     severity: MessageSeverity,
 ) -> PlatformResult<()> {
     log::debug!(
-        "LabelHandler: handle_update_label_text_command for WinID {window_id:?}, LabelID: {label_id}, Text: '{text}', Severity: {severity:?}"
+        "LabelHandler: handle_update_label_text_command for WinID {window_id:?}, LabelID: {}, Text: '{text}', Severity: {severity:?}",
+        label_id.raw()
     );
 
     let hwnd_label =
         internal_state.with_window_data_write(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(label_id).ok_or_else(|| {
                 log::warn!(
-                    "LabelHandler: Label with logical ID {label_id} not found for UpdateLabelText in WinID {window_id:?}."
+                    "LabelHandler: Label with logical ID {} not found for UpdateLabelText in WinID {window_id:?}.",
+                    label_id.raw()
                 );
                 PlatformError::InvalidHandle(format!(
-                    "Label with logical ID {label_id} not found for UpdateLabelText in WinID {window_id:?}"
+                    "Label with logical ID {} not found for UpdateLabelText in WinID {window_id:?}",
+                    label_id.raw()
                 ))
             })?;
 
@@ -170,10 +181,12 @@ pub(crate) fn handle_update_label_text_command(
         if SetWindowTextW(hwnd_label, &HSTRING::from(text.as_str())).is_err() {
             let last_error = GetLastError();
             log::error!(
-                "LabelHandler: SetWindowTextW for label ID {label_id} failed: {last_error:?}"
+                "LabelHandler: SetWindowTextW for label ID {} failed: {last_error:?}",
+                label_id.raw()
             );
             return Err(PlatformError::OperationFailed(format!(
-                "SetWindowTextW for label ID {label_id} failed: {last_error:?}"
+                "SetWindowTextW for label ID {} failed: {last_error:?}",
+                label_id.raw()
             )));
         }
         // Trigger repaint for WM_CTLCOLORSTATIC to apply new severity color
@@ -197,10 +210,11 @@ pub(crate) fn handle_wm_ctlcolorstatic(
     hdc_static_ctrl: HDC,   // Directly pass HDC from WPARAM
     hwnd_static_ctrl: HWND, // Directly pass HWND from LPARAM
 ) -> Option<LRESULT> {
-    let control_id = unsafe { GetDlgCtrlID(hwnd_static_ctrl) };
-    if control_id == 0 {
+    let control_id_raw = unsafe { GetDlgCtrlID(hwnd_static_ctrl) };
+    if control_id_raw == 0 {
         return None; // Not a control with an ID, let system handle it.
     }
+    let control_id = ControlId::new(control_id_raw);
 
     let style_result: PlatformResult<Option<LRESULT>> =
         internal_state.with_window_data_read(window_id, |window_data| {
@@ -226,15 +240,18 @@ pub(crate) fn handle_wm_ctlcolorstatic(
                     // We must return the parent's background brush.
                     if let Ok(parent_hwnd) = unsafe { GetParent(hwnd_static_ctrl) } {
                         if !parent_hwnd.is_invalid() {
-                            let parent_id = unsafe { GetDlgCtrlID(parent_hwnd) };
-                            if let Some(parent_style_id) =
-                                window_data.get_style_for_control(parent_id)
-                            {
-                                if let Some(parent_style) =
-                                    internal_state.get_parsed_style(parent_style_id)
+                            let parent_id_raw = unsafe { GetDlgCtrlID(parent_hwnd) };
+                            if parent_id_raw != 0 {
+                                let parent_id = ControlId::new(parent_id_raw);
+                                if let Some(parent_style_id) =
+                                    window_data.get_style_for_control(parent_id)
                                 {
-                                    if let Some(parent_brush) = parent_style.background_brush {
-                                        return Ok(Some(LRESULT(parent_brush.0 as isize)));
+                                    if let Some(parent_style) =
+                                        internal_state.get_parsed_style(parent_style_id)
+                                    {
+                                        if let Some(parent_brush) = parent_style.background_brush {
+                                            return Ok(Some(LRESULT(parent_brush.0 as isize)));
+                                        }
                                     }
                                 }
                             }

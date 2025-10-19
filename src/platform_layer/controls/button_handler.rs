@@ -6,7 +6,7 @@
 
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::{PlatformError, Result as PlatformResult};
-use crate::platform_layer::types::{AppEvent, WindowId};
+use crate::platform_layer::types::{AppEvent, ControlId, WindowId};
 
 use std::sync::Arc;
 use windows::Win32::{
@@ -34,11 +34,12 @@ const WC_BUTTON: PCWSTR = windows::core::w!("BUTTON");
 pub(crate) fn handle_create_button_command(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     text: String,
 ) -> PlatformResult<()> {
     log::debug!(
-        "ButtonHandler: handle_create_button_command for WinID {window_id:?}, ControlID {control_id}, Text: '{text}'"
+        "ButtonHandler: handle_create_button_command for WinID {window_id:?}, ControlID {}, Text: '{text}'",
+        control_id.raw()
     );
 
     // Phase 1: Read-only pre-checks.
@@ -47,10 +48,12 @@ pub(crate) fn handle_create_button_command(
         internal_state.with_window_data_read(window_id, |window_data| {
             if window_data.has_control(control_id) {
                 log::warn!(
-                    "ButtonHandler: Button with ID {control_id} already exists for window {window_id:?}."
+                    "ButtonHandler: Button with ID {} already exists for window {window_id:?}.",
+                    control_id.raw()
                 );
                 return Err(PlatformError::OperationFailed(format!(
-                    "Button with ID {control_id} already exists for window {window_id:?}"
+                    "Button with ID {} already exists for window {window_id:?}",
+                    control_id.raw()
                 )));
             }
 
@@ -79,7 +82,7 @@ pub(crate) fn handle_create_button_command(
             10,
             10,
             Some(hwnd_parent_for_creation),
-            Some(HMENU(control_id as *mut _)),
+            Some(HMENU(control_id.raw() as *mut _)),
             Some(h_instance),
             None,
         )?
@@ -91,20 +94,23 @@ pub(crate) fn handle_create_button_command(
         // while we were not holding a lock.
         if window_data.has_control(control_id) {
             log::warn!(
-                "ButtonHandler: Control ID {control_id} was created concurrently for window {window_id:?}. Destroying new HWND."
+                "ButtonHandler: Control ID {} was created concurrently for window {window_id:?}. Destroying new HWND.",
+                control_id.raw()
             );
             unsafe {
                 // Safely ignore error if window is already gone.
                 DestroyWindow(hwnd_button).ok();
             }
             return Err(PlatformError::OperationFailed(format!(
-                "Button with ID {control_id} was created concurrently for window {window_id:?}"
+                "Button with ID {} was created concurrently for window {window_id:?}",
+                control_id.raw()
             )));
         }
 
         window_data.register_control_hwnd(control_id, hwnd_button);
         log::debug!(
-            "ButtonHandler: Created button '{text}' (ID {control_id}) for window {window_id:?} with HWND {hwnd_button:?}"
+            "ButtonHandler: Created button '{text}' (ID {}) for window {window_id:?} with HWND {hwnd_button:?}",
+            control_id.raw()
         );
         Ok(())
     })
@@ -115,11 +121,12 @@ pub(crate) fn handle_create_button_command(
  */
 pub(crate) fn handle_bn_clicked(
     window_id: WindowId,
-    control_id: i32,
+    control_id: ControlId,
     hwnd_control: HWND,
 ) -> AppEvent {
     log::debug!(
-        "ButtonHandler: BN_CLICKED for ID {control_id} (HWND {hwnd_control:?}) in WinID {window_id:?}"
+        "ButtonHandler: BN_CLICKED for ID {} (HWND {hwnd_control:?}) in WinID {window_id:?}",
+        control_id.raw()
     );
     AppEvent::ButtonClicked {
         window_id,

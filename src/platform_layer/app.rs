@@ -7,7 +7,8 @@ use crate::platform_layer::{
     error::{PlatformError, Result as PlatformResult},
     styling::{ControlStyle, ParsedControlStyle, StyleId},
     types::{
-        AppEvent, PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig, WindowId,
+        AppEvent, ControlId, PlatformCommand, PlatformEventHandler, UiStateProvider, WindowConfig,
+        WindowId,
     },
     window_common,
 };
@@ -189,7 +190,7 @@ impl Win32ApiInternalState {
     pub(crate) fn with_treeview_state_mut<F>(
         self: &Arc<Self>,
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         f: F,
     ) -> PlatformResult<()>
     where
@@ -200,14 +201,16 @@ impl Win32ApiInternalState {
         self.with_window_data_write(window_id, |window_data| {
             let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "TreeView HWND not found for control ID {control_id}"
+                    "TreeView HWND not found for control ID {}",
+                    control_id.raw()
                 ))
             })?;
 
             // Take the state. If it doesn't exist, create a new one for the operation.
             let state = window_data.take_treeview_state().unwrap_or_else(|| {
                 log::warn!(
-                    "TreeView state was None for WinID {window_id:?}/ControlID {control_id}. Creating new for operation."
+                    "TreeView state was None for WinID {window_id:?}/ControlID {}. Creating new for operation.",
+                    control_id.raw()
                 );
                 treeview_handler::TreeViewInternalState::new()
             });
@@ -581,17 +584,21 @@ impl Win32ApiInternalState {
     fn execute_apply_style_to_control(
         self: &Arc<Self>,
         window_id: WindowId,
-        control_id: i32,
+        control_id: ControlId,
         style_id: StyleId,
     ) -> PlatformResult<()> {
-        log::debug!("Applying style {style_id:?} to ControlID {control_id} in WinID {window_id:?}");
+        log::debug!(
+            "Applying style {style_id:?} to ControlID {} in WinID {window_id:?}",
+            control_id.raw()
+        );
 
         // Get the control's HWND and store the style association in the window's data.
         let control_hwnd = self.with_window_data_write(window_id, |window_data| {
             window_data.apply_style_to_control(control_id, style_id);
             window_data.get_control_hwnd(control_id).ok_or_else(|| {
                 PlatformError::InvalidHandle(format!(
-                    "Control ID {control_id} not found in WinID {window_id:?}"
+                    "Control ID {} not found in WinID {window_id:?}",
+                    control_id.raw()
                 ))
             })
         })?;
@@ -1013,19 +1020,23 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_success() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(std::ptr::dangling_mut::<std::ffi::c_void>()));
+        data.register_control_hwnd(
+            ControlId::new(1),
+            HWND(std::ptr::dangling_mut::<std::ffi::c_void>()),
+        );
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();
             guard.insert(window_id, data);
         }
         // Act
-        let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
-            tv_state
-                .item_id_to_htreeitem
-                .insert(TreeItemId(7), HTREEITEM(7));
-            Ok(())
-        });
+        let result =
+            state.with_treeview_state_mut(window_id, ControlId::new(1), |_hwnd, tv_state| {
+                tv_state
+                    .item_id_to_htreeitem
+                    .insert(TreeItemId(7), HTREEITEM(7));
+                Ok(())
+            });
         // Assert
         assert!(result.is_ok());
         let guard = state.active_windows().read().unwrap();
@@ -1038,19 +1049,23 @@ mod tests {
     fn with_treeview_state_mut_preserves_state_on_error() {
         // Arrange
         let (state, window_id, mut data) = setup_state();
-        data.register_control_hwnd(1, HWND(std::ptr::dangling_mut::<std::ffi::c_void>()));
+        data.register_control_hwnd(
+            ControlId::new(1),
+            HWND(std::ptr::dangling_mut::<std::ffi::c_void>()),
+        );
         data.init_treeview_state();
         {
             let mut guard = state.active_windows().write().unwrap();
             guard.insert(window_id, data);
         }
         // Act
-        let result = state.with_treeview_state_mut(window_id, 1, |_hwnd, tv_state| {
-            tv_state
-                .item_id_to_htreeitem
-                .insert(TreeItemId(9), HTREEITEM(9));
-            Err(PlatformError::OperationFailed("fail".into()))
-        });
+        let result =
+            state.with_treeview_state_mut(window_id, ControlId::new(1), |_hwnd, tv_state| {
+                tv_state
+                    .item_id_to_htreeitem
+                    .insert(TreeItemId(9), HTREEITEM(9));
+                Err(PlatformError::OperationFailed("fail".into()))
+            });
         // Assert
         assert!(result.is_err());
         let guard = state.active_windows().read().unwrap();

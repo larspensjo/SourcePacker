@@ -9,7 +9,7 @@ use crate::platform_layer::PlatformResult;
 use crate::platform_layer::app::Win32ApiInternalState;
 use crate::platform_layer::error::PlatformError;
 use crate::platform_layer::styling::Color;
-use crate::platform_layer::types::WindowId;
+use crate::platform_layer::types::{ControlId, WindowId};
 use std::sync::Arc;
 use windows::Win32::{
     Foundation::{COLORREF, HWND, LRESULT},
@@ -39,10 +39,11 @@ pub(crate) fn handle_wm_ctlcoloredit(
     hdc_edit: windows::Win32::Graphics::Gdi::HDC,
     hwnd_edit: HWND,
 ) -> Option<LRESULT> {
-    let control_id = unsafe { GetDlgCtrlID(hwnd_edit) };
-    if control_id == 0 {
+    let control_id_raw = unsafe { GetDlgCtrlID(hwnd_edit) };
+    if control_id_raw == 0 {
         return None; // Not a control with an ID, let system handle it.
     }
+    let control_id = ControlId::new(control_id_raw);
 
     let result: PlatformResult<Option<LRESULT>> =
         internal_state.with_window_data_read(window_id, |window_data| {
