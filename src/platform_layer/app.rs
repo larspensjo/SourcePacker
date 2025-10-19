@@ -902,7 +902,7 @@ impl PlatformInterface {
                         }
                         return Err(PlatformError::OperationFailed(format!(
                             "GetMessageW failed: {}",
-                            windows::core::Error::from_win32() // Converts last error to windows::core::Error
+                            windows::core::Error::from_thread()
                         )));
                     }
                 }
