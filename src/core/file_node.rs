@@ -89,9 +89,10 @@ impl FileNode {
         &self,
         id: TreeItemId,
         children: Vec<TreeItemDescriptor>,
+        display_new_indicator: bool,
     ) -> TreeItemDescriptor {
         let mut text = self.name.clone();
-        if self.should_display_new_indicator() {
+        if display_new_indicator {
             text.push(' ');
             text.push(ui_constants::NEW_ITEM_INDICATOR_CHAR);
         }
@@ -110,19 +111,12 @@ impl FileNode {
 
     /*
      * Determines whether the UI should render the "new item" indicator for this node.
-     * Files return true when their selection state is `New`, while directories inherit the
-     * indicator whenever any descendant still needs classification.
-     *
-     * The recursion walks the tree once during descriptor construction, keeping the check cheap
-     * without maintaining supplemental bookkeeping structures or shared mutable state.
+     * Files return true when their selection state is `New`, while directories surface the
+     * indicator only when at least one descendant file is still marked `New`.
      */
     fn should_display_new_indicator(&self) -> bool {
-        if self.state == SelectionState::New {
-            return true;
-        }
-
         if !self.is_dir {
-            return false;
+            return self.state == SelectionState::New;
         }
 
         self.children
@@ -188,7 +182,9 @@ impl FileNode {
                 path_to_tree_item_id,
                 next_tree_item_id_counter,
             );
-            let descriptor = node.new_tree_item_descriptor(item_id, children);
+            let display_new_indicator = node.should_display_new_indicator();
+            let descriptor =
+                node.new_tree_item_descriptor(item_id, children, display_new_indicator);
             descriptors.push(descriptor);
         }
         descriptors
@@ -210,6 +206,12 @@ impl FileNode {
         if !pattern.contains('*') && !pattern.contains('?') {
             pattern = format!("*{pattern}*");
         }
+        let normalized_pattern = pattern.clone();
+        log::debug!(
+            "FileNode::build_tree_item_descriptors_filtered invoked with pattern {:?} and {} top-level nodes.",
+            normalized_pattern,
+            nodes.len()
+        );
         let glob =
             glob::Pattern::new(&pattern).unwrap_or_else(|_| glob::Pattern::new("*").unwrap());
 
@@ -218,10 +220,19 @@ impl FileNode {
             glob: &glob::Pattern,
             map: &mut PathToTreeItemIdMap,
             counter: &mut u64,
-        ) -> Vec<TreeItemDescriptor> {
+        ) -> Vec<(TreeItemDescriptor, bool)> {
             let mut descriptors = Vec::new();
             for node in nodes {
-                let children = recurse(&node.children, glob, map, counter);
+                let child_results = recurse(&node.children, glob, map, counter);
+                let mut children = Vec::with_capacity(child_results.len());
+                let mut visible_children_have_new = false;
+                for (child_descriptor, child_has_visible_new_indicator) in child_results {
+                    if child_has_visible_new_indicator {
+                        visible_children_have_new = true;
+                    }
+                    children.push(child_descriptor);
+                }
+
                 let name_lower = node.name().to_lowercase();
                 let name_matches = glob.matches(&name_lower);
                 if name_matches || !children.is_empty() {
@@ -229,19 +240,29 @@ impl FileNode {
                     *counter += 1;
                     let item_id = TreeItemId(id_val);
                     map.insert(node.path().to_path_buf(), item_id);
-                    let descriptor = node.new_tree_item_descriptor(item_id, children);
-                    descriptors.push(descriptor);
+                    let display_new_indicator = if node.is_dir {
+                        visible_children_have_new
+                    } else {
+                        node.state == SelectionState::New
+                    };
+                    let descriptor =
+                        node.new_tree_item_descriptor(item_id, children, display_new_indicator);
+                    descriptors.push((descriptor, display_new_indicator));
                 }
             }
             descriptors
         }
 
-        recurse(
+        let results = recurse(
             nodes,
             &glob,
             path_to_tree_item_id,
             next_tree_item_id_counter,
-        )
+        );
+        results
+            .into_iter()
+            .map(|(descriptor, _)| descriptor)
+            .collect()
     }
 }
 
@@ -529,6 +550,53 @@ mod tests {
         assert_eq!(descriptors_wc.len(), 1);
         assert_eq!(descriptors_wc[0].children.len(), 1);
         assert_eq!(descriptors_wc[0].children[0].text, "other.txt");
+    }
+
+    #[test]
+    fn test_filtered_parent_excludes_hidden_new_indicator() {
+        // [FileSelStateNewV3] Verify hidden "New" descendants do not add the indicator to parents.
+        // Arrange
+        let visible_child = FileNode::new_full(
+            PathBuf::from("/parent/visible.txt"),
+            "visible.txt".into(),
+            false,
+            SelectionState::Selected,
+            vec![],
+            "".to_string(),
+        );
+        let hidden_new_child = FileNode::new_full(
+            PathBuf::from("/parent/hidden_new.txt"),
+            "hidden_new.txt".into(),
+            false,
+            SelectionState::New,
+            vec![],
+            "".to_string(),
+        );
+        let parent = FileNode::new_full(
+            PathBuf::from("/parent"),
+            "parent".into(),
+            true,
+            SelectionState::Deselected,
+            vec![visible_child, hidden_new_child],
+            "".to_string(),
+        );
+        let mut path_to_id_map = HashMap::new();
+        let mut id_counter = 1;
+
+        // Act
+        let descriptors = FileNode::build_tree_item_descriptors_filtered(
+            &[parent],
+            "visible",
+            &mut path_to_id_map,
+            &mut id_counter,
+        );
+
+        // Assert
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].text, "parent");
+        assert_eq!(descriptors[0].children.len(), 1);
+        assert_eq!(descriptors[0].children[0].text, "visible.txt");
+        assert_eq!(path_to_id_map.len(), 2);
     }
 
     #[test]
