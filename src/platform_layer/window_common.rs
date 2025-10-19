@@ -399,6 +399,45 @@ impl NativeWindowData {
         self.layout_rules = Some(rules);
     }
 
+    /*
+     * Recalculates the window's layout using the stored rules and immediately applies
+     * the resulting rectangles to every registered control. Centralizing this logic
+     * inside `NativeWindowData` keeps the layout internals hidden from callers.
+     *
+     * The method exits early when prerequisites are missing, and logs an error if the
+     * client rectangle cannot be retrieved. It remains safe to call repeatedly because
+     * it is effectively a no-op when the layout data or window handle is invalid.
+     */
+    pub(crate) fn recalculate_and_apply_layout(&self) {
+        if self.layout_rules.is_none() {
+            return;
+        }
+
+        if self.this_window_hwnd.is_invalid() {
+            log::warn!(
+                "Layout: HWND invalid for recalculation on WinID {:?}.",
+                self.logical_window_id
+            );
+            return;
+        }
+
+        let mut client_rect = RECT::default();
+        if unsafe { GetClientRect(self.this_window_hwnd, &mut client_rect) }.is_err() {
+            log::error!(
+                "Layout: GetClientRect failed for WinID {:?}: {:?}",
+                self.logical_window_id,
+                unsafe { GetLastError() }
+            );
+            return;
+        }
+
+        log::trace!(
+            "Layout: Applying layout with client_rect {client_rect:?} for WinID {:?}.",
+            self.logical_window_id
+        );
+        self.apply_layout_rules_for_children(None, client_rect);
+    }
+
     pub(crate) fn set_label_severity(&mut self, label_id: ControlId, severity: MessageSeverity) {
         self.label_severities.insert(label_id, severity);
     }
@@ -467,7 +506,7 @@ impl NativeWindowData {
         self.status_bar_font
     }
 
-    pub(crate) fn cleanup_status_bar_font(&mut self) {
+    fn cleanup_status_bar_font(&mut self) {
         if let Some(h_font) = self.status_bar_font.take() {
             if !h_font.is_invalid() {
                 log::debug!(
@@ -544,7 +583,7 @@ impl NativeWindowData {
         self.treeview_new_item_font
     }
 
-    pub(crate) fn cleanup_treeview_new_item_font(&mut self) {
+    fn cleanup_treeview_new_item_font(&mut self) {
         if let Some(h_font) = self.treeview_new_item_font.take() {
             if !h_font.is_invalid() {
                 log::debug!(
@@ -557,6 +596,17 @@ impl NativeWindowData {
                 }
             }
         }
+    }
+}
+
+impl Drop for NativeWindowData {
+    fn drop(&mut self) {
+        self.cleanup_status_bar_font();
+        self.cleanup_treeview_new_item_font();
+        log::debug!(
+            "NativeWindowData for WinID {:?} dropped, resources cleaned up.",
+            self.logical_window_id
+        );
     }
 }
 
@@ -935,27 +985,7 @@ impl Win32ApiInternalState {
         log::debug!("trigger_layout_recalculation called for WinID {window_id:?}");
 
         if let Err(e) = self.with_window_data_read(window_id, |window_data| {
-            if window_data.get_hwnd().is_invalid() {
-                log::warn!("HWND invalid for layout: {window_id:?}");
-                return Ok(()); // Not an error, just can't do anything.
-            }
-            if window_data.layout_rules.is_none() {
-                log::debug!("No layout rules for WinID {window_id:?}");
-                return Ok(());
-            }
-
-            let mut client_rect = RECT::default();
-            if unsafe { GetClientRect(window_data.get_hwnd(), &mut client_rect) }.is_err() {
-                log::error!("GetClientRect failed for layout: {:?}", unsafe {
-                    GetLastError()
-                });
-                return Ok(());
-            }
-
-            log::trace!(
-                "Applying layout with client_rect: {client_rect:?}, for WinID {window_id:?}"
-            );
-            window_data.apply_layout_rules_for_children(None, client_rect);
+            window_data.recalculate_and_apply_layout();
             Ok(())
         }) {
             log::error!(

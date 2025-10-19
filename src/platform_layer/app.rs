@@ -158,8 +158,8 @@ impl Win32ApiInternalState {
     /*
      * Removes the data for a given window ID from the active windows map.
      * This is a map-level operation that acquires a write lock, removes the
-     * entry, and then calls the necessary cleanup functions on the removed data
-     * to release any associated GDI resources.
+     * entry, and then lets `NativeWindowData`'s Drop implementation clean up
+     * any GDI resources it owns.
      */
     pub(crate) fn remove_window_data(&self, window_id: WindowId) {
         let mut windows_map_guard = match self.active_windows.write() {
@@ -170,11 +170,10 @@ impl Win32ApiInternalState {
             }
         };
 
-        if let Some(mut removed_data) = windows_map_guard.remove(&window_id) {
-            // Perform cleanup on the GDI objects owned by the window data.
-            removed_data.cleanup_status_bar_font();
-            removed_data.cleanup_treeview_new_item_font();
-            log::debug!("Removed and cleaned up data for WindowId {window_id:?}.");
+        if windows_map_guard.remove(&window_id).is_some() {
+            log::debug!(
+                "Removed data for WindowId {window_id:?}; NativeWindowData drop will handle cleanup."
+            );
         } else {
             log::warn!("Attempted to remove non-existent WindowId {window_id:?}.");
         }

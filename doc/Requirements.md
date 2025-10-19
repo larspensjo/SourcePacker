@@ -111,6 +111,7 @@ Provide access to functions like:
 ## Modularity & Testing
 [TechModularityLogicalModulesV1] * The codebase shall be organized into logical modules (e.g., UI, core logic, profile management, file operations, monitoring).
 [TechModularityUnitTestsCoreV1] * Core logic components shall have unit tests where feasible.
+[TechModularityEncapsulationV1] * Struct and data containers shall use private fields to protect encapsulations. Exception is data transfer objects.
 
 ## Error Handling
 [TechErrorHandlingGracefulV2] Graceful error handling for file operations, profile loading/saving, monitoring, etc., with user-facing messages in the UI.
