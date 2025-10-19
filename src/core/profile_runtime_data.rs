@@ -11,12 +11,15 @@ use crate::core::{
     file_node::FileTokenDetails,
     token_progress::{TokenProgress, TokenProgressEntry},
 };
+use rayon::prelude::*;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Arc, mpsc},
     thread,
+    time::{Duration, Instant},
 };
 
 /*
@@ -116,6 +119,9 @@ pub struct TokenProgressChannel {
     pub total_files: usize,
 }
 
+const TOKEN_BATCH_SIZE: usize = 64;
+const PROGRESS_THROTTLE: Duration = Duration::from_millis(200);
+
 /*
  * Represents the immutable facts needed by the worker to decide whether to reuse cached
  * token counts or recompute them for a specific file. Populated on the main thread and
@@ -126,6 +132,50 @@ struct TokenWorkItem {
     checksum: String,
     is_selected: bool,
     cached: Option<FileTokenDetails>,
+}
+
+fn process_work_item(
+    item: &TokenWorkItem,
+    token_counter: &Arc<dyn TokenCounterOperations>,
+) -> TokenProgressEntry {
+    let mut invalidate_cache = false;
+    let mut details_to_store = None;
+    let mut token_count_opt = item.cached.as_ref().and_then(|cached| {
+        if cached.checksum == item.checksum {
+            Some(cached.token_count)
+        } else {
+            None
+        }
+    });
+
+    if token_count_opt.is_none() {
+        match fs::read_to_string(&item.path) {
+            Ok(content) => {
+                let counted = token_counter.count_tokens(&content);
+                token_count_opt = Some(counted);
+                details_to_store = Some(FileTokenDetails {
+                    checksum: item.checksum.clone(),
+                    token_count: counted,
+                });
+            }
+            Err(err) => {
+                log::warn!(
+                    "Token worker failed to read file {:?}: {err:?}. Removing any stale cache entry.",
+                    item.path
+                );
+                invalidate_cache = true;
+                token_count_opt = Some(0);
+            }
+        }
+    }
+
+    TokenProgressEntry {
+        path: item.path.clone(),
+        token_count: token_count_opt.unwrap_or(0),
+        is_selected: item.is_selected,
+        details: details_to_store,
+        invalidate_cache,
+    }
 }
 
 impl ProfileRuntimeData {
@@ -291,63 +341,74 @@ impl ProfileRuntimeData {
         sender: mpsc::Sender<TokenProgress>,
     ) {
         let total_files = items.len();
-        for (index, item) in items.into_iter().enumerate() {
-            let mut invalidate_cache = false;
-            let mut details_to_store = None;
-            let mut token_count_opt = item.cached.as_ref().and_then(|cached| {
-                if cached.checksum == item.checksum {
-                    Some(cached.token_count)
-                } else {
-                    None
-                }
-            });
+        let available_threads = thread::available_parallelism()
+            .map(|nz| nz.get())
+            .unwrap_or(4);
+        let pool_size = std::cmp::max(2, available_threads / 2);
+        let pool: ThreadPool = ThreadPoolBuilder::new()
+            .num_threads(pool_size)
+            .thread_name(|index| format!("token-worker-{}", index))
+            .build()
+            .expect("Failed to build token worker thread pool");
 
-            if token_count_opt.is_none() {
-                match fs::read_to_string(&item.path) {
-                    Ok(content) => {
-                        let counted = token_counter.count_tokens(&content);
-                        token_count_opt = Some(counted);
-                        details_to_store = Some(FileTokenDetails {
-                            checksum: item.checksum.clone(),
-                            token_count: counted,
-                        });
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Token worker failed to read file {:?}: {err:?}. Removing any stale cache entry.",
-                            item.path
-                        );
-                        invalidate_cache = true;
-                        token_count_opt = Some(0);
+        pool.install(|| {
+            let mut processed: usize = 0;
+            let mut buffered_entries: Vec<TokenProgressEntry> = Vec::new();
+            let mut last_emit = Instant::now();
+            let mut aborted = false;
+
+            for chunk in items.chunks(TOKEN_BATCH_SIZE) {
+                if aborted {
+                    break;
+                }
+
+                let chunk_results: Vec<TokenProgressEntry> = chunk
+                    .par_iter()
+                    .map(|item| process_work_item(item, &token_counter))
+                    .collect();
+
+                processed += chunk.len();
+                buffered_entries.extend(chunk_results);
+
+                let now = Instant::now();
+                if now.duration_since(last_emit) >= PROGRESS_THROTTLE
+                    && !buffered_entries.is_empty()
+                {
+                    let entries_to_send = std::mem::take(&mut buffered_entries);
+                    let progress = TokenProgress {
+                        entries: entries_to_send,
+                        files_processed: processed,
+                        total_files,
+                        is_final: false,
+                    };
+                    if sender.send(progress).is_err() {
+                        aborted = true;
+                    } else {
+                        last_emit = now;
                     }
                 }
             }
 
-            let progress_entry = TokenProgressEntry {
-                path: item.path,
-                token_count: token_count_opt.unwrap_or(0),
-                is_selected: item.is_selected,
-                details: details_to_store,
-                invalidate_cache,
-            };
-
-            let progress = TokenProgress {
-                entries: vec![progress_entry],
-                files_processed: index + 1,
-                total_files,
-                is_final: false,
-            };
-
-            if sender.send(progress).is_err() {
-                return;
+            if !aborted && !buffered_entries.is_empty() {
+                let progress = TokenProgress {
+                    entries: buffered_entries,
+                    files_processed: processed,
+                    total_files,
+                    is_final: false,
+                };
+                if sender.send(progress).is_err() {
+                    aborted = true;
+                }
             }
-        }
 
-        let _ = sender.send(TokenProgress {
-            entries: Vec::new(),
-            files_processed: total_files,
-            total_files,
-            is_final: true,
+            if !aborted {
+                let _ = sender.send(TokenProgress {
+                    entries: Vec::new(),
+                    files_processed: processed,
+                    total_files,
+                    is_final: true,
+                });
+            }
         });
     }
 
