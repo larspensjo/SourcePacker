@@ -11,6 +11,11 @@ use crate::core::{ArchiveStatus, ProfileRuntimeDataOperations};
 use crate::platform_layer::{TreeItemDescriptor, WindowId};
 use std::collections::HashMap;
 
+#[cfg(test)]
+use crate::core::{TokenProgress, TokenProgressChannel};
+#[cfg(test)]
+use std::sync::Arc;
+
 // These types are currently defined in `handler.rs`.
 use super::handler::{PathToTreeItemIdMap, PendingAction};
 
@@ -170,6 +175,16 @@ mod tests {
             _token_counter: &dyn TokenCounterOperations,
         ) -> usize {
             unimplemented!("MockProfileRuntimeDataOps: update_total_token_count_for_selected_files")
+        }
+        fn recalc_tokens_async(
+            &mut self,
+            _token_counter: Arc<dyn crate::core::TokenCounterOperations>,
+            _only_selected: bool,
+        ) -> Option<TokenProgressChannel> {
+            unimplemented!("MockProfileRuntimeDataOps: recalc_tokens_async")
+        }
+        fn apply_token_progress(&mut self, _progress: TokenProgress) -> usize {
+            unimplemented!("MockProfileRuntimeDataOps: apply_token_progress")
         }
         fn clear(&mut self) {
             unimplemented!("MockProfileRuntimeDataOps: clear")

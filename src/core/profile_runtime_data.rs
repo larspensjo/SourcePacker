@@ -7,12 +7,16 @@
  */
 use crate::core::{
     FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, SelectionState,
-    TokenCounterOperations, file_node::FileTokenDetails,
+    TokenCounterOperations,
+    file_node::FileTokenDetails,
+    token_progress::{TokenProgress, TokenProgressEntry},
 };
 use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, mpsc},
+    thread,
 };
 
 /*
@@ -58,10 +62,19 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
     fn does_path_or_descendants_contain_new_file(&self, path: &Path) -> bool;
 
     // Token related data
+    #[allow(dead_code)]
     fn update_total_token_count_for_selected_files(
         &mut self,
         token_counter: &dyn TokenCounterOperations,
     ) -> usize;
+
+    fn recalc_tokens_async(
+        &mut self,
+        token_counter: Arc<dyn TokenCounterOperations>,
+        only_selected: bool,
+    ) -> Option<TokenProgressChannel>;
+
+    fn apply_token_progress(&mut self, progress: TokenProgress) -> usize;
 
     // General session management
     fn clear(&mut self);
@@ -90,6 +103,29 @@ pub struct ProfileRuntimeData {
     cached_token_count: usize,
     cached_file_token_details: HashMap<PathBuf, FileTokenDetails>,
     exclude_patterns: Vec<String>,
+}
+
+/*
+ * Bundles the pieces required by the UI layer to monitor asynchronous token recalculation.
+ * The `receiver` delivers progress batches, while the optional `worker_handle` can be joined
+ * once completion is observed to ensure orderly thread cleanup.
+ */
+pub struct TokenProgressChannel {
+    pub receiver: mpsc::Receiver<TokenProgress>,
+    pub worker_handle: Option<thread::JoinHandle<()>>,
+    pub total_files: usize,
+}
+
+/*
+ * Represents the immutable facts needed by the worker to decide whether to reuse cached
+ * token counts or recompute them for a specific file. Populated on the main thread and
+ * moved wholesale into the background task.
+ */
+struct TokenWorkItem {
+    path: PathBuf,
+    checksum: String,
+    is_selected: bool,
+    cached: Option<FileTokenDetails>,
 }
 
 impl ProfileRuntimeData {
@@ -210,6 +246,109 @@ impl ProfileRuntimeData {
                 );
             }
         }
+    }
+
+    fn collect_token_work_items(&self, only_selected: bool) -> Vec<TokenWorkItem> {
+        let mut items = Vec::new();
+        Self::collect_token_work_items_recursive(
+            &self.file_system_snapshot_nodes,
+            only_selected,
+            &self.cached_file_token_details,
+            &mut items,
+        );
+        items
+    }
+
+    fn collect_token_work_items_recursive(
+        nodes: &[FileNode],
+        only_selected: bool,
+        cache: &HashMap<PathBuf, FileTokenDetails>,
+        acc: &mut Vec<TokenWorkItem>,
+    ) {
+        for node in nodes {
+            if node.is_dir() {
+                Self::collect_token_work_items_recursive(&node.children, only_selected, cache, acc);
+                continue;
+            }
+
+            let is_selected = node.state() == SelectionState::Selected;
+            if only_selected && !is_selected {
+                continue;
+            }
+
+            acc.push(TokenWorkItem {
+                path: node.path().to_path_buf(),
+                checksum: node.checksum().to_string(),
+                is_selected,
+                cached: cache.get(node.path()).cloned(),
+            });
+        }
+    }
+
+    fn spawn_token_worker(
+        items: Vec<TokenWorkItem>,
+        token_counter: Arc<dyn TokenCounterOperations>,
+        sender: mpsc::Sender<TokenProgress>,
+    ) {
+        let total_files = items.len();
+        for (index, item) in items.into_iter().enumerate() {
+            let mut invalidate_cache = false;
+            let mut details_to_store = None;
+            let mut token_count_opt = item.cached.as_ref().and_then(|cached| {
+                if cached.checksum == item.checksum {
+                    Some(cached.token_count)
+                } else {
+                    None
+                }
+            });
+
+            if token_count_opt.is_none() {
+                match fs::read_to_string(&item.path) {
+                    Ok(content) => {
+                        let counted = token_counter.count_tokens(&content);
+                        token_count_opt = Some(counted);
+                        details_to_store = Some(FileTokenDetails {
+                            checksum: item.checksum.clone(),
+                            token_count: counted,
+                        });
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Token worker failed to read file {:?}: {err:?}. Removing any stale cache entry.",
+                            item.path
+                        );
+                        invalidate_cache = true;
+                        token_count_opt = Some(0);
+                    }
+                }
+            }
+
+            let progress_entry = TokenProgressEntry {
+                path: item.path,
+                token_count: token_count_opt.unwrap_or(0),
+                is_selected: item.is_selected,
+                details: details_to_store,
+                invalidate_cache,
+            };
+
+            let progress = TokenProgress {
+                entries: vec![progress_entry],
+                files_processed: index + 1,
+                total_files,
+                is_final: false,
+            };
+
+            if sender.send(progress).is_err() {
+                return;
+            }
+        }
+
+        let _ = sender.send(TokenProgress {
+            entries: Vec::new(),
+            files_processed: total_files,
+            total_files,
+            is_final: true,
+        });
     }
 
     // Helper: Collects (PathBuf, FileState) for a node and its children.
@@ -422,6 +561,50 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.cached_token_count
     }
 
+    fn recalc_tokens_async(
+        &mut self,
+        token_counter: Arc<dyn TokenCounterOperations>,
+        only_selected: bool,
+    ) -> Option<TokenProgressChannel> {
+        let items = self.collect_token_work_items(only_selected);
+        let total_files = items.len();
+        self.cached_token_count = 0;
+        if total_files == 0 {
+            return None;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        let worker_counter = Arc::clone(&token_counter);
+        let join_handle = thread::Builder::new()
+            .name("token-recalc-worker".to_string())
+            .spawn(move || Self::spawn_token_worker(items, worker_counter, tx))
+            .expect("Failed to spawn token worker thread");
+
+        Some(TokenProgressChannel {
+            receiver: rx,
+            worker_handle: Some(join_handle),
+            total_files,
+        })
+    }
+
+    fn apply_token_progress(&mut self, progress: TokenProgress) -> usize {
+        for entry in progress.entries {
+            if entry.invalidate_cache {
+                self.cached_file_token_details.remove(&entry.path);
+            }
+
+            if let Some(details) = entry.details {
+                self.cached_file_token_details
+                    .insert(entry.path.clone(), details);
+            }
+
+            if entry.is_selected {
+                self.cached_token_count = self.cached_token_count.saturating_add(entry.token_count);
+            }
+        }
+        self.cached_token_count
+    }
+
     fn clear(&mut self) {
         log::debug!("Clearing ProfileRuntimeData state.");
         self.profile_name = None;
@@ -546,7 +729,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         loaded_profile: Profile,
         file_system_scanner: &dyn FileSystemScannerOperations,
         state_manager: &dyn NodeStateApplicatorOperations,
-        token_counter: &dyn TokenCounterOperations,
+        _token_counter: &dyn TokenCounterOperations,
     ) -> Result<(), String> {
         log::debug!(
             "ProfileRuntimeData: Loading profile '{}' into session.",
@@ -577,7 +760,10 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                     self.profile_name
                 );
 
-                self.update_total_token_count_for_selected_files(token_counter);
+                log::debug!(
+                    "ProfileRuntimeData: Deferred token recalculation for profile '{:?}'.",
+                    self.profile_name
+                );
                 Ok(())
             }
             Err(e) => {
@@ -612,11 +798,13 @@ mod tests {
     use crate::core::{
         FileNode, FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations,
         Profile, SelectionState, TokenCounterOperations,
+        tokenizer_utils::SimpleWhitespaceTokenCounter,
     };
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::io::{self, Write};
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use tempfile::{NamedTempFile, tempdir};
 
     type ApplyProfileCallLog = (HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>);
@@ -961,7 +1149,95 @@ mod tests {
     }
 
     #[test]
-    fn test_load_profile_into_session_success_and_updates_session_file_details() {
+    #[allow(unused_assignments)]
+    fn test_recalc_tokens_async_selected_only_updates_cache() {
+        crate::initialize_logging();
+        let dir = tempdir().unwrap();
+        let selected_path = dir.path().join("selected.txt");
+        let unselected_path = dir.path().join("ignored.txt");
+
+        fs::write(&selected_path, "alpha beta").unwrap();
+        fs::write(&unselected_path, "gamma delta epsilon").unwrap();
+
+        let selected_checksum = checksum_utils::calculate_sha256_checksum(&selected_path).unwrap();
+        let unselected_checksum =
+            checksum_utils::calculate_sha256_checksum(&unselected_path).unwrap();
+
+        let mut selected_node = FileNode::new(
+            selected_path.clone(),
+            "selected.txt".into(),
+            false,
+            selected_checksum.clone(),
+        );
+        selected_node.set_state(SelectionState::Selected);
+
+        let mut other_node = FileNode::new(
+            unselected_path.clone(),
+            "ignored.txt".into(),
+            false,
+            unselected_checksum,
+        );
+        other_node.set_state(SelectionState::Deselected);
+
+        let mut session_data = ProfileRuntimeData::new();
+        session_data.set_snapshot_nodes(vec![selected_node, other_node]);
+        session_data.cached_file_token_details.insert(
+            selected_path.clone(),
+            FileTokenDetails {
+                checksum: "stale".into(),
+                token_count: 42,
+            },
+        );
+
+        let token_counter: Arc<dyn TokenCounterOperations> = Arc::new(SimpleWhitespaceTokenCounter);
+        let TokenProgressChannel {
+            receiver,
+            worker_handle,
+            total_files,
+        } = session_data
+            .recalc_tokens_async(Arc::clone(&token_counter), true)
+            .expect("Expected work items for selected files");
+
+        assert_eq!(total_files, 1, "Only selected files should be processed");
+
+        let mut final_total = 0usize;
+        let mut saw_progress = false;
+        loop {
+            let progress = receiver.recv().expect("Worker should send progress");
+            let is_final = progress.is_final;
+            let updated_total = session_data.apply_token_progress(progress);
+            final_total = updated_total;
+            saw_progress = true;
+            if is_final {
+                break;
+            }
+        }
+
+        if let Some(handle) = worker_handle {
+            handle.join().expect("Worker thread should finish");
+        }
+
+        assert!(
+            saw_progress,
+            "Expected at least one progress event in mock test"
+        );
+        assert_eq!(final_total, 2);
+        assert_eq!(session_data.get_cached_total_token_count(), 2);
+
+        let cache = session_data.get_cached_file_token_details();
+        let entry = cache
+            .get(&selected_path)
+            .expect("Selected file should have cache entry");
+        assert_eq!(entry.token_count, 2);
+        assert_eq!(entry.checksum, selected_checksum);
+        assert!(
+            !cache.contains_key(&unselected_path),
+            "Unselected file should not be recomputed when only_selected is true"
+        );
+    }
+
+    #[test]
+    fn test_load_profile_into_session_defers_token_recalculation() {
         // Arrange
         crate::initialize_logging();
         let mut session_data = Box::new(ProfileRuntimeData::new());
@@ -1056,7 +1332,7 @@ mod tests {
 
         // After load_profile_into_session, the session_data.file_system_snapshot_nodes
         // should have their states (Selected/Deselected/New) correctly set by apply_selection_states_to_nodes.
-        // And then update_total_token_count_for_selected_files uses these states.
+        // Token recalculation is deferred, so cached file details remain as persisted in the profile.
 
         let session_details = session_data.get_cached_file_token_details();
         assert_eq!(session_details.get(&file1_path).unwrap().token_count, 10);
@@ -1064,14 +1340,17 @@ mod tests {
             session_details.get(&file1_path).unwrap().checksum,
             file1_checksum_disk
         );
-        // For file2, since disk checksum changed, its token count should be re-calculated (20)
-        // and cache updated.
-        assert_eq!(session_details.get(&file2_path).unwrap().token_count, 20);
+        // For file2, the stale profile entry remains until the async pipeline runs.
+        assert_eq!(session_details.get(&file2_path).unwrap().token_count, 15);
         assert_eq!(
             session_details.get(&file2_path).unwrap().checksum,
-            file2_checksum_disk
+            "cs2_disk_old_stale"
         );
-        assert_eq!(session_data.get_cached_total_token_count(), 30); // 10 (f1) + 20 (f2)
+        assert_eq!(session_data.get_cached_total_token_count(), 0);
+        assert!(
+            mock_token_counter.get_call_log().is_empty(),
+            "Token counter should not run during load_profile_into_session"
+        );
     }
 
     #[test]

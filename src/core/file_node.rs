@@ -74,6 +74,10 @@ impl FileNode {
         self.is_dir
     }
 
+    pub fn checksum(&self) -> &str {
+        &self.checksum
+    }
+
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
         FileTokenDetails {
             checksum: self.checksum.clone(),

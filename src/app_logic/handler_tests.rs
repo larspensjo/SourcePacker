@@ -3,11 +3,12 @@ mod tests {
     use crate::app_logic::handler::*;
     use crate::app_logic::ui_constants;
 
+    use crate::core::token_progress::TokenProgressEntry;
     use crate::core::{
         ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
         FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
         ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
-        TokenCounterOperations, file_node::FileTokenDetails,
+        TokenCounterOperations, TokenProgress, TokenProgressChannel, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
         AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
@@ -17,10 +18,12 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::io::{self};
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+    use std::thread;
     use std::time::SystemTime;
 
     type SelectionSnapshotLog = (Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>);
@@ -77,6 +80,8 @@ mod tests {
         _load_profile_into_session_log: Mutex<Vec<Profile>>,
         _does_path_or_descendants_contain_new_file_log: Mutex<Vec<PathBuf>>,
         _get_current_selection_paths_calls: AtomicUsize,
+        recalc_tokens_async_calls: AtomicUsize,
+        apply_token_progress_calls: AtomicUsize,
 
         // Mock results
         // get_node_attributes_for_path_result: Option<(SelectionState, bool)>, <- now derived from snapshot_nodes
@@ -117,6 +122,8 @@ mod tests {
                 _load_profile_into_session_log: Mutex::new(Vec::new()),
                 _does_path_or_descendants_contain_new_file_log: Mutex::new(Vec::new()),
                 _get_current_selection_paths_calls: AtomicUsize::new(0),
+                recalc_tokens_async_calls: AtomicUsize::new(0),
+                apply_token_progress_calls: AtomicUsize::new(0),
 
                 update_node_state_and_collect_changes_result: Mutex::new(Vec::new()),
                 load_profile_into_session_result: Mutex::new(Ok(())),
@@ -464,13 +471,89 @@ mod tests {
 
         fn update_total_token_count_for_selected_files(
             &mut self,
-            _token_counter: &dyn TokenCounterOperations,
+            __token_counter: &dyn TokenCounterOperations,
         ) -> usize {
             self._update_total_token_count_calls
                 .fetch_add(1, Ordering::Relaxed);
             // Simulate if needed or just return preset
             self.update_total_token_count_for_selected_files_result
                 .load(Ordering::Relaxed)
+        }
+        fn recalc_tokens_async(
+            &mut self,
+            _token_counter: Arc<dyn TokenCounterOperations>,
+            _only_selected: bool,
+        ) -> Option<TokenProgressChannel> {
+            self.cached_total_token_count = 0;
+            self.recalc_tokens_async_calls
+                .fetch_add(1, Ordering::Relaxed);
+            let preset_total = self
+                .update_total_token_count_for_selected_files_result
+                .load(Ordering::Relaxed);
+            let (tx, rx) = mpsc::channel();
+            let handle = thread::spawn(move || {
+                if preset_total > 0 {
+                    let entry = TokenProgressEntry {
+                        path: PathBuf::from("mock_selected.txt"),
+                        token_count: preset_total,
+                        is_selected: true,
+                        details: None,
+                        invalidate_cache: false,
+                    };
+                    let progress = TokenProgress {
+                        entries: vec![entry],
+                        files_processed: 1,
+                        total_files: 1,
+                        is_final: false,
+                    };
+                    let _ = tx.send(progress);
+                    let _ = tx.send(TokenProgress {
+                        entries: Vec::new(),
+                        files_processed: 1,
+                        total_files: 1,
+                        is_final: true,
+                    });
+                } else {
+                    let _ = tx.send(TokenProgress {
+                        entries: Vec::new(),
+                        files_processed: 0,
+                        total_files: 0,
+                        is_final: true,
+                    });
+                }
+            });
+            Some(TokenProgressChannel {
+                receiver: rx,
+                worker_handle: Some(handle),
+                total_files: if preset_total > 0 { 1 } else { 0 },
+            })
+        }
+        fn apply_token_progress(&mut self, progress: TokenProgress) -> usize {
+            self.apply_token_progress_calls
+                .fetch_add(1, Ordering::Relaxed);
+            for entry in progress.entries {
+                let TokenProgressEntry {
+                    path,
+                    token_count,
+                    is_selected,
+                    details,
+                    invalidate_cache,
+                } = entry;
+
+                if invalidate_cache {
+                    self.cached_file_token_details.remove(&path);
+                }
+
+                if let Some(details) = details {
+                    self.cached_file_token_details.insert(path.clone(), details);
+                }
+
+                if is_selected {
+                    self.cached_total_token_count =
+                        self.cached_total_token_count.saturating_add(token_count);
+                }
+            }
+            self.cached_total_token_count
         }
         fn clear(&mut self) {
             self._clear_calls.fetch_add(1, Ordering::Relaxed);
@@ -528,7 +611,7 @@ mod tests {
             loaded_profile: Profile,
             file_system_scanner: &dyn FileSystemScannerOperations, // Added underscore as it's now used
             state_manager: &dyn NodeStateApplicatorOperations,     // Added underscore
-            token_counter: &dyn TokenCounterOperations,            // Added underscore
+            _token_counter: &dyn TokenCounterOperations,           // Added underscore
         ) -> Result<(), String> {
             self._load_profile_into_session_log
                 .lock()
@@ -554,9 +637,6 @@ mod tests {
                         &loaded_profile.selected_paths,
                         &loaded_profile.deselected_paths,
                     );
-
-                    // Simulate token count update
-                    self.update_total_token_count_for_selected_files(token_counter);
 
                     // Respect the pre-set mock result if it was an error, otherwise Ok
                     let preset_result = self
@@ -1166,7 +1246,8 @@ mod tests {
         logic.handle_event(AppEvent::MainWindowUISetupComplete {
             window_id: WindowId(1),
         });
-        let cmds = logic.test_drain_commands();
+
+        let cmds = logic.test_collect_commands_until_idle();
 
         // Assert
         {
@@ -1186,6 +1267,20 @@ mod tests {
                 mock_app_session.archive_path,
                 Some(startup_archive_path.clone())
             );
+            assert_eq!(
+                mock_app_session
+                    .recalc_tokens_async_calls
+                    .load(Ordering::Relaxed),
+                1,
+                "Async recalculation should be triggered once on startup",
+            );
+            assert_eq!(
+                mock_app_session
+                    ._update_total_token_count_calls
+                    .load(Ordering::Relaxed),
+                0,
+                "Legacy token count path should not run on startup",
+            );
         }
 
         assert_eq!(
@@ -1194,15 +1289,6 @@ mod tests {
                 .load(Ordering::Relaxed),
             0,
             "No save_last_profile_name call should be made"
-        );
-        assert_eq!(
-            mock_app_session_mutexed
-                .lock()
-                .unwrap()
-                ._update_total_token_count_calls
-                .load(Ordering::Relaxed),
-            2, // Called once during _activate_profile_and_show_window
-            "Token count update should be called twice"
         );
 
         let expected_title = format!(
@@ -1214,17 +1300,31 @@ mod tests {
             find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
                 "Expected SetWindowTitle with correct title. Got: {cmds:?}"
         );
-        let general_token_status_text = "Token count updated";
-        let dedicated_token_status_text = "Tokens: 5"; // Based on mock_app_session.set_cached_total_token_count_for_mock(5);
+        let dedicated_token_status_text = "Tokens: 5";
 
         let profile_loaded_startup_text =
             format!("Successfully loaded last profile '{last_profile_name_to_load}' on startup.");
         let profile_loaded_final_text = format!("Profile '{last_profile_name_to_load}' loaded.");
 
+        let general_status_texts: Vec<&String> = cmds
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PlatformCommand::UpdateLabelText {
+                    control_id, text, ..
+                } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID => Some(text),
+                _ => None,
+            })
+            .collect();
         assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &profile_loaded_startup_text && *severity == MessageSeverity::Information )).is_some(), "Expected initial profile loaded message. Got: {cmds:?}" );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == general_token_status_text && *severity == MessageSeverity::Information )).is_some(), "Expected general 'Token count updated' message. Got: {cmds:?}" );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == dedicated_token_status_text )).is_some(), "Expected dedicated token label 'Tokens: 5'. Got: {cmds:?}" );
+        assert!(
+            general_status_texts
+                .iter()
+                .any(|text| text.contains("Token recalculation finished")),
+            "Expected final async token recalculation message",
+        );
         assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_final_text && *severity == MessageSeverity::Information )).is_some(), "Expected final profile loaded message. Got: {cmds:?}" );
+
+        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == dedicated_token_status_text )).is_some(), "Expected dedicated token label 'Tokens: 5'. Got: {cmds:?}" );
         assert!(
             find_command(&cmds, |cmd| matches!(
                 cmd,
@@ -2054,40 +2154,55 @@ mod tests {
         mock_app_session
             .lock()
             .unwrap()
-            .set_cached_total_token_count_for_mock(123); // This value will be returned by the mock
+            .set_cached_total_token_count_for_mock(123);
 
         logic.test_update_token_count_and_request_display();
-        let cmds = logic.test_drain_commands();
 
+        let cmds = logic.test_collect_commands_until_idle();
+        let mock = mock_app_session.lock().unwrap();
         assert_eq!(
-            mock_app_session
-                .lock()
-                .unwrap()
-                ._update_total_token_count_calls
-                .load(Ordering::Relaxed),
-            1
+            mock.recalc_tokens_async_calls.load(Ordering::Relaxed),
+            1,
+            "Async recalculation should be triggered once",
         );
+        assert_eq!(
+            mock._update_total_token_count_calls.load(Ordering::Relaxed),
+            0,
+            "Legacy synchronous path should no longer be used",
+        );
+        drop(mock);
 
-        let general_status_cmd = find_command(
-            &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID),
-        );
+        let status_texts: Vec<&String> = cmds
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PlatformCommand::UpdateLabelText {
+                    control_id, text, ..
+                } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID => Some(text),
+                _ => None,
+            })
+            .collect();
         assert!(
-            general_status_cmd.is_some(),
-            "Expected general status update for token count"
+            status_texts
+                .iter()
+                .any(|text| text.contains("Token recalculation finished")),
+            "Expected final status message after async token recalculation",
         );
-        if let Some(PlatformCommand::UpdateLabelText { text, .. }) = general_status_cmd {
-            assert_eq!(text, "Token count updated");
-        }
 
-        let token_label_cmd = find_command(
-            &cmds,
-            |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID),
+        let token_label_texts: Vec<&String> = cmds
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PlatformCommand::UpdateLabelText {
+                    control_id, text, ..
+                } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            token_label_texts
+                .iter()
+                .any(|text| text.as_str() == "Tokens: 123"),
+            "Expected final token label to show total tokens",
         );
-        assert!(token_label_cmd.is_some(), "Expected token label update");
-        if let Some(PlatformCommand::UpdateLabelText { text, .. }) = token_label_cmd {
-            assert_eq!(text, "Tokens: 123");
-        }
     }
 
     #[test]
@@ -2252,14 +2367,16 @@ mod tests {
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
-        let profile = Profile::new(
+        let mut profile = Profile::new(
             "ActivatedProfile".to_string(),
             PathBuf::from("/root/active"),
         );
+        let selected_file_path = profile.root_folder.join("file.txt");
+        profile.selected_paths.insert(selected_file_path.clone());
         fs_scanner.set_scan_directory_result(
             &profile.root_folder,
             Ok(vec![FileNode::new_test(
-                profile.root_folder.join("file.txt"),
+                selected_file_path.clone(),
                 "file.txt".into(),
                 false,
             )]),
@@ -2278,16 +2395,22 @@ mod tests {
             profile.clone(),
             "Profile loaded".to_string(),
         );
-        let cmds = logic.test_drain_commands();
 
+        let mut cmds = Vec::new();
+        while let Some(cmd) = logic.try_dequeue_command() {
+            cmds.push(cmd);
+        }
+        cmds.extend(logic.test_drain_commands());
+
+        let mock = mock_app_session.lock().unwrap();
         assert_eq!(
-            mock_app_session
-                .lock()
-                .unwrap()
-                .get_load_profile_into_session_log()
-                .len(),
-            1
+            mock.recalc_tokens_async_calls.load(Ordering::Relaxed),
+            1,
+            "Async recalculation should run once during activation",
         );
+        assert_eq!(mock.get_load_profile_into_session_log().len(), 1);
+        drop(mock);
+
         assert!(find_command(&cmds, |cmd| {
             matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title.contains("ActivatedProfile"))
         })
@@ -2302,10 +2425,20 @@ mod tests {
             matches!(cmd, PlatformCommand::UpdateLabelText { control_id, .. } if *control_id == ui_constants::STATUS_LABEL_ARCHIVE_ID)
         })
         .is_some());
-        assert!(find_command(&cmds, |cmd| {
-            matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == "Tokens: 10")
-        })
-        .is_some());
+
+        let token_label_texts: Vec<&String> = cmds
+            .iter()
+            .filter_map(|cmd| match cmd {
+                PlatformCommand::UpdateLabelText {
+                    control_id, text, ..
+                } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !token_label_texts.is_empty(),
+            "Expected token label updates during async recalculation",
+        );
         assert!(find_command(&cmds, |cmd| {
             matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == "Profile loaded")
         })

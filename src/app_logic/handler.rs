@@ -1,7 +1,8 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileNode,
     FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
+    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations, TokenProgress,
+    TokenProgressChannel,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
@@ -14,7 +15,9 @@ use crate::app_logic::{MainWindowUiState, ui_constants};
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex}; // Added Mutex
+use std::thread::JoinHandle;
 
 // Import log macros
 use log::{error, info, warn};
@@ -30,6 +33,19 @@ pub(crate) enum PendingAction {
     CreatingNewProfileGetName,
     CreatingNewProfileGetRoot,
     SettingArchivePath,
+}
+
+/*
+ * Tracks the lifetime of an asynchronous token recalculation request kicked off by the logic layer.
+ * It stores the communication channel and join handle so that progress can be drained opportunistically
+ * from the main thread while still allowing orderly worker termination when the work completes.
+ */
+struct TokenRecalcDriver {
+    receiver: Mutex<Receiver<TokenProgress>>,
+    worker_handle: Option<JoinHandle<()>>,
+    total_files: usize,
+    processed_so_far: usize,
+    latest_total_tokens: usize,
 }
 
 // --- Status Message Macros ---
@@ -75,6 +91,7 @@ pub struct MyAppLogic {
     token_counter_manager: Arc<dyn TokenCounterOperations>,
     state_manager: Arc<dyn NodeStateApplicatorOperations>,
     synchronous_command_queue: VecDeque<PlatformCommand>,
+    token_recalc_driver: Option<TokenRecalcDriver>,
 }
 
 impl MyAppLogic {
@@ -103,6 +120,7 @@ impl MyAppLogic {
             token_counter_manager: token_counter,
             state_manager,
             synchronous_command_queue: VecDeque::new(),
+            token_recalc_driver: None,
         }
     }
 
@@ -332,22 +350,151 @@ impl MyAppLogic {
      * It updates the general status label and the dedicated token count label.
      */
     pub(crate) fn _update_token_count_and_request_display(&mut self) {
-        let token_count = self
-            .app_session_data_ops
-            .lock()
-            .unwrap()
-            .update_total_token_count_for_selected_files(&*self.token_counter_manager);
+        self.request_token_recalculation(true);
+    }
 
-        app_info!(self, "Token count updated");
+    fn cancel_token_recalculation(&mut self) {
+        if let Some(mut driver) = self.token_recalc_driver.take() {
+            // Drop the receiver first by letting `driver` go out of scope after join.
+            if let Some(handle) = driver.worker_handle.take() {
+                if let Err(err) = handle.join() {
+                    log::warn!("Token worker join failed during cancel: {err:?}");
+                }
+            }
+        }
+    }
 
+    fn request_token_recalculation(&mut self, only_selected: bool) {
+        self.cancel_token_recalculation();
+
+        let channel_opt = {
+            let mut data = self.app_session_data_ops.lock().unwrap();
+            data.recalc_tokens_async(Arc::clone(&self.token_counter_manager), only_selected)
+        };
+
+        match channel_opt {
+            Some(TokenProgressChannel {
+                receiver,
+                worker_handle,
+                total_files,
+            }) => {
+                self.token_recalc_driver = Some(TokenRecalcDriver {
+                    receiver: Mutex::new(receiver),
+                    worker_handle,
+                    total_files,
+                    processed_so_far: 0,
+                    latest_total_tokens: 0,
+                });
+
+                if total_files > 0 {
+                    app_info!(
+                        self,
+                        "Started token recalculation for {total_files} file(s)."
+                    );
+                } else {
+                    app_info!(self, "Token recalculation completed: no files to process.");
+                }
+
+                self.enqueue_token_label(0, 0, total_files, total_files == 0);
+            }
+            None => {
+                self.enqueue_token_label(0, 0, 0, true);
+                app_info!(self, "Token recalculation completed: no matching files.");
+            }
+        }
+    }
+
+    fn enqueue_token_label(
+        &mut self,
+        total_tokens: usize,
+        processed: usize,
+        total_files: usize,
+        is_final: bool,
+    ) {
         if let Some(ui_state_ref) = &self.ui_state {
+            let label_text = if !is_final && total_files > 0 {
+                format!("Tokens: {total_tokens} ({processed}/{total_files})")
+            } else {
+                format!("Tokens: {total_tokens}")
+            };
+
             self.synchronous_command_queue
                 .push_back(PlatformCommand::UpdateLabelText {
                     window_id: ui_state_ref.window_id,
                     control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
-                    text: format!("Tokens: {token_count}"),
+                    text: label_text,
                     severity: MessageSeverity::Information,
                 });
+        }
+    }
+
+    fn poll_token_recalc_progress(&mut self) {
+        let mut driver_opt = self.token_recalc_driver.take();
+        if let Some(mut driver) = driver_opt.take() {
+            let mut finished = false;
+            let mut final_totals: Option<(usize, usize)> = None;
+
+            loop {
+                let recv_result = {
+                    let receiver_guard = driver
+                        .receiver
+                        .lock()
+                        .expect("Token progress receiver mutex poisoned");
+                    receiver_guard.try_recv()
+                };
+
+                match recv_result {
+                    Ok(progress) => {
+                        let is_final = progress.is_final;
+                        let files_processed = progress.files_processed;
+                        let total_files_from_progress = progress.total_files;
+                        let total_tokens = {
+                            let mut data = self.app_session_data_ops.lock().unwrap();
+                            data.apply_token_progress(progress)
+                        };
+
+                        driver.processed_so_far = files_processed;
+                        driver.latest_total_tokens = total_tokens;
+                        driver.total_files = total_files_from_progress;
+
+                        if is_final {
+                            finished = true;
+                            final_totals = Some((total_tokens, driver.total_files));
+                            break;
+                        }
+
+                        self.enqueue_token_label(
+                            total_tokens,
+                            driver.processed_so_far,
+                            driver.total_files,
+                            false,
+                        );
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        finished = true;
+                        final_totals = Some((driver.latest_total_tokens, driver.total_files));
+                        break;
+                    }
+                }
+            }
+
+            if finished {
+                if let Some(handle) = driver.worker_handle.take() {
+                    if let Err(err) = handle.join() {
+                        log::warn!("Token worker join failed: {err:?}");
+                    }
+                }
+                let (total_tokens, total_files) =
+                    final_totals.unwrap_or((driver.latest_total_tokens, driver.total_files));
+                self.enqueue_token_label(total_tokens, total_files, total_files, true);
+                app_info!(
+                    self,
+                    "Token recalculation finished for {total_files} file(s)."
+                );
+            } else {
+                self.token_recalc_driver = Some(driver);
+            }
         }
     }
 
@@ -1978,6 +2125,7 @@ impl MyAppLogic {
 
 impl PlatformEventHandler for MyAppLogic {
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand> {
+        self.poll_token_recalc_progress();
         self.synchronous_command_queue.pop_front()
     }
 
@@ -2076,6 +2224,7 @@ impl PlatformEventHandler for MyAppLogic {
 
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
+        self.cancel_token_recalculation();
         let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
         let active_profile_name_opt = profile_runtime_data.get_profile_name();
@@ -2200,6 +2349,30 @@ impl MyAppLogic {
 
     pub(crate) fn test_drain_commands(&mut self) -> Vec<PlatformCommand> {
         self.synchronous_command_queue.drain(..).collect()
+    }
+
+    pub(crate) fn test_collect_commands_until_idle(&mut self) -> Vec<PlatformCommand> {
+        use std::thread;
+        use std::time::Duration;
+
+        let mut collected = Vec::new();
+        loop {
+            let mut made_progress = false;
+            while let Some(cmd) = self.try_dequeue_command() {
+                collected.push(cmd);
+                made_progress = true;
+            }
+            if self.token_recalc_driver.is_none() {
+                break;
+            }
+            if !made_progress {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+        while let Some(cmd) = self.try_dequeue_command() {
+            collected.push(cmd);
+        }
+        collected
     }
 
     pub(crate) fn test_set_path_to_tree_item_id_mapping(&mut self, path: PathBuf, id: TreeItemId) {

@@ -15,6 +15,7 @@ pub mod node_state_applicator;
 pub mod path_utils;
 pub mod profile_runtime_data;
 pub mod profiles;
+pub mod token_progress;
 pub mod tokenizer_utils;
 
 // Re-export key structures and enums
@@ -46,4 +47,8 @@ pub use node_state_applicator::{NodeStateApplicator, NodeStateApplicatorOperatio
 pub use tokenizer_utils::{CoreTikTokenCounter, TokenCounterOperations};
 
 // Re-export AppSessionData (now ProfileRuntimeData) related items
-pub use profile_runtime_data::{ProfileRuntimeData, ProfileRuntimeDataOperations};
+pub use profile_runtime_data::{
+    ProfileRuntimeData, ProfileRuntimeDataOperations, TokenProgressChannel,
+};
+
+pub use token_progress::TokenProgress;
