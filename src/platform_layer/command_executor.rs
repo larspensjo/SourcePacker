@@ -252,6 +252,9 @@ pub(crate) fn execute_create_input(
     parent_control_id: Option<ControlId>,
     control_id: ControlId,
     initial_text: String,
+    read_only: bool,
+    multiline: bool,
+    vertical_scroll: bool,
 ) -> PlatformResult<()> {
     log::debug!(
         "CommandExecutor: execute_create_input for WinID {window_id:?}, ControlID {}",
@@ -296,12 +299,25 @@ pub(crate) fn execute_create_input(
         }
 
         let h_instance = internal_state.h_instance();
+        let mut window_style = WS_CHILD | WS_VISIBLE | WS_BORDER;
+        if vertical_scroll {
+            window_style |= WS_VSCROLL;
+        }
+        if multiline {
+            window_style |= WINDOW_STYLE(ES_MULTILINE as u32) | WINDOW_STYLE(ES_AUTOVSCROLL as u32);
+        } else {
+            window_style |= WINDOW_STYLE(ES_AUTOHSCROLL as u32);
+        }
+        if read_only {
+            window_style |= WINDOW_STYLE(ES_READONLY as u32);
+        }
+
         let hwnd_edit = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 WC_EDITW,
                 &HSTRING::from(initial_text.as_str()),
-                WS_CHILD | WS_VISIBLE | WS_BORDER | WINDOW_STYLE(ES_AUTOHSCROLL as u32),
+                window_style,
                 0,
                 0,
                 10,

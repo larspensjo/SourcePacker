@@ -13,7 +13,7 @@ All requirements have a unique tag, in the form `[NameVn]`, where 'Vn' is the ve
 
 ## File Selection
 The application shall support three distinct states for files and folders within the tree view regarding their inclusion in an archive:
-[FileSelStateSelectedV2] *   **Selected:** The item is explicitly included in the profile's archive. This state must be clearly visually indicated (e.g., a checked checkbox).
+[FileSelStateSelectedV3] *   **Selected:** The item is explicitly included in the profile's archive. This state must be clearly visually indicated (e.g., a checked checkbox). Clicking on an item's checkbox exclusively toggles its Selected or Deselected state for archive inclusion. Clicking on an item's text label exclusively selects it for viewing in the content panel and does not alter its checkbox state.
 [FileSelStateDeselectedV2] *   **Deselected:** The item is explicitly excluded from the profile's archive. This state must be clearly visually indicated (e.g., an unchecked checkbox).
 [FileSelStateNewV3] * The item's inclusion in the profile's archive is not yet determined. This applies to files newly detected on disk that are not part of an active profile's saved selections, or all files when no profile is loaded. This state must have its own distinct visual indicator. Items in the "New" state, and any parent folders containing them, shall display bold and italic text appended with a filled circle character (e.g., '●'). Parent folders shall only render this indicator for descendants that are currently visible in the tree; hidden or filtered-out files shall not cause the indicator to appear.
 [FileSelFolderRecursiveStateV2] * Selecting or deselecting a folder shall recursively apply the same state (Selected or Deselected) to all its child files and folders within the current view. Items previously in a "New" state will transition to "Selected" or "Deselected" accordingly.
@@ -74,12 +74,12 @@ A profile encapsulates:
 [UiMainWindowSingleV1] A single main application window.
 
 ## Tree View
-[UiTreeViewDisplayStructureV2] * Display the file and folder structure starting from the active profile's root folder.
+[UiTreeViewDisplayStructureV3] * Display the file and folder structure starting from the active profile's root folder. The TreeView must visually indicate the single item currently selected for viewing, distinct from its checkbox state (e.g., via a row highlight).
 [UiTreeViewVisualSelectionStateV2] * Visually indicate the selection state (Selected, Deselected, New) for each item. "Selected" and "Deselected" will typically use checkbox states. "New" items will have an additional distinct visual indicator.
 [UiTreeViewVisualFileStatusV1] * Visually indicate the status of files relative to the profile's selection and archive state (e.g., new, modified since last archive, included, excluded).
 
 ## File Content Viewer
-[UiContentViewerPanelReadOnlyV1] * A panel or separate window to display the content of a selected file from the tree view (read-only).
+[UiContentViewerPanelReadOnlyV1] * A read-only panel shall be present in the main window to display the content of the currently selected file from the tree view.
 
 ## Search Functionality
 [UiSearchFileNameFilterTreeV1] * **File Name Search:** Allow users to filter the tree view by file/folder names.

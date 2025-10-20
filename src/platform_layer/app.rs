@@ -579,12 +579,18 @@ impl Win32ApiInternalState {
                 parent_control_id,
                 control_id,
                 initial_text,
+                read_only,
+                multiline,
+                vertical_scroll,
             } => command_executor::execute_create_input(
                 self,
                 window_id,
                 parent_control_id,
                 control_id,
                 initial_text,
+                read_only,
+                multiline,
+                vertical_scroll,
             ),
             PlatformCommand::SetInputText {
                 window_id,

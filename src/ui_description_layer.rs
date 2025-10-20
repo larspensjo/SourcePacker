@@ -140,6 +140,9 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::FILTER_INPUT_ID,
         initial_text: "".to_string(), // Placeholder text can be set here if desired
+        read_only: false,
+        multiline: false,
+        vertical_scroll: false,
     });
     commands.push(PlatformCommand::ApplyStyleToControl {
         window_id,
@@ -178,6 +181,21 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         control_id: ui_constants::ID_TREEVIEW_CTRL,
     });
     // TreeView styling is handled by its custom draw logic, but we could apply a base style if needed.
+
+    commands.push(PlatformCommand::CreateInput {
+        window_id,
+        parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
+        control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+        initial_text: String::new(),
+        read_only: true,
+        multiline: true,
+        vertical_scroll: true,
+    });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+        style_id: StyleId::DefaultInput,
+    });
 
     // Create Labels within the Status Bar Panel and apply styles
     commands.push(PlatformCommand::CreateLabel {
@@ -252,8 +270,16 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         LayoutRule {
             control_id: ui_constants::ID_TREEVIEW_CTRL,
             parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
-            dock_style: DockStyle::Fill,
+            dock_style: DockStyle::Left,
             order: 10, // Process after fixed-size items
+            fixed_size: Some(300),
+            margin: (0, 2, 0, 0),
+        },
+        LayoutRule {
+            control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+            parent_control_id: Some(ui_constants::MAIN_BACKGROUND_PANEL_ID),
+            dock_style: DockStyle::Fill,
+            order: 11,
             fixed_size: None,
             margin: (0, 0, 0, 0),
         },

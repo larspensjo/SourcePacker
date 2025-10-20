@@ -391,11 +391,15 @@ pub enum PlatformCommand {
         initial_text: String,
         class: LabelClass, // Classify labels for potential specific styling
     },
+    // TODO: Now that 'CreateInput' can be used to create a read-only item, it should probably change name.
     CreateInput {
         window_id: WindowId,
         parent_control_id: Option<ControlId>,
         control_id: ControlId,
         initial_text: String,
+        read_only: bool,
+        multiline: bool,
+        vertical_scroll: bool,
     },
     SetInputText {
         window_id: WindowId,
