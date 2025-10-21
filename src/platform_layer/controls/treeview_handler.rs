@@ -22,11 +22,12 @@ use windows::{
         UI::Controls::{
             CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT,
             CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, HTREEITEM, NMHDR, NMTVCUSTOMDRAW,
-            TVHITTESTINFO, TVHT_ONITEMSTATEICON, TVI_LAST, TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE,
-            TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0, TVIS_STATEIMAGEMASK, TVITEMEXW,
-            TVITEMEXW_CHILDREN, TVM_DELETEITEM, TVM_GETITEMRECT, TVM_GETITEMW, TVM_HITTEST,
-            TVM_INSERTITEMW, TVM_SETITEMW, TVS_CHECKBOXES, TVS_HASBUTTONS, TVS_HASLINES,
-            TVS_LINESATROOT, TVS_SHOWSELALWAYS, WC_TREEVIEWW,
+            TVGN_CARET, TVHITTESTINFO, TVHT_ONITEMLABEL, TVHT_ONITEMSTATEICON, TVI_LAST,
+            TVIF_CHILDREN, TVIF_PARAM, TVIF_STATE, TVIF_TEXT, TVINSERTSTRUCTW, TVINSERTSTRUCTW_0,
+            TVIS_STATEIMAGEMASK, TVITEMEXW, TVITEMEXW_CHILDREN, TVM_DELETEITEM, TVM_GETITEMRECT,
+            TVM_GETITEMW, TVM_HITTEST, TVM_INSERTITEMW, TVM_SELECTITEM, TVM_SETITEMW,
+            TVS_CHECKBOXES, TVS_HASBUTTONS, TVS_HASLINES, TVS_LINESATROOT, TVS_SHOWSELALWAYS,
+            WC_TREEVIEWW,
         },
         UI::WindowsAndMessaging::*,
     },
@@ -705,6 +706,77 @@ pub(crate) fn expand_all_tree_items(
 }
 
 /*
+ * Ensures the operating system highlights the TreeView row for a provided item.
+ * This centralizes the conversion from logical `TreeItemId` to native `HTREEITEM`
+ * and issues the `TVM_SELECTITEM` message so layout code can simply enqueue a command.
+ */
+pub(crate) fn set_treeview_selection(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: ControlId,
+    item_id: TreeItemId,
+) -> PlatformResult<()> {
+    log::debug!(
+        "TreeViewHandler: set_treeview_selection for WinID {window_id:?}, ControlID {}, ItemID {item_id:?}",
+        control_id.raw()
+    );
+
+    let (hwnd_treeview, h_item_native) =
+        internal_state.with_window_data_read(window_id, |window_data| {
+            let hwnd = window_data.get_control_hwnd(control_id).ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "TreeView HWND not found for ControlID {}",
+                    control_id.raw()
+                ))
+            })?;
+
+            let tv_state = window_data.get_treeview_state().ok_or_else(|| {
+                PlatformError::OperationFailed(format!(
+                    "No TreeView state available for WinID {window_id:?}"
+                ))
+            })?;
+
+            let h_item = tv_state
+                .item_id_to_htreeitem
+                .get(&item_id)
+                .copied()
+                .ok_or_else(|| {
+                    PlatformError::InvalidHandle(format!(
+                        "TreeItemId {item_id:?} not found when selecting"
+                    ))
+                })?;
+            Ok((hwnd, h_item))
+        })?;
+
+    if hwnd_treeview.is_invalid() {
+        return Err(PlatformError::InvalidHandle(
+            "Invalid TreeView HWND while selecting item".into(),
+        ));
+    }
+
+    let select_result = unsafe {
+        SendMessageW(
+            hwnd_treeview,
+            TVM_SELECTITEM,
+            Some(WPARAM(TVGN_CARET as usize)),
+            Some(LPARAM(h_item_native.0)),
+        )
+    };
+
+    if select_result.0 == 0 {
+        log::warn!(
+            "TreeViewHandler: TVM_SELECTITEM failed for ItemID {item_id:?} on ControlID {}",
+            control_id.raw()
+        );
+        return Err(PlatformError::OperationFailed(
+            "Failed to select TreeView item".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+/*
  * Determines whether a given TreeView item should display the "new item" styling.
  * Relies on the application logic's `UiStateProvider` to keep the decision centralized.
  */
@@ -915,25 +987,25 @@ pub(crate) fn handle_wm_app_treeview_checkbox_clicked(
  * icon (checkbox) and post a custom message for deferred processing.
  */
 pub(crate) fn handle_nm_click(
-    _internal_state: &Arc<Win32ApiInternalState>,
+    internal_state: &Arc<Win32ApiInternalState>,
     parent_hwnd: HWND,
-    _window_id: WindowId,
+    window_id: WindowId,
     nmhdr: &NMHDR,
-) {
+) -> Option<AppEvent> {
     let hwnd_tv_from_notify = nmhdr.hwndFrom;
     if hwnd_tv_from_notify.is_invalid() {
-        return;
+        return None;
     }
 
     let control_id_from_notify = ControlId::new(nmhdr.idFrom as i32);
 
     let mut screen_pt_of_click = POINT::default();
     if unsafe { GetCursorPos(&mut screen_pt_of_click) }.is_err() {
-        return;
+        return None;
     }
     let mut client_pt_for_hittest = screen_pt_of_click;
     if unsafe { !ScreenToClient(hwnd_tv_from_notify, &mut client_pt_for_hittest) }.as_bool() {
-        return;
+        return None;
     }
 
     let mut tvht_info = TVHITTESTINFO {
@@ -971,6 +1043,49 @@ pub(crate) fn handle_nm_click(
                     GetLastError()
                 );
             }
+        }
+        return None;
+    }
+
+    if h_item_hit.0 == 0 {
+        return None;
+    }
+
+    if (tvht_info.flags.0 & TVHT_ONITEMLABEL.0) == 0 {
+        return None;
+    }
+
+    let result = internal_state.with_window_data_read(window_id, |window_data| {
+        let tv_state = window_data.get_treeview_state().ok_or_else(|| {
+            PlatformError::OperationFailed(format!(
+                "TreeView state not found while resolving label click in WinID {window_id:?}"
+            ))
+        })?;
+
+        tv_state
+            .htreeitem_to_item_id
+            .get(&(h_item_hit.0))
+            .copied()
+            .ok_or_else(|| {
+                PlatformError::InvalidHandle(format!(
+                    "HTREEITEM {:?} missing in map during label click",
+                    h_item_hit
+                ))
+            })
+    });
+
+    match result {
+        Ok(item_id) => {
+            log::debug!(
+                "TreeView label click resolved to TreeItemId {item_id:?} for WinID {window_id:?}."
+            );
+            Some(AppEvent::TreeViewItemSelectionChanged { window_id, item_id })
+        }
+        Err(err) => {
+            log::error!(
+                "Failed to resolve TreeView label click to item ID in WinID {window_id:?}: {err:?}"
+            );
+            None
         }
     }
 }

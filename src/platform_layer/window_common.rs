@@ -921,8 +921,13 @@ impl Win32ApiInternalState {
                         "Routing NM_CLICK from ControlID {} to treeview_handler.",
                         control_id_from_notify.raw()
                     );
-                    treeview_handler::handle_nm_click(self, hwnd_parent_window, window_id, nmhdr);
-                    return (None, None);
+                    let event = treeview_handler::handle_nm_click(
+                        self,
+                        hwnd_parent_window,
+                        window_id,
+                        nmhdr,
+                    );
+                    return (event, None);
                 }
                 TVN_ITEMCHANGEDW => {
                     log::trace!(

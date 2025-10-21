@@ -597,6 +597,13 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
+            PlatformCommand::SetTreeViewSelection {
+                window_id,
+                control_id,
+                item_id,
+            } => command_executor::execute_set_treeview_selection(
+                self, window_id, control_id, item_id,
+            ),
             PlatformCommand::DefineStyle { style_id, style } => self.define_style(style_id, style),
             PlatformCommand::ApplyStyleToControl {
                 window_id,

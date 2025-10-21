@@ -2089,6 +2089,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_treeview_item_selection_changed_updates_state_and_issues_command() {
+        // Arrange
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        let tree_item_id = TreeItemId(99);
+        logic.test_set_path_to_tree_item_id_mapping(PathBuf::from("/root/demo.txt"), tree_item_id);
+
+        // Act
+        logic.handle_event(AppEvent::TreeViewItemSelectionChanged {
+            window_id,
+            item_id: tree_item_id,
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert_eq!(logic.test_get_active_viewer_item_id(), Some(tree_item_id));
+        let selection_cmd = find_command(&cmds, |cmd| {
+            matches!(
+                cmd,
+                PlatformCommand::SetTreeViewSelection {
+                    window_id: wid,
+                    control_id,
+                    item_id
+                } if *wid == window_id
+                    && *control_id == ui_constants::ID_TREEVIEW_CTRL
+                    && *item_id == tree_item_id
+            )
+        });
+        assert!(
+            selection_cmd.is_some(),
+            "Expected SetTreeViewSelection command after selection change"
+        );
+    }
+
     // --- Tests for newly exposed private functions ---
 
     #[test]

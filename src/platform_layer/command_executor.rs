@@ -242,6 +242,15 @@ pub(crate) fn execute_expand_all_tree_items(
     treeview_handler::expand_all_tree_items(internal_state, window_id, control_id)
 }
 
+pub(crate) fn execute_set_treeview_selection(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: ControlId,
+    item_id: TreeItemId,
+) -> PlatformResult<()> {
+    treeview_handler::set_treeview_selection(internal_state, window_id, control_id, item_id)
+}
+
 /*
  * Executes the `CreateInput` command.
  * Creates a Win32 EDIT control to be used as a text input field.

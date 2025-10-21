@@ -119,6 +119,10 @@ impl FileNode {
             return self.state == SelectionState::New;
         }
 
+        if self.state == SelectionState::New {
+            return true;
+        }
+
         self.children
             .iter()
             .any(|child| child.should_display_new_indicator())
@@ -241,7 +245,7 @@ impl FileNode {
                     let item_id = TreeItemId(id_val);
                     map.insert(node.path().to_path_buf(), item_id);
                     let display_new_indicator = if node.is_dir {
-                        visible_children_have_new
+                        visible_children_have_new || node.state == SelectionState::New
                     } else {
                         node.state == SelectionState::New
                     };

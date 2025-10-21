@@ -194,6 +194,10 @@ pub enum AppEvent {
         item_id: TreeItemId,
         new_state: CheckState,
     },
+    TreeViewItemSelectionChanged {
+        window_id: WindowId,
+        item_id: TreeItemId,
+    },
     // Signals that a button was clicked.
     ButtonClicked {
         window_id: WindowId,
@@ -405,6 +409,11 @@ pub enum PlatformCommand {
         window_id: WindowId,
         control_id: ControlId,
         text: String,
+    },
+    SetTreeViewSelection {
+        window_id: WindowId,
+        control_id: ControlId,
+        item_id: TreeItemId,
     },
     UpdateLabelText {
         window_id: WindowId,

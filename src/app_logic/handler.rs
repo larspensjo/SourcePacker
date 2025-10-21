@@ -671,6 +671,45 @@ impl MyAppLogic {
     }
 
     /*
+     * Records the TreeView item selected for content preview and asks the platform layer
+     * to highlight it. This keeps UI selection visuals synchronized with app state for
+     * [UiTreeViewDisplayStructureV3].
+     */
+    fn handle_treeview_item_selection_changed(&mut self, window_id: WindowId, item_id: TreeItemId) {
+        let ui_state = match self.ui_state.as_mut() {
+            Some(state) if state.window_id() == window_id => state,
+            _ => {
+                log::debug!(
+                    "AppLogic: Selection changed event ignored for unknown window {window_id:?}."
+                );
+                return;
+            }
+        };
+
+        if ui_state.path_for_tree_item(item_id).is_none() {
+            log::warn!(
+                "AppLogic: TreeItemId {item_id:?} is not mapped to a path; skipping selection update."
+            );
+            return;
+        }
+
+        if ui_state.active_viewer_item_id() == Some(item_id) {
+            log::trace!(
+                "AppLogic: TreeItemId {item_id:?} already active; no highlight command needed."
+            );
+            return;
+        }
+
+        ui_state.set_active_viewer_item_id(Some(item_id));
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::SetTreeViewSelection {
+                window_id,
+                control_id: ui_constants::ID_TREEVIEW_CTRL,
+                item_id,
+            });
+    }
+
+    /*
      * Builds the TreeView label for a file or folder by reusing the persisted name and
      * appending the "new" indicator when required. This keeps ad-hoc text updates consistent
      * with the full tree rebuilding logic without forcing a wholesale refresh.
@@ -2109,6 +2148,9 @@ impl PlatformEventHandler for MyAppLogic {
             } => {
                 self.handle_treeview_item_toggled(window_id, item_id, new_state);
             }
+            AppEvent::TreeViewItemSelectionChanged { window_id, item_id } => {
+                self.handle_treeview_item_selection_changed(window_id, item_id);
+            }
             AppEvent::ButtonClicked {
                 window_id,
                 control_id,
@@ -2430,5 +2472,11 @@ impl MyAppLogic {
         self.ui_state
             .as_ref()
             .and_then(|s| s.filter_text().map(|t| t.to_string()))
+    }
+
+    pub(crate) fn test_get_active_viewer_item_id(&self) -> Option<TreeItemId> {
+        self.ui_state
+            .as_ref()
+            .and_then(|s| s.active_viewer_item_id())
     }
 }

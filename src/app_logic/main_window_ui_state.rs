@@ -47,6 +47,8 @@ pub struct MainWindowUiState {
     last_successful_filter_result: Vec<TreeItemDescriptor>,
     /* Indicates that the current filter text yielded no matches. */
     filter_no_match: bool,
+    /* Tracks which TreeView item is currently selected for viewing in the preview pane. */
+    active_viewer_item_id: Option<TreeItemId>,
 }
 
 impl MainWindowUiState {
@@ -67,6 +69,7 @@ impl MainWindowUiState {
             filter_text: None,
             last_successful_filter_result: Vec::new(),
             filter_no_match: false,
+            active_viewer_item_id: None,
         }
     }
 
@@ -112,6 +115,14 @@ impl MainWindowUiState {
      */
     pub fn archive_status(&self) -> Option<&ArchiveStatus> {
         self.current_archive_status_for_ui.as_ref()
+    }
+
+    pub fn set_active_viewer_item_id(&mut self, item_id: Option<TreeItemId>) {
+        self.active_viewer_item_id = item_id;
+    }
+
+    pub fn active_viewer_item_id(&self) -> Option<TreeItemId> {
+        self.active_viewer_item_id
     }
 
     /*
@@ -421,6 +432,7 @@ mod tests {
         assert!(ui_state.filter_text().is_none());
         assert!(ui_state.last_successful_filter_descriptors().is_empty());
         assert!(!ui_state.filter_had_no_match());
+        assert!(ui_state.active_viewer_item_id().is_none());
     }
 
     #[test]
