@@ -12,6 +12,7 @@ use crate::platform_layer::{
 use crate::app_logic::{MainWindowUiState, ui_constants};
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -686,12 +687,28 @@ impl MyAppLogic {
             }
         };
 
-        if ui_state.path_for_tree_item(item_id).is_none() {
-            log::warn!(
-                "AppLogic: TreeItemId {item_id:?} is not mapped to a path; skipping selection update."
-            );
-            return;
-        }
+        let path = match ui_state.path_for_tree_item(item_id) {
+            Some(p) => p,
+            None => {
+                log::warn!(
+                    "AppLogic: TreeItemId {item_id:?} is not mapped to a path; skipping selection update."
+                );
+                return;
+            }
+        };
+
+        let is_directory = {
+            let app_data = self.app_session_data_ops.lock().unwrap();
+            match app_data.get_node_attributes_for_path(&path) {
+                Some((_state, is_dir)) => is_dir,
+                None => {
+                    log::warn!(
+                        "AppLogic: No node attributes found for path {path:?}; skipping viewer update."
+                    );
+                    return;
+                }
+            }
+        };
 
         if ui_state.active_viewer_item_id() == Some(item_id) {
             log::trace!(
@@ -707,6 +724,33 @@ impl MyAppLogic {
                 control_id: ui_constants::ID_TREEVIEW_CTRL,
                 item_id,
             });
+
+        if is_directory {
+            log::trace!(
+                "AppLogic: Selected TreeItemId {item_id:?} maps to directory {path:?}; viewer content unchanged."
+            );
+            return;
+        }
+
+        match fs::read_to_string(&path) {
+            Ok(content) => {
+                log::debug!(
+                    "AppLogic: Loaded {} bytes for viewer from path {path:?}.",
+                    content.len()
+                );
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::SetViewerContent {
+                        window_id,
+                        control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+                        text: content,
+                    });
+            }
+            Err(err) => {
+                log::warn!(
+                    "AppLogic: Failed to read file content for viewer path {path:?}: {err:?}."
+                );
+            }
+        }
     }
 
     /*

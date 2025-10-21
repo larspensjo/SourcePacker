@@ -16,6 +16,7 @@ mod tests {
     };
 
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::io::{self};
     use std::path::{Path, PathBuf};
     use std::sync::mpsc;
@@ -25,6 +26,7 @@ mod tests {
     };
     use std::thread;
     use std::time::SystemTime;
+    use tempfile::tempdir;
 
     type SelectionSnapshotLog = (Vec<FileNode>, HashSet<PathBuf>, HashSet<PathBuf>);
     type MockSetupResult = (
@@ -2092,12 +2094,24 @@ mod tests {
     #[test]
     fn test_treeview_item_selection_changed_updates_state_and_issues_command() {
         // Arrange
-        let (mut logic, ..) = setup_logic_with_mocks();
+        let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
         let window_id = WindowId(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let tree_item_id = TreeItemId(99);
-        logic.test_set_path_to_tree_item_id_mapping(PathBuf::from("/root/demo.txt"), tree_item_id);
+        let path = PathBuf::from("/root/demo.txt");
+        logic.test_set_path_to_tree_item_id_mapping(path.clone(), tree_item_id);
+        {
+            let mut app_data = mock_app_session.lock().unwrap();
+            app_data.set_snapshot_nodes_for_mock(vec![FileNode::new_full(
+                path,
+                "demo.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "".to_string(),
+            )]);
+        }
 
         // Act
         logic.handle_event(AppEvent::TreeViewItemSelectionChanged {
@@ -2124,6 +2138,58 @@ mod tests {
             selection_cmd.is_some(),
             "Expected SetTreeViewSelection command after selection change"
         );
+    }
+
+    #[test]
+    fn test_select_text_file_loads_content_into_viewer() {
+        // Arrange
+        let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        let temp_dir = tempdir().expect("temp dir creation");
+        let file_path = temp_dir.path().join("preview.txt");
+        let expected_content = "Preview Content";
+        fs::write(&file_path, expected_content).expect("write preview file");
+
+        let tree_item_id = TreeItemId(101);
+        logic.test_set_path_to_tree_item_id_mapping(file_path.clone(), tree_item_id);
+
+        {
+            let mut app_data = mock_app_session.lock().unwrap();
+            app_data.set_snapshot_nodes_for_mock(vec![FileNode::new_full(
+                file_path.clone(),
+                "preview.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "".to_string(),
+            )]);
+        }
+
+        // Act
+        logic.handle_event(AppEvent::TreeViewItemSelectionChanged {
+            window_id,
+            item_id: tree_item_id,
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        let viewer_cmd = find_command(&cmds, |cmd| {
+            matches!(cmd, PlatformCommand::SetViewerContent { .. })
+        });
+        assert!(viewer_cmd.is_some(), "Expected SetViewerContent command");
+
+        if let Some(PlatformCommand::SetViewerContent {
+            window_id: wid,
+            control_id,
+            text,
+        }) = viewer_cmd
+        {
+            assert_eq!(*wid, window_id);
+            assert_eq!(*control_id, ui_constants::ID_VIEWER_EDIT_CTRL);
+            assert_eq!(text, expected_content);
+        }
     }
 
     // --- Tests for newly exposed private functions ---

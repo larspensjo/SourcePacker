@@ -381,6 +381,20 @@ pub(crate) fn execute_set_input_text(
     Ok(())
 }
 
+pub(crate) fn execute_set_viewer_content(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: ControlId,
+    text: String,
+) -> PlatformResult<()> {
+    log::debug!(
+        "CommandExecutor: execute_set_viewer_content for WinID {window_id:?}, ControlID {}, bytes: {}",
+        control_id.raw(),
+        text.len()
+    );
+    execute_set_input_text(internal_state, window_id, control_id, text)
+}
+
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)
 pub(crate) fn execute_set_window_title(
     internal_state: &Arc<Win32ApiInternalState>,

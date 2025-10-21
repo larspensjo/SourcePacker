@@ -410,6 +410,11 @@ pub enum PlatformCommand {
         control_id: ControlId,
         text: String,
     },
+    SetViewerContent {
+        window_id: WindowId,
+        control_id: ControlId,
+        text: String,
+    },
     SetTreeViewSelection {
         window_id: WindowId,
         control_id: ControlId,

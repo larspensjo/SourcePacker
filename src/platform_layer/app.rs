@@ -597,6 +597,11 @@ impl Win32ApiInternalState {
                 control_id,
                 text,
             } => command_executor::execute_set_input_text(self, window_id, control_id, text),
+            PlatformCommand::SetViewerContent {
+                window_id,
+                control_id,
+                text,
+            } => command_executor::execute_set_viewer_content(self, window_id, control_id, text),
             PlatformCommand::SetTreeViewSelection {
                 window_id,
                 control_id,

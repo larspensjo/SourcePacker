@@ -119,10 +119,6 @@ impl FileNode {
             return self.state == SelectionState::New;
         }
 
-        if self.state == SelectionState::New {
-            return true;
-        }
-
         self.children
             .iter()
             .any(|child| child.should_display_new_indicator())
@@ -245,7 +241,7 @@ impl FileNode {
                     let item_id = TreeItemId(id_val);
                     map.insert(node.path().to_path_buf(), item_id);
                     let display_new_indicator = if node.is_dir {
-                        visible_children_have_new || node.state == SelectionState::New
+                        visible_children_have_new
                     } else {
                         node.state == SelectionState::New
                     };
@@ -440,13 +436,7 @@ mod tests {
             Some(&TreeItemId(100))
         );
         // Dir 1
-        assert_eq!(
-            descriptors[1].text,
-            format!(
-                "dir1 {}",
-                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
-            )
-        );
+        assert_eq!(descriptors[1].text, "dir1");
         assert_eq!(descriptors[1].id, TreeItemId(101));
         assert!(descriptors[1].is_folder);
         assert_eq!(descriptors[1].state, CheckState::Unchecked); // New/Deselected map to Unchecked
@@ -519,13 +509,7 @@ mod tests {
         );
 
         assert_eq!(descriptors.len(), 1); // Only dir1 should be top level
-        assert_eq!(
-            descriptors[0].text,
-            format!(
-                "dir1 {}",
-                crate::app_logic::ui_constants::NEW_ITEM_INDICATOR_CHAR
-            )
-        );
+        assert_eq!(descriptors[0].text, "dir1");
         assert_eq!(descriptors[0].children.len(), 1);
         assert_eq!(descriptors[0].children[0].text, "match.txt");
         assert_eq!(path_to_id_map.len(), 2);
@@ -601,6 +585,34 @@ mod tests {
         assert_eq!(descriptors[0].children.len(), 1);
         assert_eq!(descriptors[0].children[0].text, "visible.txt");
         assert_eq!(path_to_id_map.len(), 2);
+    }
+
+    #[test]
+    fn test_directory_with_new_state_but_no_children_has_no_indicator() {
+        let dir = FileNode::new_full(
+            PathBuf::from("/parent"),
+            "parent".into(),
+            true,
+            SelectionState::New,
+            Vec::new(),
+            "".to_string(),
+        );
+        assert!(
+            !dir.should_display_new_indicator(),
+            "Directory without children should not report new indicator"
+        );
+
+        let mut path_to_id_map = HashMap::new();
+        let mut id_counter = 1;
+        let descriptors = FileNode::build_tree_item_descriptors_recursive(
+            &[dir],
+            &mut path_to_id_map,
+            &mut id_counter,
+        );
+
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].text, "parent");
+        assert!(descriptors[0].children.is_empty());
     }
 
     #[test]
