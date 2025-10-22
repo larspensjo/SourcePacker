@@ -2149,8 +2149,9 @@ mod tests {
 
         let temp_dir = tempdir().expect("temp dir creation");
         let file_path = temp_dir.path().join("preview.txt");
-        let expected_content = "Preview Content";
-        fs::write(&file_path, expected_content).expect("write preview file");
+        let lf_only_content = "Preview\nContent\n";
+        let expected_content = "Preview\r\nContent\r\n";
+        fs::write(&file_path, lf_only_content).expect("write preview file");
 
         let tree_item_id = TreeItemId(101);
         logic.test_set_path_to_tree_item_id_mapping(file_path.clone(), tree_item_id);

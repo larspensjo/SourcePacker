@@ -738,11 +738,12 @@ impl MyAppLogic {
                     "AppLogic: Loaded {} bytes for viewer from path {path:?}.",
                     content.len()
                 );
+                let normalized = Self::normalize_viewer_content(&content);
                 self.synchronous_command_queue
                     .push_back(PlatformCommand::SetViewerContent {
                         window_id,
                         control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
-                        text: content,
+                        text: normalized,
                     });
             }
             Err(err) => {
@@ -751,6 +752,28 @@ impl MyAppLogic {
                 );
             }
         }
+    }
+
+    /*
+     * Converts arbitrary newline sequences to CRLF so the Windows EDIT control renders them correctly.
+     * All `\n`, bare `\r`, and `\r\n` sequences map to a single CRLF pair for display.
+     */
+    fn normalize_viewer_content(content: &str) -> String {
+        let mut normalized = String::with_capacity(content.len() + content.len() / 16 + 2);
+        let mut iter = content.chars().peekable();
+        while let Some(ch) = iter.next() {
+            match ch {
+                '\r' => {
+                    if let Some(&'\n') = iter.peek() {
+                        iter.next();
+                    }
+                    normalized.push_str("\r\n");
+                }
+                '\n' => normalized.push_str("\r\n"),
+                _ => normalized.push(ch),
+            }
+        }
+        normalized
     }
 
     /*
