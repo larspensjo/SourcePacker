@@ -66,6 +66,11 @@ pub fn define_neon_night_theme() -> Vec<PlatformCommand> {
     };
     let mut error_font = default_font.clone();
     error_font.weight = Some(FontWeight::Bold);
+    let viewer_monospace_font = FontDescription {
+        name: Some("Consolas".to_string()),
+        size: Some(10),
+        weight: Some(FontWeight::Normal),
+    };
 
     // --- Style Definitions ---
 
@@ -124,6 +129,15 @@ pub fn define_neon_night_theme() -> Vec<PlatformCommand> {
     commands.push(PlatformCommand::DefineStyle {
         style_id: StyleId::DefaultInput,
         style: input_style,
+    });
+    let viewer_style = ControlStyle {
+        text_color: Some(text_light.clone()),
+        background_color: Some(bg_input.clone()),
+        font: Some(viewer_monospace_font),
+    };
+    commands.push(PlatformCommand::DefineStyle {
+        style_id: StyleId::ViewerMonospace,
+        style: viewer_style,
     });
 
     // Style for input controls when in an error state (e.g., filter no match)

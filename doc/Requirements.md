@@ -79,7 +79,7 @@ A profile encapsulates:
 [UiTreeViewVisualFileStatusV1] * Visually indicate the status of files relative to the profile's selection and archive state (e.g., new, modified since last archive, included, excluded).
 
 ## File Content Viewer
-[UiContentViewerPanelReadOnlyV2] * A read-only panel shall be present in the main window to display the content of the currently selected file from the tree view. The viewer shall normalize line endings so that files using LF (`\n`), CR (`\r`), or CRLF (`\r\n`) sequences render with consistent line breaks.
+[UiContentViewerPanelReadOnlyV3] * A read-only panel shall be present in the main window to display the content of the currently selected file from the tree view. The viewer shall normalize line endings so that files using LF (`\n`), CR (`\r`), or CRLF (`\r\n`) sequences render with consistent line breaks, and it shall render text with a fixed-width font for consistent alignment of source code.
 
 ## Search Functionality
 [UiSearchFileNameFilterTreeV1] * **File Name Search:** Allow users to filter the tree view by file/folder names.

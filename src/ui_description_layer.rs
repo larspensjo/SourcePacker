@@ -194,7 +194,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     commands.push(PlatformCommand::ApplyStyleToControl {
         window_id,
         control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
-        style_id: StyleId::DefaultInput,
+        style_id: StyleId::ViewerMonospace,
     });
 
     // Create Labels within the Status Bar Panel and apply styles
