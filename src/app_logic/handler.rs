@@ -732,20 +732,33 @@ impl MyAppLogic {
             return;
         }
 
-        match fs::read_to_string(&path) {
-            Ok(content) => {
-                log::debug!(
-                    "AppLogic: Loaded {} bytes for viewer from path {path:?}.",
-                    content.len()
-                );
-                let normalized = Self::normalize_viewer_content(&content);
-                self.synchronous_command_queue
-                    .push_back(PlatformCommand::SetViewerContent {
-                        window_id,
-                        control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
-                        text: normalized,
-                    });
-            }
+        match fs::read(&path) {
+            Ok(raw_bytes) => match String::from_utf8(raw_bytes) {
+                Ok(content) => {
+                    log::debug!(
+                        "AppLogic: Loaded {} bytes for viewer from path {path:?}.",
+                        content.len()
+                    );
+                    let normalized = Self::normalize_viewer_content(&content);
+                    self.synchronous_command_queue
+                        .push_back(PlatformCommand::SetViewerContent {
+                            window_id,
+                            control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+                            text: normalized,
+                        });
+                }
+                Err(_) => {
+                    log::warn!(
+                        "AppLogic: File at {path:?} is not valid UTF-8; showing binary placeholder."
+                    );
+                    self.synchronous_command_queue
+                        .push_back(PlatformCommand::SetViewerContent {
+                            window_id,
+                            control_id: ui_constants::ID_VIEWER_EDIT_CTRL,
+                            text: "[Binary file preview unavailable]".to_string(),
+                        });
+                }
+            },
             Err(err) => {
                 log::warn!(
                     "AppLogic: Failed to read file content for viewer path {path:?}: {err:?}."
