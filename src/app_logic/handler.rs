@@ -516,41 +516,47 @@ impl MyAppLogic {
      * arrives the cached match set is updated and the driver is dropped.
      */
     fn poll_content_search_progress(&mut self) {
-        let driver = match self.content_search_driver.as_mut() {
-            Some(driver) => driver,
-            None => return,
-        };
+        let mut driver_opt = self.content_search_driver.take();
+        if let Some(driver) = driver_opt.take() {
+            let recv_result = driver
+                .receiver
+                .lock()
+                .expect("Content search receiver mutex poisoned")
+                .try_recv();
 
-        let recv_result = driver
-            .receiver
-            .lock()
-            .expect("Content search receiver mutex poisoned")
-            .try_recv();
-
-        match recv_result {
-            Ok(progress) => {
-                let ContentSearchProgress { is_final, results } = progress;
-                if is_final {
-                    let matches: HashSet<PathBuf> = results
-                        .into_iter()
-                        .filter_map(|result| result.matches.then_some(result.path))
-                        .collect();
-                    if let Some(ui_state) = self.ui_state.as_mut() {
-                        ui_state.set_content_search_matches(Some(matches));
+            let mut finished = false;
+            match recv_result {
+                Ok(progress) => {
+                    let ContentSearchProgress { is_final, results } = progress;
+                    if is_final {
+                        let matches: HashSet<PathBuf> = results
+                            .into_iter()
+                            .filter_map(|result| result.matches.then_some(result.path))
+                            .collect();
+                        if let Some(ui_state) = self.ui_state.as_mut() {
+                            ui_state.set_content_search_matches(Some(matches));
+                        }
+                        finished = true;
+                        log::debug!("AppLogic: Content search completed and cached.");
+                        if let Some(window_id) = self.ui_state.as_ref().map(|s| s.window_id()) {
+                            self.repopulate_tree_view(window_id);
+                        }
+                    } else {
+                        log::trace!(
+                            "AppLogic: Received interim content-search batch ({} results).",
+                            results.len()
+                        );
                     }
-                    self.content_search_driver = None;
-                    log::debug!("AppLogic: Content search completed and cached.");
-                } else {
-                    log::trace!(
-                        "AppLogic: Received interim content-search batch ({} results).",
-                        results.len()
-                    );
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    log::warn!("AppLogic: Content search channel disconnected unexpectedly.");
+                    finished = true;
                 }
             }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
-                log::warn!("AppLogic: Content search channel disconnected unexpectedly.");
-                self.content_search_driver = None;
+
+            if !finished {
+                self.content_search_driver = Some(driver);
             }
         }
     }
@@ -2605,7 +2611,7 @@ impl MyAppLogic {
                 collected.push(cmd);
                 made_progress = true;
             }
-            if self.token_recalc_driver.is_none() {
+            if self.token_recalc_driver.is_none() && self.content_search_driver.is_none() {
                 break;
             }
             if !made_progress {

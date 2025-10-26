@@ -272,6 +272,20 @@ impl MainWindowUiState {
         &mut self,
         snapshot_nodes: &[FileNode],
     ) -> Vec<TreeItemDescriptor> {
+        if let Some(matches) = self.content_search_matches.as_ref() {
+            self.path_to_tree_item_id.clear();
+            self.next_tree_item_id_counter = 1;
+            let descriptors = FileNode::build_tree_item_descriptors_from_matches(
+                snapshot_nodes,
+                matches,
+                &mut self.path_to_tree_item_id,
+                &mut self.next_tree_item_id_counter,
+            );
+            self.filter_no_match = descriptors.is_empty();
+            self.last_successful_filter_result = descriptors.clone();
+            return descriptors;
+        }
+
         let active_filter = self.filter_text.clone();
         self.path_to_tree_item_id.clear();
         self.next_tree_item_id_counter = 1;
@@ -580,6 +594,31 @@ mod tests {
             .collect();
         assert_eq!(no_match_texts, filtered_texts);
         assert!(ui_state.filter_had_no_match());
+    }
+
+    #[test]
+    fn rebuild_tree_descriptors_uses_content_matches_when_available() {
+        crate::initialize_logging();
+        let window_id = WindowId(9);
+        let mut ui_state = MainWindowUiState::new(window_id);
+
+        let nodes = vec![FileNode::new_full(
+            PathBuf::from("/root/match.txt"),
+            "match.txt".into(),
+            false,
+            SelectionState::Selected,
+            Vec::new(),
+            "".to_string(),
+        )];
+
+        let mut matches = HashSet::new();
+        matches.insert(PathBuf::from("/root/match.txt"));
+        ui_state.set_content_search_matches(Some(matches));
+
+        let descriptors = ui_state.rebuild_tree_descriptors(&nodes);
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].text, "match.txt");
+        assert!(!ui_state.filter_had_no_match());
     }
 
     #[test]

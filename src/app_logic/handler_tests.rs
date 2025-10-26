@@ -3042,14 +3042,21 @@ mod tests {
         })
         .unwrap();
 
-        // Pump the command queue once to force polling of the channel.
-        let _ = logic.try_dequeue_command();
+        let cmds = logic.test_collect_commands_until_idle();
 
         let mut matches = logic
             .test_get_content_search_matches()
             .expect("Expected content search matches to be stored");
         matches.sort();
         assert_eq!(matches, vec![PathBuf::from("match.txt")]);
+        assert!(
+            find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::PopulateTreeView { .. }
+            ))
+            .is_some(),
+            "Expected PopulateTreeView after content search completes"
+        );
     }
 
     #[test]

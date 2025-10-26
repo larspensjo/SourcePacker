@@ -264,6 +264,66 @@ impl FileNode {
             .map(|(descriptor, _)| descriptor)
             .collect()
     }
+
+    pub fn build_tree_item_descriptors_from_matches(
+        nodes: &[FileNode],
+        matches: &HashSet<PathBuf>,
+        path_to_tree_item_id: &mut PathToTreeItemIdMap,
+        next_tree_item_id_counter: &mut u64,
+    ) -> Vec<TreeItemDescriptor> {
+        fn build_for_node(
+            node: &FileNode,
+            matches: &HashSet<PathBuf>,
+            map: &mut PathToTreeItemIdMap,
+            counter: &mut u64,
+        ) -> Option<(TreeItemDescriptor, bool)> {
+            let mut child_descriptors = Vec::new();
+            let mut visible_children_have_new = false;
+            for child in &node.children {
+                if let Some((child_descriptor, child_has_visible_new)) =
+                    build_for_node(child, matches, map, counter)
+                {
+                    if child_has_visible_new {
+                        visible_children_have_new = true;
+                    }
+                    child_descriptors.push(child_descriptor);
+                }
+            }
+
+            let node_matches = matches.contains(node.path());
+            let include_node = node_matches || !child_descriptors.is_empty();
+            if !include_node {
+                return None;
+            }
+
+            let display_new_indicator = if node.is_dir {
+                visible_children_have_new
+            } else {
+                node.state == SelectionState::New
+            };
+
+            let item_id = TreeItemId(*counter);
+            *counter += 1;
+            map.insert(node.path().to_path_buf(), item_id);
+
+            let descriptor =
+                node.new_tree_item_descriptor(item_id, child_descriptors, display_new_indicator);
+            Some((descriptor, display_new_indicator))
+        }
+
+        let mut descriptors = Vec::new();
+        for node in nodes {
+            if let Some((descriptor, _)) = build_for_node(
+                node,
+                matches,
+                path_to_tree_item_id,
+                next_tree_item_id_counter,
+            ) {
+                descriptors.push(descriptor);
+            }
+        }
+        descriptors
+    }
 }
 
 /*
@@ -342,8 +402,8 @@ pub enum ArchiveStatus {
 mod tests {
     use super::{FileNode, FileTokenDetails, Profile, SelectionState};
     use crate::platform_layer::{CheckState, TreeItemId};
-    use std::collections::HashMap;
-    use std::path::PathBuf; // Added for ArchiveStatus::ErrorChecking
+    use std::collections::{HashMap, HashSet};
+    use std::path::{Path, PathBuf}; // Added for ArchiveStatus::ErrorChecking
 
     #[test]
     fn test_filenode_new_defaults() {
@@ -538,6 +598,86 @@ mod tests {
         assert_eq!(descriptors_wc.len(), 1);
         assert_eq!(descriptors_wc[0].children.len(), 1);
         assert_eq!(descriptors_wc[0].children[0].text, "other.txt");
+    }
+
+    #[test]
+    fn test_build_tree_item_descriptors_from_matches() {
+        crate::initialize_logging();
+        let mut root = FileNode::new_full(
+            PathBuf::from("/root"),
+            "root".into(),
+            true,
+            SelectionState::Selected,
+            Vec::new(),
+            "ck-root".into(),
+        );
+        let mut src_dir = FileNode::new_full(
+            PathBuf::from("/root/src"),
+            "src".into(),
+            true,
+            SelectionState::Selected,
+            Vec::new(),
+            "ck-src".into(),
+        );
+        src_dir.children.push(FileNode::new_full(
+            PathBuf::from("/root/src/lib.rs"),
+            "lib.rs".into(),
+            false,
+            SelectionState::Selected,
+            Vec::new(),
+            "ck-lib".into(),
+        ));
+        src_dir.children.push(FileNode::new_full(
+            PathBuf::from("/root/src/main.rs"),
+            "main.rs".into(),
+            false,
+            SelectionState::Selected,
+            Vec::new(),
+            "ck-main".into(),
+        ));
+        root.children.push(src_dir);
+        root.children.push(FileNode::new_full(
+            PathBuf::from("/root/README.md"),
+            "README.md".into(),
+            false,
+            SelectionState::Selected,
+            Vec::new(),
+            "ck-readme".into(),
+        ));
+
+        let mut path_to_id_map = HashMap::new();
+        let mut counter = 1;
+        let matches = HashSet::from([
+            PathBuf::from("/root/src/lib.rs"),
+            PathBuf::from("/root/README.md"),
+        ]);
+
+        let descriptors = FileNode::build_tree_item_descriptors_from_matches(
+            &[root],
+            &matches,
+            &mut path_to_id_map,
+            &mut counter,
+        );
+
+        assert_eq!(descriptors.len(), 1);
+        let root_descriptor = &descriptors[0];
+        assert_eq!(root_descriptor.text, "root");
+        assert_eq!(root_descriptor.children.len(), 2);
+
+        let src_descriptor = &root_descriptor.children[0];
+        assert_eq!(src_descriptor.text, "src");
+        assert_eq!(src_descriptor.children.len(), 1);
+        assert_eq!(src_descriptor.children[0].text, "lib.rs");
+
+        let readme_descriptor = &root_descriptor.children[1];
+        assert_eq!(readme_descriptor.text, "README.md");
+        assert!(readme_descriptor.children.is_empty());
+
+        assert!(path_to_id_map.contains_key(Path::new("/root")));
+        assert!(path_to_id_map.contains_key(Path::new("/root/src")));
+        assert!(path_to_id_map.contains_key(Path::new("/root/src/lib.rs")));
+        assert!(path_to_id_map.contains_key(Path::new("/root/README.md")));
+        assert!(!path_to_id_map.contains_key(Path::new("/root/src/main.rs")));
     }
 
     #[test]
