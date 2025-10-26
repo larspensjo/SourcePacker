@@ -85,7 +85,7 @@ A profile encapsulates:
 [UiSearchFileNameFilterTreeV1] * **File Name Search:** Allow users to filter the tree view by file/folder names.
 [UiSearchFileContentHighlightV1] * **Content Search:** Allow users to search for text strings within the files currently displayed in the tree (or within selected files) and highlight/filter matching files.
 [UiContentSearchModeToggleV1] * Provide a clearly labeled control adjacent to the filter input that lets the user switch between name-based and content-based searching; its label must reflect the active mode.
-[UiSearchFileContentV1] * When the content mode is active, the TreeView filtering pipeline must accept matches sourced from asynchronous file-content searches rather than name comparisons and render only those matching files plus their ancestor folders.
+[UiSearchFileContentV1] * When the content mode is active, the TreeView filtering pipeline must accept matches sourced from asynchronous file-content searches rather than name comparisons, render only those matching files plus their ancestor folders, and avoid presenting the “no match” error style until the content search has completed and returned zero results.
 
 ## Status Bar
 Display relevant information such as:

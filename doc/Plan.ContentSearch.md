@@ -31,7 +31,7 @@ The feature will be built in distinct, stable phases. The application will be fu
 
 This phased approach ensures we build on a solid foundation, can test our work thoroughly at each stage, and end up with a high-quality feature that significantly enhances SourcePacker's utility.
 
-### **Phase 1: UI Foundation and State Management**
+### **Phase 1: UI Foundation and State Management** (Completed)
 
 **Goal:** Add the necessary UI controls and application state for the new feature without implementing the search logic itself. The UI will be interactive, but content search will not yet filter files.
 
@@ -79,7 +79,7 @@ This phased approach ensures we build on a solid foundation, can test our work t
     *   **Unit Test:** In `handler_tests.rs`, add a test that sends an `AppEvent::ButtonClicked` for `SEARCH_MODE_TOGGLE_BUTTON_ID`. Assert that the correct `PlatformCommand` to change the button's text is generated and that the internal state flips.
 *   **Result:** The application runs, and clicking the search mode button now correctly toggles its text between "Name" and "Content". The filter's *behavior* is still unchanged.
 
-### **Phase 2: Asynchronous Backend Search**
+### **Phase 2: Asynchronous Backend Search** (Completed)
 
 **Goal:** Implement the background file-content search mechanism. This phase involves no changes to the UI's visible output but makes the search functionality work under the hood.
 
@@ -139,7 +139,7 @@ This phased approach ensures we build on a solid foundation, can test our work t
         *   Simulate receiving results and assert that the `content_search_matches` in the mock UI state is correctly populated.
 *   **Result:** The application now runs the content search in the background when requested. The results are stored internally but the TreeView does not yet update.
 
-### **Phase 3: Displaying the Filtered Results**
+### **Phase 3: Displaying the Filtered Results** (Completed)
 
 **Goal:** Connect the backend search results to the frontend TreeView, making the filter functional for the user.
 

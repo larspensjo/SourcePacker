@@ -272,18 +272,23 @@ impl MainWindowUiState {
         &mut self,
         snapshot_nodes: &[FileNode],
     ) -> Vec<TreeItemDescriptor> {
-        if let Some(matches) = self.content_search_matches.as_ref() {
-            self.path_to_tree_item_id.clear();
-            self.next_tree_item_id_counter = 1;
-            let descriptors = FileNode::build_tree_item_descriptors_from_matches(
-                snapshot_nodes,
-                matches,
-                &mut self.path_to_tree_item_id,
-                &mut self.next_tree_item_id_counter,
-            );
-            self.filter_no_match = descriptors.is_empty();
-            self.last_successful_filter_result = descriptors.clone();
-            return descriptors;
+        if matches!(self.search_mode, SearchMode::ByContent) {
+            if let Some(matches) = self.content_search_matches.as_ref() {
+                self.path_to_tree_item_id.clear();
+                self.next_tree_item_id_counter = 1;
+                let descriptors = FileNode::build_tree_item_descriptors_from_matches(
+                    snapshot_nodes,
+                    matches,
+                    &mut self.path_to_tree_item_id,
+                    &mut self.next_tree_item_id_counter,
+                );
+                self.filter_no_match = descriptors.is_empty();
+                self.last_successful_filter_result = descriptors.clone();
+                return descriptors;
+            } else {
+                self.filter_no_match = false;
+                return self.last_successful_filter_result.clone();
+            }
         }
 
         let active_filter = self.filter_text.clone();
@@ -619,6 +624,38 @@ mod tests {
         assert_eq!(descriptors.len(), 1);
         assert_eq!(descriptors[0].text, "match.txt");
         assert!(!ui_state.filter_had_no_match());
+    }
+
+    #[test]
+    fn rebuild_tree_descriptors_in_content_mode_waits_for_matches() {
+        crate::initialize_logging();
+        let window_id = WindowId(10);
+        let mut ui_state = MainWindowUiState::new(window_id);
+
+        let nodes = vec![FileNode::new_full(
+            PathBuf::from("/root/file.txt"),
+            "file.txt".into(),
+            false,
+            SelectionState::Selected,
+            Vec::new(),
+            "".to_string(),
+        )];
+
+        // Build initial descriptors in name mode to seed the cache.
+        let initial = ui_state.rebuild_tree_descriptors(&nodes);
+        assert_eq!(initial.len(), 1);
+
+        // Switch to content mode with pending results (matches None).
+        assert_eq!(ui_state.toggle_search_mode(), SearchMode::ByContent);
+        let descriptors_pending = ui_state.rebuild_tree_descriptors(&nodes);
+        assert_eq!(descriptors_pending.len(), 1);
+        assert!(!ui_state.filter_had_no_match());
+
+        // Once the search completes with zero matches we should flag the error state.
+        ui_state.set_content_search_matches(Some(HashSet::new()));
+        let descriptors_no_match = ui_state.rebuild_tree_descriptors(&nodes);
+        assert!(descriptors_no_match.is_empty());
+        assert!(ui_state.filter_had_no_match());
     }
 
     #[test]
