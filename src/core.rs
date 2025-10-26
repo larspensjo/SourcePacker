@@ -9,6 +9,7 @@
 pub mod archiver;
 pub mod checksum_utils;
 pub mod config;
+pub mod content_search_progress;
 pub mod file_node;
 pub mod file_system;
 pub mod node_state_applicator;
@@ -51,4 +52,5 @@ pub use profile_runtime_data::{
     ProfileRuntimeData, ProfileRuntimeDataOperations, TokenProgressChannel,
 };
 
+pub use content_search_progress::{ContentSearchProgress, ContentSearchResult};
 pub use token_progress::TokenProgress;

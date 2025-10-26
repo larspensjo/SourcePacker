@@ -1,7 +1,8 @@
 use crate::core::{
-    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, FileSystemScannerOperations,
-    NodeStateApplicatorOperations, Profile, ProfileManagerOperations, ProfileRuntimeDataOperations,
-    SelectionState, TokenCounterOperations, TokenProgress, TokenProgressChannel,
+    self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, ContentSearchProgress,
+    FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
+    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations, TokenProgress,
+    TokenProgressChannel,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
@@ -11,7 +12,7 @@ use crate::platform_layer::{
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, SearchMode, ui_constants};
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -46,6 +47,15 @@ struct TokenRecalcDriver {
     total_files: usize,
     processed_so_far: usize,
     latest_total_tokens: usize,
+}
+
+/*
+ * Tracks the active asynchronous content-search request. The driver simply holds the
+ * receiving end of the progress channel so that `MyAppLogic` can poll for completion
+ * during its normal UI loop without spawning additional threads.
+ */
+struct ContentSearchDriver {
+    receiver: Mutex<Receiver<ContentSearchProgress>>,
 }
 
 // --- Status Message Macros ---
@@ -92,6 +102,7 @@ pub struct MyAppLogic {
     state_manager: Arc<dyn NodeStateApplicatorOperations>,
     synchronous_command_queue: VecDeque<PlatformCommand>,
     token_recalc_driver: Option<TokenRecalcDriver>,
+    content_search_driver: Option<ContentSearchDriver>,
 }
 
 impl MyAppLogic {
@@ -121,6 +132,7 @@ impl MyAppLogic {
             state_manager,
             synchronous_command_queue: VecDeque::new(),
             token_recalc_driver: None,
+            content_search_driver: None,
         }
     }
 
@@ -496,6 +508,99 @@ impl MyAppLogic {
                 "AppLogic: Window (ID: {window_id:?}) destroyed, but it was not the main window tracked by ui_state."
             );
         }
+    }
+
+    /*
+     * Polls the asynchronous content-search channel for progress. The method is intentionally
+     * lightweight so it can be called on every UI tick without blocking; once a final batch
+     * arrives the cached match set is updated and the driver is dropped.
+     */
+    fn poll_content_search_progress(&mut self) {
+        let driver = match self.content_search_driver.as_mut() {
+            Some(driver) => driver,
+            None => return,
+        };
+
+        let recv_result = driver
+            .receiver
+            .lock()
+            .expect("Content search receiver mutex poisoned")
+            .try_recv();
+
+        match recv_result {
+            Ok(progress) => {
+                let ContentSearchProgress { is_final, results } = progress;
+                if is_final {
+                    let matches: HashSet<PathBuf> = results
+                        .into_iter()
+                        .filter_map(|result| result.matches.then_some(result.path))
+                        .collect();
+                    if let Some(ui_state) = self.ui_state.as_mut() {
+                        ui_state.set_content_search_matches(Some(matches));
+                    }
+                    self.content_search_driver = None;
+                    log::debug!("AppLogic: Content search completed and cached.");
+                } else {
+                    log::trace!(
+                        "AppLogic: Received interim content-search batch ({} results).",
+                        results.len()
+                    );
+                }
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                log::warn!("AppLogic: Content search channel disconnected unexpectedly.");
+                self.content_search_driver = None;
+            }
+        }
+    }
+
+    /*
+     * Starts (or restarts) the asynchronous content search for the provided query text.
+     * Empty queries simply clear any cached results and cancel outstanding work.
+     */
+    fn start_content_search(&mut self, query: &str) {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            self.cancel_content_search();
+            if let Some(ui_state) = self.ui_state.as_mut() {
+                ui_state.set_content_search_matches(None);
+            }
+            return;
+        }
+
+        self.cancel_content_search();
+        let receiver_opt = {
+            let session = self.app_session_data_ops.lock().unwrap();
+            session.search_content_async(trimmed.to_string())
+        };
+
+        match receiver_opt {
+            Some(receiver) => {
+                if let Some(ui_state) = self.ui_state.as_mut() {
+                    ui_state.set_content_search_matches(None);
+                }
+                self.content_search_driver = Some(ContentSearchDriver {
+                    receiver: Mutex::new(receiver),
+                });
+                log::debug!("AppLogic: Started async content search for term '{trimmed}'.");
+            }
+            None => {
+                log::debug!(
+                    "AppLogic: Content search request ignored (missing snapshot data or invalid term)."
+                );
+                if let Some(ui_state) = self.ui_state.as_mut() {
+                    ui_state.set_content_search_matches(None);
+                }
+            }
+        }
+    }
+
+    fn cancel_content_search(&mut self) {
+        if self.content_search_driver.is_some() {
+            log::debug!("AppLogic: Canceling active content search.");
+        }
+        self.content_search_driver = None;
     }
 
     fn handle_treeview_item_toggled(
@@ -950,6 +1055,13 @@ impl MyAppLogic {
                 control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
                 text: button_text.to_string(),
             });
+
+        if matches!(new_mode, SearchMode::ByName) {
+            self.cancel_content_search();
+            if let Some(ui_state) = self.ui_state.as_mut() {
+                ui_state.set_content_search_matches(None);
+            }
+        }
     }
 
     fn handle_expand_filtered_all_click(&mut self, window_id: WindowId) {
@@ -2004,28 +2116,36 @@ impl MyAppLogic {
      * of the filter to the TreeView is handled separately (e.g., in Action 1.3).
      */
     fn handle_filter_text_submitted(&mut self, window_id: WindowId, text: String) {
-        let ui_state_mut = match self
-            .ui_state
-            .as_mut()
-            .filter(|s| s.window_id() == window_id)
-        {
-            Some(s) => s,
-            None => {
-                log::warn!(
-                    "InputTextChanged for filter input received for an unknown or non-main window (ID: {window_id:?}). Ignoring event."
-                );
-                return;
-            }
+        let (search_mode, filter_active) = {
+            let ui_state_mut = match self
+                .ui_state
+                .as_mut()
+                .filter(|s| s.window_id() == window_id)
+            {
+                Some(s) => s,
+                None => {
+                    log::warn!(
+                        "InputTextChanged for filter input received for an unknown or non-main window (ID: {window_id:?}). Ignoring event."
+                    );
+                    return;
+                }
+            };
+
+            let search_mode = ui_state_mut.search_mode();
+            let filter_active = if text.is_empty() {
+                log::debug!("Filter text submitted is empty. Clearing active filter.");
+                ui_state_mut.clear_filter();
+                false
+            } else {
+                log::debug!("Filter text submitted: '{text}'. Storing for filtering.");
+                ui_state_mut.set_filter_text(&text)
+            };
+            (search_mode, filter_active)
         };
 
-        let filter_active = if text.is_empty() {
-            log::debug!("Filter text submitted is empty. Clearing active filter.");
-            ui_state_mut.clear_filter();
-            false
-        } else {
-            log::debug!("Filter text submitted: '{text}'. Storing for filtering.");
-            ui_state_mut.set_filter_text(&text)
-        };
+        if matches!(search_mode, SearchMode::ByContent) {
+            self.start_content_search(&text);
+        }
 
         self.repopulate_tree_view(window_id);
 
@@ -2061,25 +2181,27 @@ impl MyAppLogic {
     }
 
     fn handle_filter_clear_requested(&mut self, window_id: WindowId) {
-        let ui_state_mut = match self
-            .ui_state
-            .as_mut()
-            .filter(|s| s.window_id() == window_id)
         {
-            Some(s) => s,
-            None => {
-                log::warn!("FilterClearRequested for unknown window {window_id:?}");
-                return;
-            }
-        };
-        ui_state_mut.clear_filter();
+            let ui_state_mut = match self
+                .ui_state
+                .as_mut()
+                .filter(|s| s.window_id() == window_id)
+            {
+                Some(s) => s,
+                None => {
+                    log::warn!("FilterClearRequested for unknown window {window_id:?}");
+                    return;
+                }
+            };
+            ui_state_mut.clear_filter();
+        }
+        self.cancel_content_search();
         self.synchronous_command_queue
             .push_back(PlatformCommand::SetInputText {
                 window_id,
                 control_id: ui_constants::FILTER_INPUT_ID,
                 text: String::new(),
             });
-        let _ = ui_state_mut; // release borrow before repopulating
         self.repopulate_tree_view(window_id);
         self.synchronous_command_queue
             .push_back(PlatformCommand::ApplyStyleToControl {
@@ -2247,6 +2369,7 @@ impl MyAppLogic {
 impl PlatformEventHandler for MyAppLogic {
     fn try_dequeue_command(&mut self) -> Option<PlatformCommand> {
         self.poll_token_recalc_progress();
+        self.poll_content_search_progress();
         self.synchronous_command_queue.pop_front()
     }
 
@@ -2594,6 +2717,13 @@ impl MyAppLogic {
 
     pub(crate) fn test_get_search_mode(&self) -> Option<SearchMode> {
         self.ui_state.as_ref().map(|s| s.search_mode())
+    }
+
+    pub(crate) fn test_get_content_search_matches(&self) -> Option<Vec<PathBuf>> {
+        self.ui_state.as_ref().and_then(|s| {
+            s.content_search_matches()
+                .map(|set| set.iter().cloned().collect())
+        })
     }
 
     pub(crate) fn test_get_active_viewer_item_id(&self) -> Option<TreeItemId> {

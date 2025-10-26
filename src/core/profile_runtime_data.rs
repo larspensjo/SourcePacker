@@ -6,8 +6,8 @@
  * this session data, facilitating dependency injection and testing.
  */
 use crate::core::{
-    FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, SelectionState,
-    TokenCounterOperations,
+    ContentSearchProgress, ContentSearchResult, FileNode, FileSystemScannerOperations,
+    NodeStateApplicatorOperations, Profile, SelectionState, TokenCounterOperations,
     file_node::FileTokenDetails,
     token_progress::{TokenProgress, TokenProgressEntry},
 };
@@ -78,6 +78,11 @@ pub trait ProfileRuntimeDataOperations: Send + Sync {
     ) -> Option<TokenProgressChannel>;
 
     fn apply_token_progress(&mut self, progress: TokenProgress) -> usize;
+
+    fn search_content_async(
+        &self,
+        search_term: String,
+    ) -> Option<mpsc::Receiver<ContentSearchProgress>>;
 
     // General session management
     fn clear(&mut self);
@@ -444,6 +449,16 @@ impl ProfileRuntimeData {
         false // No new file found in this directory or its descendants
     }
 
+    fn collect_file_paths(nodes: &[FileNode], acc: &mut Vec<PathBuf>) {
+        for node in nodes {
+            if node.is_dir() {
+                Self::collect_file_paths(&node.children, acc);
+            } else {
+                acc.push(node.path().to_path_buf());
+            }
+        }
+    }
+
     #[cfg(test)]
     fn get_cached_file_token_details(&self) -> HashMap<PathBuf, FileTokenDetails> {
         self.cached_file_token_details.clone()
@@ -666,6 +681,64 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
         self.cached_token_count
     }
 
+    fn search_content_async(
+        &self,
+        search_term: String,
+    ) -> Option<mpsc::Receiver<ContentSearchProgress>> {
+        let trimmed = search_term.trim();
+        if trimmed.is_empty() {
+            log::debug!("ProfileRuntimeData: Ignoring content search with empty term.");
+            return None;
+        }
+
+        let mut file_paths = Vec::new();
+        Self::collect_file_paths(&self.file_system_snapshot_nodes, &mut file_paths);
+        if file_paths.is_empty() {
+            log::debug!("ProfileRuntimeData: No files available for content search.");
+            return None;
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        let search_term_lower = trimmed.to_lowercase();
+        thread::spawn(move || {
+            log::debug!(
+                "ProfileRuntimeData: Starting async content search across {} files.",
+                file_paths.len()
+            );
+            let results: Vec<ContentSearchResult> = file_paths
+                .par_iter()
+                .map(|path| {
+                    let matches = match fs::read_to_string(path) {
+                        Ok(contents) => contents.to_lowercase().contains(&search_term_lower),
+                        Err(err) => {
+                            log::warn!(
+                                "ProfileRuntimeData: Failed to read {:?} during content search: {err:?}",
+                                path
+                            );
+                            false
+                        }
+                    };
+                    ContentSearchResult {
+                        path: path.clone(),
+                        matches,
+                    }
+                })
+                .collect();
+
+            let progress = ContentSearchProgress {
+                is_final: true,
+                results,
+            };
+            if sender.send(progress).is_err() {
+                log::debug!(
+                    "ProfileRuntimeData: Content search receiver dropped before completion."
+                );
+            }
+        });
+
+        Some(receiver)
+    }
+
     fn clear(&mut self) {
         log::debug!("Clearing ProfileRuntimeData state.");
         self.profile_name = None;
@@ -866,6 +939,7 @@ mod tests {
     use std::io::{self, Write};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
     use tempfile::{NamedTempFile, tempdir};
 
     type ApplyProfileCallLog = (HashSet<PathBuf>, HashSet<PathBuf>, Vec<FileNode>);
@@ -1051,6 +1125,52 @@ mod tests {
             .unwrap();
         writeln!(temp_file, "{content}").unwrap();
         (temp_file.path().to_path_buf(), temp_file)
+    }
+
+    #[test]
+    fn search_content_async_finds_matching_files() {
+        crate::initialize_logging();
+        let temp_dir = tempdir().unwrap();
+        let (match_path, match_file) =
+            create_temp_file_with_content(&temp_dir, "match", "Alpha beta");
+        let (miss_path, miss_file) =
+            create_temp_file_with_content(&temp_dir, "miss", "Gamma delta");
+        let _file_guards = vec![match_file, miss_file];
+
+        let mut runtime = ProfileRuntimeData::new();
+        runtime.set_snapshot_nodes(vec![
+            FileNode::new_full(
+                match_path.clone(),
+                "match.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "ck1".into(),
+            ),
+            FileNode::new_full(
+                miss_path.clone(),
+                "miss.txt".into(),
+                false,
+                SelectionState::Selected,
+                Vec::new(),
+                "ck2".into(),
+            ),
+        ]);
+
+        let receiver = runtime
+            .search_content_async("beta".to_string())
+            .expect("Expected content search receiver");
+        let progress = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .expect("Expected search progress");
+        assert!(progress.is_final);
+        let matches: HashSet<PathBuf> = progress
+            .results
+            .into_iter()
+            .filter_map(|result| result.matches.then_some(result.path))
+            .collect();
+        assert!(matches.contains(&match_path));
+        assert!(!matches.contains(&miss_path));
     }
 
     #[test]

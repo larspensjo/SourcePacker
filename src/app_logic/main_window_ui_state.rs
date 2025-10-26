@@ -7,9 +7,9 @@
  * dialog flows or pending UI actions. It interacts with ProfileRuntimeDataOperations
  * to get necessary data for UI display.
  */
-use crate::core::{ArchiveStatus, FileNode, ProfileRuntimeDataOperations};
+use crate::core::{ArchiveStatus, ContentSearchProgress, FileNode, ProfileRuntimeDataOperations};
 use crate::platform_layer::{TreeItemDescriptor, TreeItemId, WindowId};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
@@ -62,6 +62,8 @@ pub struct MainWindowUiState {
     active_viewer_item_id: Option<TreeItemId>,
     /* Tracks whether the filter bar operates on names or file content. */
     search_mode: SearchMode,
+    /* Latest content-search matches keyed by absolute file path, if any. */
+    content_search_matches: Option<HashSet<PathBuf>>,
 }
 
 impl MainWindowUiState {
@@ -84,6 +86,7 @@ impl MainWindowUiState {
             filter_no_match: false,
             active_viewer_item_id: None,
             search_mode: SearchMode::ByName,
+            content_search_matches: None,
         }
     }
 
@@ -134,6 +137,23 @@ impl MainWindowUiState {
             SearchMode::ByContent => SearchMode::ByName,
         };
         self.search_mode
+    }
+
+    /*
+     * Stores the current set of files that matched the most recent content search.
+     * Passing `None` signals that results are pending or have been cleared; passing
+     * `Some(HashSet)` caches the full result set (even if empty) for downstream consumers.
+     */
+    pub fn set_content_search_matches(&mut self, matches: Option<HashSet<PathBuf>>) {
+        self.content_search_matches = matches;
+    }
+
+    /*
+     * Provides read-only access to the cached content-search matches so the UI layer
+     * can decide whether to show a file when content filtering is active.
+     */
+    pub fn content_search_matches(&self) -> Option<&HashSet<PathBuf>> {
+        self.content_search_matches.as_ref()
     }
 
     /*
@@ -226,6 +246,7 @@ impl MainWindowUiState {
     pub fn clear_filter(&mut self) {
         self.filter_text = None;
         self.filter_no_match = false;
+        self.content_search_matches = None;
     }
 
     /*
@@ -341,6 +362,7 @@ mod tests {
     use crate::platform_layer::WindowId;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
 
     // --- MockProfileRuntimeDataOperations for MainWindowUiState tests ---
     // This is a simplified mock, just enough for these tests.
@@ -427,6 +449,12 @@ mod tests {
         fn apply_token_progress(&mut self, _progress: TokenProgress) -> usize {
             unimplemented!("MockProfileRuntimeDataOps: apply_token_progress")
         }
+        fn search_content_async(
+            &self,
+            _search_term: String,
+        ) -> Option<mpsc::Receiver<ContentSearchProgress>> {
+            None
+        }
         fn clear(&mut self) {
             unimplemented!("MockProfileRuntimeDataOps: clear")
         }
@@ -468,6 +496,7 @@ mod tests {
         assert!(!ui_state.filter_had_no_match());
         assert!(ui_state.active_viewer_item_id().is_none());
         assert_eq!(ui_state.search_mode(), SearchMode::ByName);
+        assert!(ui_state.content_search_matches().is_none());
     }
 
     #[test]

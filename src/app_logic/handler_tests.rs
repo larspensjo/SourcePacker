@@ -4,9 +4,10 @@ mod tests {
 
     use crate::core::token_progress::TokenProgressEntry;
     use crate::core::{
-        ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations, FileNode,
-        FileSystemError, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
-        ProfileError, ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
+        ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
+        ContentSearchProgress, ContentSearchResult, FileNode, FileSystemError,
+        FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileError,
+        ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
         TokenCounterOperations, TokenProgress, TokenProgressChannel, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
@@ -83,6 +84,9 @@ mod tests {
         _get_current_selection_paths_calls: AtomicUsize,
         recalc_tokens_async_calls: AtomicUsize,
         apply_token_progress_calls: AtomicUsize,
+        search_content_async_calls: AtomicUsize,
+        content_search_terms: Mutex<Vec<String>>,
+        content_search_receiver: Mutex<Option<mpsc::Receiver<ContentSearchProgress>>>,
 
         // Mock results
         // get_node_attributes_for_path_result: Option<(SelectionState, bool)>, <- now derived from snapshot_nodes
@@ -125,6 +129,9 @@ mod tests {
                 _get_current_selection_paths_calls: AtomicUsize::new(0),
                 recalc_tokens_async_calls: AtomicUsize::new(0),
                 apply_token_progress_calls: AtomicUsize::new(0),
+                search_content_async_calls: AtomicUsize::new(0),
+                content_search_terms: Mutex::new(Vec::new()),
+                content_search_receiver: Mutex::new(None),
 
                 update_node_state_and_collect_changes_result: Mutex::new(Vec::new()),
                 load_profile_into_session_result: Mutex::new(Ok(())),
@@ -192,6 +199,17 @@ mod tests {
                 .lock()
                 .unwrap()
                 .insert(path.to_path_buf(), result);
+        }
+
+        fn set_content_search_receiver_for_mock(
+            &self,
+            receiver: Option<mpsc::Receiver<ContentSearchProgress>>,
+        ) {
+            *self.content_search_receiver.lock().unwrap() = receiver;
+        }
+
+        fn get_search_content_async_call_count(&self) -> usize {
+            self.search_content_async_calls.load(Ordering::Relaxed)
         }
 
         // Test getters for call logs/counters
@@ -555,6 +573,15 @@ mod tests {
                 }
             }
             self.cached_total_token_count
+        }
+        fn search_content_async(
+            &self,
+            search_term: String,
+        ) -> Option<mpsc::Receiver<ContentSearchProgress>> {
+            self.search_content_async_calls
+                .fetch_add(1, Ordering::Relaxed);
+            self.content_search_terms.lock().unwrap().push(search_term);
+            self.content_search_receiver.lock().unwrap().take()
         }
         fn clear(&mut self) {
             self._clear_calls.fetch_add(1, Ordering::Relaxed);
@@ -2962,6 +2989,67 @@ mod tests {
             .is_some(),
             "Expected SetControlText to relabel button as 'Name'"
         );
+    }
+
+    #[test]
+    fn test_content_search_flow_populates_ui_state_with_matches() {
+        let (mut logic, mock_session, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        logic.test_drain_commands();
+
+        // Switch to content mode so submitting text triggers the async search path.
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+        });
+        logic.test_drain_commands();
+
+        let (tx, rx) = mpsc::channel();
+        {
+            let guard = mock_session.lock().unwrap();
+            guard.set_content_search_receiver_for_mock(Some(rx));
+        }
+
+        logic.handle_event(AppEvent::InputTextChanged {
+            window_id,
+            control_id: ui_constants::FILTER_INPUT_ID,
+            text: "needle".into(),
+        });
+        logic.test_drain_commands();
+
+        {
+            let guard = mock_session.lock().unwrap();
+            assert_eq!(
+                guard.get_search_content_async_call_count(),
+                1,
+                "Expected backend search to be triggered exactly once"
+            );
+        }
+
+        tx.send(ContentSearchProgress {
+            is_final: true,
+            results: vec![
+                ContentSearchResult {
+                    path: PathBuf::from("match.txt"),
+                    matches: true,
+                },
+                ContentSearchResult {
+                    path: PathBuf::from("miss.txt"),
+                    matches: false,
+                },
+            ],
+        })
+        .unwrap();
+
+        // Pump the command queue once to force polling of the channel.
+        let _ = logic.try_dequeue_command();
+
+        let mut matches = logic
+            .test_get_content_search_matches()
+            .expect("Expected content search matches to be stored");
+        matches.sort();
+        assert_eq!(matches, vec![PathBuf::from("match.txt")]);
     }
 
     #[test]
