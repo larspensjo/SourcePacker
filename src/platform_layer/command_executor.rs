@@ -348,9 +348,10 @@ pub(crate) fn execute_create_input(
 }
 
 /*
- * Executes the `SetInputText` command to update an EDIT control's content.
+ * Updates the displayed text for any HWND-backed control identified by a logical ID.
+ * This is the shared implementation behind SetInputText, SetViewerContent, and button text updates.
  */
-pub(crate) fn execute_set_input_text(
+pub(crate) fn execute_set_control_text(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
     control_id: ControlId,
@@ -381,6 +382,18 @@ pub(crate) fn execute_set_input_text(
     Ok(())
 }
 
+/*
+ * Executes the `SetInputText` command to update an EDIT control's content.
+ */
+pub(crate) fn execute_set_input_text(
+    internal_state: &Arc<Win32ApiInternalState>,
+    window_id: WindowId,
+    control_id: ControlId,
+    text: String,
+) -> PlatformResult<()> {
+    execute_set_control_text(internal_state, window_id, control_id, text)
+}
+
 pub(crate) fn execute_set_viewer_content(
     internal_state: &Arc<Win32ApiInternalState>,
     window_id: WindowId,
@@ -392,7 +405,7 @@ pub(crate) fn execute_set_viewer_content(
         control_id.raw(),
         text.len()
     );
-    execute_set_input_text(internal_state, window_id, control_id, text)
+    execute_set_control_text(internal_state, window_id, control_id, text)
 }
 
 // Commands that call simple window_common functions (or could be moved to window_common if preferred)

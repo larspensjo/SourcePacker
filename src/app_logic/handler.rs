@@ -9,7 +9,7 @@ use crate::platform_layer::{
     types::{ControlId, MenuAction},
 };
 // Import MainWindowUiState, which we'll hold as an Option
-use crate::app_logic::{MainWindowUiState, ui_constants};
+use crate::app_logic::{MainWindowUiState, SearchMode, ui_constants};
 
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -905,6 +905,9 @@ impl MyAppLogic {
             ui_constants::FILTER_CLEAR_BUTTON_ID => {
                 self.handle_filter_clear_requested(window_id);
             }
+            ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID => {
+                self.handle_search_mode_toggle_clicked(window_id);
+            }
             _ => {
                 log::debug!(
                     "ButtonClicked for unhandled control_id {} on window {window_id:?}",
@@ -912,6 +915,41 @@ impl MyAppLogic {
                 );
             }
         }
+    }
+
+    /*
+     * Handles clicks on the search mode toggle button, updating internal state
+     * and keeping the button label in sync with the active mode.
+     */
+    fn handle_search_mode_toggle_clicked(&mut self, window_id: WindowId) {
+        let new_mode = {
+            let ui_state = match self
+                .ui_state
+                .as_mut()
+                .filter(|state| state.window_id() == window_id)
+            {
+                Some(state) => state,
+                None => {
+                    log::warn!(
+                        "SearchModeToggleClicked received but no matching UI state for window {window_id:?}"
+                    );
+                    return;
+                }
+            };
+            ui_state.toggle_search_mode()
+        };
+
+        log::debug!("Search mode toggled to {:?}", new_mode);
+        let button_text = match new_mode {
+            SearchMode::ByName => "Name",
+            SearchMode::ByContent => "Content",
+        };
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::SetControlText {
+                window_id,
+                control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+                text: button_text.to_string(),
+            });
     }
 
     fn handle_expand_filtered_all_click(&mut self, window_id: WindowId) {
@@ -2552,6 +2590,10 @@ impl MyAppLogic {
         self.ui_state
             .as_ref()
             .and_then(|s| s.filter_text().map(|t| t.to_string()))
+    }
+
+    pub(crate) fn test_get_search_mode(&self) -> Option<SearchMode> {
+        self.ui_state.as_ref().map(|s| s.search_mode())
     }
 
     pub(crate) fn test_get_active_viewer_item_id(&self) -> Option<TreeItemId> {

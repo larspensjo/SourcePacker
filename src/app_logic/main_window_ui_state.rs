@@ -21,6 +21,17 @@ use std::sync::Arc;
 use super::handler::{PathToTreeItemIdMap, PendingAction};
 
 /*
+ * Represents the available search strategies for the tree view filter bar.
+ * `ByName` limits filtering to path and file names, while `ByContent`
+ * will route filter requests through the asynchronous content search pipeline.
+ */
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchMode {
+    ByName,
+    ByContent,
+}
+
+/*
  * Holds UI-specific state for the main application window.
  * This struct consolidates data that is directly tied to the presentation
  * and interaction logic of the main window, separating it from the core
@@ -49,6 +60,8 @@ pub struct MainWindowUiState {
     filter_no_match: bool,
     /* Tracks which TreeView item is currently selected for viewing in the preview pane. */
     active_viewer_item_id: Option<TreeItemId>,
+    /* Tracks whether the filter bar operates on names or file content. */
+    search_mode: SearchMode,
 }
 
 impl MainWindowUiState {
@@ -70,6 +83,7 @@ impl MainWindowUiState {
             last_successful_filter_result: Vec::new(),
             filter_no_match: false,
             active_viewer_item_id: None,
+            search_mode: SearchMode::ByName,
         }
     }
 
@@ -100,6 +114,26 @@ impl MainWindowUiState {
      */
     pub fn window_id(&self) -> WindowId {
         self.window_id
+    }
+
+    /*
+     * Returns the currently active search mode without exposing mutable access.
+     */
+    pub fn search_mode(&self) -> SearchMode {
+        self.search_mode
+    }
+
+    /*
+     * Toggles between the supported search modes and returns the new mode.
+     * Keeping the flip logic here ensures other callers do not need to clone or mutate
+     * unrelated UI state just to change how the filter bar behaves.
+     */
+    pub fn toggle_search_mode(&mut self) -> SearchMode {
+        self.search_mode = match self.search_mode {
+            SearchMode::ByName => SearchMode::ByContent,
+            SearchMode::ByContent => SearchMode::ByName,
+        };
+        self.search_mode
     }
 
     /*
@@ -433,6 +467,21 @@ mod tests {
         assert!(ui_state.last_successful_filter_descriptors().is_empty());
         assert!(!ui_state.filter_had_no_match());
         assert!(ui_state.active_viewer_item_id().is_none());
+        assert_eq!(ui_state.search_mode(), SearchMode::ByName);
+    }
+
+    #[test]
+    fn toggle_search_mode_flips_between_variants() {
+        // Arrange
+        crate::initialize_logging();
+        let window_id = WindowId(11);
+        let mut ui_state = MainWindowUiState::new(window_id);
+
+        // Act / Assert
+        assert_eq!(ui_state.search_mode(), SearchMode::ByName);
+        assert_eq!(ui_state.toggle_search_mode(), SearchMode::ByContent);
+        assert_eq!(ui_state.search_mode(), SearchMode::ByContent);
+        assert_eq!(ui_state.toggle_search_mode(), SearchMode::ByName);
     }
 
     #[test]

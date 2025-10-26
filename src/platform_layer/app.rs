@@ -592,6 +592,11 @@ impl Win32ApiInternalState {
                 multiline,
                 vertical_scroll,
             ),
+            PlatformCommand::SetControlText {
+                window_id,
+                control_id,
+                text,
+            } => command_executor::execute_set_control_text(self, window_id, control_id, text),
             PlatformCommand::SetInputText {
                 window_id,
                 control_id,

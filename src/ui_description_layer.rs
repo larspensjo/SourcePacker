@@ -20,6 +20,7 @@ pub const FILTER_BAR_HEIGHT: i32 = 30;
 // Fixed width for the "Expand Filtered/All" button.
 pub const FILTER_EXPAND_BUTTON_WIDTH: i32 = 120;
 pub const FILTER_CLEAR_BUTTON_WIDTH: i32 = 30;
+pub const SEARCH_MODE_TOGGLE_BUTTON_WIDTH: i32 = 90;
 // Fixed height for the status bar at the bottom of the main window.
 pub const STATUS_BAR_HEIGHT: i32 = 25;
 
@@ -148,6 +149,17 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
         window_id,
         control_id: ui_constants::FILTER_INPUT_ID,
         style_id: StyleId::DefaultInput,
+    });
+
+    commands.push(PlatformCommand::CreateButton {
+        window_id,
+        control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+        text: "Name".to_string(),
+    });
+    commands.push(PlatformCommand::ApplyStyleToControl {
+        window_id,
+        control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+        style_id: StyleId::DefaultButton,
     });
 
     // Create Clear Filter button
@@ -298,6 +310,14 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
             dock_style: DockStyle::Right,
             order: 0,
             fixed_size: Some(FILTER_CLEAR_BUTTON_WIDTH),
+            margin: (2, 2, 2, 2),
+        },
+        LayoutRule {
+            control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+            parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
+            dock_style: DockStyle::Left,
+            order: 0,
+            fixed_size: Some(SEARCH_MODE_TOGGLE_BUTTON_WIDTH),
             margin: (2, 2, 2, 2),
         },
         LayoutRule {

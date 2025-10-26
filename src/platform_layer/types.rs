@@ -405,6 +405,11 @@ pub enum PlatformCommand {
         multiline: bool,
         vertical_scroll: bool,
     },
+    SetControlText {
+        window_id: WindowId,
+        control_id: ControlId,
+        text: String,
+    },
     SetInputText {
         window_id: WindowId,
         control_id: ControlId,

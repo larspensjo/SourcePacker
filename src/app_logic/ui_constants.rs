@@ -43,3 +43,6 @@ pub const FILTER_EXPAND_BUTTON_ID: ControlId = ControlId::new(1022);
 
 // Logical ID for the button used to clear the filter input field.
 pub const FILTER_CLEAR_BUTTON_ID: ControlId = ControlId::new(1023);
+
+// Logical ID for the button used to toggle between name/content search modes.
+pub const SEARCH_MODE_TOGGLE_BUTTON_ID: ControlId = ControlId::new(1024);

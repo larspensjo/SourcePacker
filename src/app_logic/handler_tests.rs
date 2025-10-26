@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::app_logic::handler::*;
-    use crate::app_logic::ui_constants;
+    use crate::app_logic::{SearchMode, handler::*, ui_constants};
 
     use crate::core::token_progress::TokenProgressEntry;
     use crate::core::{
@@ -2905,6 +2904,63 @@ mod tests {
             ))
             .is_some(),
             "Expected ExpandAllTreeItems command after clearing filter"
+        );
+    }
+
+    #[test]
+    fn test_search_mode_toggle_button_cycles_and_updates_label() {
+        // Arrange
+        let (mut logic, ..) = setup_logic_with_mocks();
+        let window_id = WindowId(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        logic.test_drain_commands();
+
+        // Act
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+        });
+        let cmds_after_first_toggle = logic.test_drain_commands();
+
+        // Assert
+        assert_eq!(
+            logic.test_get_search_mode(),
+            Some(SearchMode::ByContent),
+            "Expected search mode to switch to content after first click"
+        );
+        assert!(
+            find_command(&cmds_after_first_toggle, |cmd| matches!(cmd,
+                PlatformCommand::SetControlText { window_id: wid, control_id, text }
+                    if *wid == window_id
+                        && *control_id == ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID
+                        && text == "Content"
+            ))
+            .is_some(),
+            "Expected SetControlText to label button as 'Content'"
+        );
+
+        // Act
+        logic.handle_event(AppEvent::ButtonClicked {
+            window_id,
+            control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
+        });
+        let cmds_after_second_toggle = logic.test_drain_commands();
+
+        // Assert
+        assert_eq!(
+            logic.test_get_search_mode(),
+            Some(SearchMode::ByName),
+            "Expected search mode to return to name after second click"
+        );
+        assert!(
+            find_command(&cmds_after_second_toggle, |cmd| matches!(cmd,
+                PlatformCommand::SetControlText { window_id: wid, control_id, text }
+                    if *wid == window_id
+                        && *control_id == ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID
+                        && text == "Name"
+            ))
+            .is_some(),
+            "Expected SetControlText to relabel button as 'Name'"
         );
     }
 

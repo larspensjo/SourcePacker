@@ -11,4 +11,4 @@ pub mod ui_constants;
 #[cfg(test)]
 mod handler_tests;
 
-pub use main_window_ui_state::MainWindowUiState;
+pub use main_window_ui_state::{MainWindowUiState, SearchMode};
