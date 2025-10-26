@@ -9,6 +9,7 @@ edition = "2024"
 ignore = "0.4.23"
 directories = "6.0.0"
 glob = "0.3.3"
+commanductui = { path = "src/CommanDuctUI" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.145"
 walkdir = "2.5.0"
@@ -22,25 +23,6 @@ rayon = "1.10"
 [dev-dependencies]
 tempfile = "3.23.0"
 rand = "0.9.2"
-
-# These dependencies are ONLY included when compiling for Windows.
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.62.2", features = [ # I've updated to the version in your log, but 0.61.1 is also fine if your lock file uses it.
-    "Win32_Foundation",
-    "Win32_Graphics_Gdi",
-    "Win32_System_Com",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Ole",
-    "Win32_System_SystemServices",
-    "Win32_System_WindowsProgramming",
-    "Win32_Storage_FileSystem",
-    "Win32_UI_Controls",
-    "Win32_UI_Controls_Dialogs",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_UI_Controls_RichEdit",
-]}
 
 [profile.dev]
 opt-level = 0

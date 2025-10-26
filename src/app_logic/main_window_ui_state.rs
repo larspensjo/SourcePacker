@@ -498,7 +498,7 @@ mod tests {
     fn test_main_window_ui_state_new() {
         // Arrange
         crate::initialize_logging();
-        let test_window_id = WindowId(42);
+        let test_window_id = WindowId::new(42);
 
         // Act
         let ui_state = MainWindowUiState::new(test_window_id);
@@ -522,7 +522,7 @@ mod tests {
     fn toggle_search_mode_flips_between_variants() {
         // Arrange
         crate::initialize_logging();
-        let window_id = WindowId(11);
+        let window_id = WindowId::new(11);
         let mut ui_state = MainWindowUiState::new(window_id);
 
         // Act / Assert
@@ -536,7 +536,7 @@ mod tests {
     fn rebuild_tree_descriptors_tracks_filter_state() {
         // Arrange
         crate::initialize_logging();
-        let window_id = WindowId(7);
+        let window_id = WindowId::new(7);
         let mut ui_state = MainWindowUiState::new(window_id);
 
         let base_path = PathBuf::from("/root");
@@ -604,7 +604,7 @@ mod tests {
     #[test]
     fn rebuild_tree_descriptors_uses_content_matches_when_available() {
         crate::initialize_logging();
-        let window_id = WindowId(9);
+        let window_id = WindowId::new(9);
         let mut ui_state = MainWindowUiState::new(window_id);
 
         let nodes = vec![FileNode::new_full(
@@ -629,7 +629,7 @@ mod tests {
     #[test]
     fn rebuild_tree_descriptors_in_content_mode_waits_for_matches() {
         crate::initialize_logging();
-        let window_id = WindowId(10);
+        let window_id = WindowId::new(10);
         let mut ui_state = MainWindowUiState::new(window_id);
 
         let nodes = vec![FileNode::new_full(
@@ -682,3 +682,4 @@ mod tests {
         );
     }
 }
+

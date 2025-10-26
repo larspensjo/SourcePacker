@@ -1272,7 +1272,7 @@ mod tests {
 
         // Act
         logic.handle_event(AppEvent::MainWindowUISetupComplete {
-            window_id: WindowId(1),
+            window_id: WindowId::new(1),
         });
 
         let cmds = logic.test_collect_commands_until_idle();
@@ -1367,7 +1367,7 @@ mod tests {
     fn test_menu_set_archive_path_cancelled() {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, _, _, _) = setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         {
@@ -1409,7 +1409,7 @@ mod tests {
             _mock_state_manager,
             _mock_token_counter,
         ) = setup_logic_with_mocks();
-        let main_window_id = WindowId(7);
+        let main_window_id = WindowId::new(7);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         let root_path = PathBuf::from("/mock/project");
@@ -1475,7 +1475,7 @@ mod tests {
             _mock_state_manager,
             _mock_token_counter,
         ) = setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         let profile_name = "ProfileForStatusUpdateViaMockArchiver";
@@ -1564,7 +1564,7 @@ mod tests {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, mock_archiver, _, _) =
             setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         let profile_name = "ArchiveTestProfile";
@@ -1623,7 +1623,7 @@ mod tests {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, mock_archiver, _, _) =
             setup_logic_with_mocks();
-        let main_window_id = WindowId(99);
+        let main_window_id = WindowId::new(99);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         let profile_name = "PopupProfile";
@@ -1694,7 +1694,7 @@ mod tests {
     fn test_menu_action_generate_archive_no_profile_shows_error() {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, _, _, _) = setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
         mock_app_session_mutexed
             .lock()
@@ -1715,7 +1715,7 @@ mod tests {
     fn test_menu_action_generate_archive_no_archive_path_shows_error() {
         // Arrange
         let (mut logic, mock_app_session_mutexed, _, _, _, _, _, _) = setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
         {
             let mut mock_app_session = mock_app_session_mutexed.lock().unwrap();
@@ -1746,7 +1746,7 @@ mod tests {
             _mock_state_manager,
             _mock_token_counter,
         ) = setup_logic_with_mocks();
-        let main_window_id = WindowId(1);
+        let main_window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(main_window_id);
 
         {
@@ -1874,7 +1874,7 @@ mod tests {
     fn test_is_tree_item_new_for_file_and_folder() {
         // Arrange
         let (logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         let mut mutable_logic = logic; // Shadow immutable logic
         mutable_logic.test_set_main_window_id_and_init_ui_state(window_id);
 
@@ -1995,7 +1995,7 @@ mod tests {
     fn test_treeview_item_toggled_queues_redraw_for_item_and_parents_on_new_status_change() {
         // Arrange
         let (mut logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let root = PathBuf::from("/scan_root");
@@ -2121,7 +2121,7 @@ mod tests {
     fn test_treeview_item_selection_changed_updates_state_and_issues_command() {
         // Arrange
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let tree_item_id = TreeItemId(99);
@@ -2170,7 +2170,7 @@ mod tests {
     fn test_select_text_file_loads_content_into_viewer() {
         // Arrange
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let temp_dir = tempdir().expect("temp dir creation");
@@ -2224,7 +2224,7 @@ mod tests {
     #[test]
     fn test_internal_refresh_tree_view_from_cache() {
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let mut dir = FileNode::new_test(PathBuf::from("/root/dir1"), "dir1".into(), true);
@@ -2278,7 +2278,7 @@ mod tests {
     #[test]
     fn test_internal_update_token_count_and_request_display() {
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         mock_app_session
@@ -2338,7 +2338,7 @@ mod tests {
     #[test]
     fn test_internal_handle_file_save_dialog_for_setting_archive_path() {
         let (mut logic, mock_app_session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
         let profile_name = "TestProfile";
         let new_archive_path = PathBuf::from("/new/archive.zip");
@@ -2418,7 +2418,7 @@ mod tests {
     #[test]
     fn test_internal_handle_file_save_dialog_for_saving_profile_as() {
         let (mut logic, mock_app_session, cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
         mock_app_session
             .lock()
@@ -2494,7 +2494,7 @@ mod tests {
     fn test_internal_activate_profile_and_show_window() {
         let (mut logic, mock_app_session, _cfg_mgr, _profile_mgr, fs_scanner, ..) =
             setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let mut profile = Profile::new(
@@ -2585,7 +2585,7 @@ mod tests {
     #[test]
     fn test_internal_handle_input_dialog_for_new_profile_name() {
         let (mut logic, _mock_app_session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
         profile_mgr.set_list_profiles_result(Ok(vec![])); // Ensure profile selection is triggered if needed
 
@@ -2643,7 +2643,7 @@ mod tests {
     #[test]
     fn test_internal_update_window_title_with_profile_and_archive() {
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         // Case 1: No profile
@@ -2691,7 +2691,7 @@ mod tests {
     fn test_handle_filter_text_submitted_updates_ui_state() {
         // Arrange
         let (mut logic, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let filter_text_to_submit = "find_me";
@@ -2779,7 +2779,7 @@ mod tests {
     fn test_filter_text_submission_populates_filtered_tree() {
         // Arrange
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let mut dir = FileNode::new_test(PathBuf::from("/root/dir1"), "dir1".into(), true);
@@ -2843,7 +2843,7 @@ mod tests {
     #[test]
     fn test_expand_button_with_filter_expands_visible() {
         let (mut logic, _mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         logic.handle_event(AppEvent::InputTextChanged {
@@ -2870,7 +2870,7 @@ mod tests {
     #[test]
     fn test_expand_button_without_filter_expands_all() {
         let (mut logic, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         logic.handle_event(AppEvent::ButtonClicked {
@@ -2890,7 +2890,7 @@ mod tests {
     #[test]
     fn test_clear_button_clears_filter_and_updates_ui() {
         let (mut logic, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         logic.handle_event(AppEvent::InputTextChanged {
@@ -2938,7 +2938,7 @@ mod tests {
     fn test_search_mode_toggle_button_cycles_and_updates_label() {
         // Arrange
         let (mut logic, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
         logic.test_drain_commands();
 
@@ -2994,7 +2994,7 @@ mod tests {
     #[test]
     fn test_content_search_flow_populates_ui_state_with_matches() {
         let (mut logic, mock_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
         logic.test_drain_commands();
 
@@ -3063,7 +3063,7 @@ mod tests {
     fn test_no_match_filter_applies_error_style() {
         // Arrange
         let (mut logic, mock_app_session, ..) = setup_logic_with_mocks();
-        let window_id = WindowId(1);
+        let window_id = WindowId::new(1);
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let nodes = vec![FileNode::new_test(
@@ -3107,3 +3107,4 @@ mod tests {
         )).is_some(), "Expected error style for no match");
     }
 }
+
