@@ -68,7 +68,9 @@ A profile encapsulates:
 ## Handling Missing Files
 [ProfileMissingFileIndicateOrRemoveV1] * When loading a profile, if a previously selected/deselected file or folder no longer exists in the monitored directory, it should be indicated in the UI (e.g., greyed out, marked with an icon) or silently removed from the profile's selection set. The profile itself should persist the path until explicitly removed by the user.
 
-# User Interface (Windows Native UI via `windows-rs`)
+# User Interface (via `CommanDuctUI`)
+
+*Note: The user interface is implemented via the `CommanDuctUI` library. `SourcePacker`'s responsibility is to send `PlatformCommand`s to create, update, and manage the UI, and to handle `AppEvent`s received from the library. The library is responsible for the native Win32 implementation.*
 
 ## Main Window
 [UiMainWindowSingleV1] A single main application window.
@@ -79,10 +81,10 @@ A profile encapsulates:
 [UiTreeViewVisualFileStatusV1] * Visually indicate the status of files relative to the profile's selection and archive state (e.g., new, modified since last archive, included, excluded).
 
 ## File Content Viewer
-[UiContentViewerPanelReadOnlyV3] * A read-only panel shall be present in the main window to display the content of the currently selected file from the tree view. The viewer shall normalize line endings so that files using LF (`\n`), CR (`\r`), or CRLF (`\r\n`) sequences render with consistent line breaks, and it shall render text with a fixed-width font for consistent alignment of source code.
+[UiContentViewerPanelReadOnlyV3] * The application must command the UI layer to create a read-only panel to display the content of the currently selected file from the tree view. The application is responsible for reading the file content and commanding the viewer to normalize line endings so that files using LF (`\n`), CR (`\r`), or CRLF (`\r\n`) sequences render with consistent line breaks, and to render text with a fixed-width font.
 
 ## Search Functionality
-[UiSearchFileNameFilterTreeV1] * **File Name Search:** Allow users to filter the tree view by file/folder names.
+[UiSearchFileNameFilterTreeV1] * **File Name Search:** Allow users to filter the tree view by file/folder names. The application logic performs the filtering and commands the UI to update.
 [UiSearchFileContentHighlightV1] * **Content Search:** Allow users to search for text strings within the files currently displayed in the tree (or within selected files) and highlight/filter matching files.
 [UiContentSearchModeToggleV1] * Provide a clearly labeled control adjacent to the filter input that lets the user switch between name-based and content-based searching; its label must reflect the active mode.
 [UiSearchFileContentV1] * When the content mode is active, the TreeView filtering pipeline must accept matches sourced from asynchronous file-content searches rather than name comparisons, render only those matching files plus their ancestor folders, and avoid presenting the “no match” error style until the content search has completed and returned zero results.
@@ -108,7 +110,7 @@ Provide access to functions like:
 [TechLangRustLatestV1] Rust (latest stable version).
 
 ## UI Framework
-[TechUiFrameworkWindowsRsV1] `windows-rs` for direct Win32/WinRT API interaction.
+[TechUiFrameworkCommanDuctUiV1] The application must use the `CommanDuctUI` library for all native UI interactions, following its command-event pattern.
 
 ## Modularity & Testing
 [TechModularityLogicalModulesV1] * The codebase shall be organized into logical modules (e.g., UI, core logic, profile management, file operations, monitoring).
@@ -116,7 +118,7 @@ Provide access to functions like:
 [TechModularityEncapsulationV1] * Struct and data containers shall use private fields to protect encapsulations. Exception is data transfer objects.
 
 ## Error Handling
-[TechErrorHandlingGracefulV2] Graceful error handling for file operations, profile loading/saving, monitoring, etc., with user-facing messages in the UI.
+[TechErrorHandlingGracefulV2] Graceful error handling for file operations, profile loading/saving, monitoring, etc., with user-facing messages commanded to the UI.
 
 ## Performance
 [TechPerfResponsiveUiV1] For typical source code repositories, UI should remain responsive. File system monitoring and processing should be efficient to avoid UI lag. Asynchronous operations may be needed for monitoring.
