@@ -7,7 +7,7 @@
  * dialog flows or pending UI actions. It interacts with ProfileRuntimeDataOperations
  * to get necessary data for UI display.
  */
-use crate::core::{ArchiveStatus, ContentSearchProgress, FileNode, ProfileRuntimeDataOperations};
+use crate::core::{ArchiveStatus, FileNode, ProfileRuntimeDataOperations};
 use crate::platform_layer::{TreeItemDescriptor, TreeItemId, WindowId};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -152,6 +152,7 @@ impl MainWindowUiState {
      * Provides read-only access to the cached content-search matches so the UI layer
      * can decide whether to show a file when content filtering is active.
      */
+    #[cfg_attr(not(test), allow(dead_code))] // Accessed by test helpers for state inspection
     pub fn content_search_matches(&self) -> Option<&HashSet<PathBuf>> {
         self.content_search_matches.as_ref()
     }
@@ -167,6 +168,7 @@ impl MainWindowUiState {
     /*
      * Retrieves the cached archive status if one is currently stored.
      */
+    #[cfg_attr(not(test), allow(dead_code))] // Exposed for assertions in integration tests
     pub fn archive_status(&self) -> Option<&ArchiveStatus> {
         self.current_archive_status_for_ui.as_ref()
     }
@@ -199,6 +201,7 @@ impl MainWindowUiState {
     /*
      * Provides read-only access to the current pending action, if one exists.
      */
+    #[cfg_attr(not(test), allow(dead_code))] // Required for test-only introspection helpers
     pub fn pending_action(&self) -> Option<&PendingAction> {
         self.pending_action.as_ref()
     }
@@ -220,6 +223,7 @@ impl MainWindowUiState {
     /*
      * Returns the pending profile name reference when the name has been captured but not yet used.
      */
+    #[cfg_attr(not(test), allow(dead_code))] // Used by test harness to validate new-profile flows
     pub fn pending_new_profile_name(&self) -> Option<&str> {
         self.pending_new_profile_name.as_deref()
     }
@@ -351,6 +355,7 @@ impl MainWindowUiState {
      * Exposes the cached descriptors from the last successful filter execution so callers
      * can reuse them (for example, to keep the tree populated during "no match" states).
      */
+    #[cfg_attr(not(test), allow(dead_code))] // Tests validate filter caching through this accessor
     pub fn last_successful_filter_descriptors(&self) -> &[TreeItemDescriptor] {
         &self.last_successful_filter_result
     }
@@ -375,7 +380,7 @@ impl MainWindowUiState {
 mod tests {
     use super::*;
     use crate::core::{
-        FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
+        ContentSearchProgress, FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
         ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
     };
     use crate::platform_layer::WindowId;

@@ -12,7 +12,7 @@ mod tests {
     };
     use crate::platform_layer::{
         AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
-        TreeItemId, UiStateProvider, WindowId, types::MenuAction,
+        TreeItemId, UiStateProvider, WindowId,
     };
 
     use std::collections::{HashMap, HashSet};
@@ -1588,7 +1588,7 @@ mod tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            action: MenuAction::GenerateArchive,
+            action_id: ui_constants::MENU_ACTION_GENERATE_ARCHIVE,
         });
         let cmds = logic.test_drain_commands();
 
@@ -1648,7 +1648,7 @@ mod tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            action: MenuAction::GenerateArchive,
+            action_id: ui_constants::MENU_ACTION_GENERATE_ARCHIVE,
         });
         let cmds = logic.test_drain_commands();
 
@@ -1703,7 +1703,7 @@ mod tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            action: MenuAction::GenerateArchive,
+            action_id: ui_constants::MENU_ACTION_GENERATE_ARCHIVE,
         });
         let cmds = logic.test_drain_commands();
 
@@ -1725,12 +1725,68 @@ mod tests {
 
         // Act
         logic.handle_event(AppEvent::MenuActionClicked {
-            action: MenuAction::GenerateArchive,
+            action_id: ui_constants::MENU_ACTION_GENERATE_ARCHIVE,
         });
         let cmds = logic.test_drain_commands();
 
         // Assert
         assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && severity == &MessageSeverity::Error && text.contains("No archive path set"))).is_some(), "Expected 'No archive path set' error status. Got: {cmds:?}");
+    }
+
+    #[test]
+    fn test_profile_selection_cancel_with_active_profile_keeps_application_running() {
+        // Arrange
+        let (mut logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        {
+            let mut data = mock_app_session_mutexed.lock().unwrap();
+            data.set_profile_name_for_mock(Some("ExistingProfile".to_string()));
+        }
+
+        // Act
+        logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
+            window_id,
+            chosen_profile_name: None,
+            create_new_requested: false,
+            user_cancelled: true,
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert!(
+            cmds.iter()
+                .all(|cmd| !matches!(cmd, PlatformCommand::QuitApplication)),
+            "Cancelling profile selection with an active profile should not request quit."
+        );
+    }
+
+    #[test]
+    fn test_profile_selection_cancel_without_active_profile_requests_quit() {
+        // Arrange
+        let (mut logic, mock_app_session_mutexed, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(1);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        {
+            let mut data = mock_app_session_mutexed.lock().unwrap();
+            data.set_profile_name_for_mock(None);
+        }
+
+        // Act
+        logic.handle_event(AppEvent::ProfileSelectionDialogCompleted {
+            window_id,
+            chosen_profile_name: None,
+            create_new_requested: false,
+            user_cancelled: true,
+        });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert!(
+            cmds.iter()
+                .any(|cmd| matches!(cmd, PlatformCommand::QuitApplication)),
+            "Cancelling profile selection with no active profile should request quit."
+        );
     }
 
     #[test]

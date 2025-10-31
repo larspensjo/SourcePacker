@@ -7,7 +7,7 @@ use crate::core::{
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
     PlatformCommand, PlatformEventHandler, StyleId, TreeItemId, UiStateProvider, WindowId,
-    types::{ControlId, MenuAction},
+    types::ControlId,
 };
 // Import MainWindowUiState, which we'll hold as an Option
 use crate::app_logic::{MainWindowUiState, SearchMode, ui_constants};
@@ -1050,7 +1050,7 @@ impl MyAppLogic {
             ui_state.toggle_search_mode()
         };
 
-        log::debug!("Search mode toggled to {:?}", new_mode);
+        log::debug!("Search mode toggled to {new_mode:?}");
         let button_text = match new_mode {
             SearchMode::ByName => "Name",
             SearchMode::ByContent => "Content",
@@ -1100,7 +1100,8 @@ impl MyAppLogic {
 
     fn handle_menu_load_profile_clicked(&mut self) {
         log::debug!(
-            "MenuAction::LoadProfile action received by AppLogic, initiating profile selection flow."
+            "Menu action {:?} received by AppLogic, initiating profile selection flow.",
+            ui_constants::MENU_ACTION_LOAD_PROFILE
         );
         let window_id = match self.ui_state.as_ref().map(|s| s.window_id()) {
             Some(id) => id,
@@ -1130,7 +1131,10 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("MenuAction::NewProfile action received by AppLogic.");
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_NEW_PROFILE
+        );
         self.start_new_profile_creation_flow(window_id);
     }
 
@@ -1196,7 +1200,10 @@ impl MyAppLogic {
     }
 
     fn handle_menu_save_profile_as_clicked(&mut self) {
-        log::debug!("MenuAction::SaveProfileAs action received by AppLogic.");
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_SAVE_PROFILE_AS
+        );
         let ui_state_mut = match self.ui_state.as_mut() {
             Some(s) => s,
             None => {
@@ -1431,7 +1438,10 @@ impl MyAppLogic {
     }
 
     fn handle_menu_refresh_file_list_clicked(&mut self) {
-        log::debug!("MenuAction::RefreshFileList action received by AppLogic.");
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_REFRESH_FILE_LIST
+        );
         let main_window_id = match self.ui_state.as_ref().map(|s| s.window_id()) {
             Some(id) => id,
             None => {
@@ -1650,9 +1660,20 @@ impl MyAppLogic {
         );
 
         if user_cancelled {
-            log::debug!("Profile selection was cancelled by user. Quitting application.");
-            self.synchronous_command_queue
-                .push_back(PlatformCommand::QuitApplication);
+            let should_quit = {
+                let data = self.app_session_data_ops.lock().unwrap();
+                data.get_profile_name().is_none()
+            };
+
+            if should_quit {
+                log::debug!("Profile selection was cancelled by user with no active profile. Quitting application.");
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::QuitApplication);
+            } else {
+                log::debug!(
+                    "Profile selection was cancelled by user, retaining the currently active profile."
+                );
+            }
             return;
         }
 
@@ -2023,7 +2044,10 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("MenuAction::SetArchivePath action received by AppLogic.");
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_SET_ARCHIVE_PATH
+        );
         let (current_profile_name_opt, current_archive_path_opt, current_root_path) = {
             let data = self.app_session_data_ops.lock().unwrap();
             (
@@ -2080,7 +2104,10 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("MenuAction::EditExcludePatterns action received by AppLogic.");
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_EDIT_EXCLUDE_PATTERNS
+        );
         let (active_profile_name, exclude_patterns) = {
             let data = self.app_session_data_ops.lock().unwrap();
             let profile_name = data.get_profile_name();
@@ -2404,14 +2431,23 @@ impl PlatformEventHandler for MyAppLogic {
             } => {
                 self.handle_button_clicked(window_id, control_id);
             }
-            AppEvent::MenuActionClicked { action } => match action {
-                MenuAction::LoadProfile => self.handle_menu_load_profile_clicked(),
-                MenuAction::NewProfile => self.handle_menu_new_profile_clicked(),
-                MenuAction::SaveProfileAs => self.handle_menu_save_profile_as_clicked(),
-                MenuAction::SetArchivePath => self.handle_menu_set_archive_path_clicked(),
-                MenuAction::EditExcludePatterns => self.handle_menu_edit_exclude_patterns_clicked(),
-                MenuAction::RefreshFileList => self.handle_menu_refresh_file_list_clicked(),
-                MenuAction::GenerateArchive => self._do_generate_archive(),
+            AppEvent::MenuActionClicked { action_id } => match action_id {
+                ui_constants::MENU_ACTION_LOAD_PROFILE => self.handle_menu_load_profile_clicked(),
+                ui_constants::MENU_ACTION_NEW_PROFILE => self.handle_menu_new_profile_clicked(),
+                ui_constants::MENU_ACTION_SAVE_PROFILE_AS => {
+                    self.handle_menu_save_profile_as_clicked()
+                }
+                ui_constants::MENU_ACTION_SET_ARCHIVE_PATH => {
+                    self.handle_menu_set_archive_path_clicked()
+                }
+                ui_constants::MENU_ACTION_EDIT_EXCLUDE_PATTERNS => {
+                    self.handle_menu_edit_exclude_patterns_clicked()
+                }
+                ui_constants::MENU_ACTION_REFRESH_FILE_LIST => {
+                    self.handle_menu_refresh_file_list_clicked()
+                }
+                ui_constants::MENU_ACTION_GENERATE_ARCHIVE => self._do_generate_archive(),
+                _ => log::warn!("Received unhandled menu action ID: {action_id:?}"),
             },
             AppEvent::FileOpenProfileDialogCompleted { window_id, result } => {
                 self.handle_file_open_dialog_completed(window_id, result);

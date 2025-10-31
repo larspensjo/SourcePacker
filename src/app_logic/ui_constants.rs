@@ -6,7 +6,7 @@
  * UI element handles.
  */
 
-use crate::platform_layer::types::ControlId;
+use crate::platform_layer::types::{ControlId, MenuActionId};
 
 // Logical ID for the main panel that will contain all status bar elements.
 pub const STATUS_BAR_PANEL_ID: ControlId = ControlId::new(1010);
@@ -46,3 +46,12 @@ pub const FILTER_CLEAR_BUTTON_ID: ControlId = ControlId::new(1023);
 
 // Logical ID for the button used to toggle between name/content search modes.
 pub const SEARCH_MODE_TOGGLE_BUTTON_ID: ControlId = ControlId::new(1024);
+
+// Menu action identifiers exposed to the platform layer.
+pub const MENU_ACTION_LOAD_PROFILE: MenuActionId = MenuActionId(1);
+pub const MENU_ACTION_NEW_PROFILE: MenuActionId = MenuActionId(2);
+pub const MENU_ACTION_SAVE_PROFILE_AS: MenuActionId = MenuActionId(3);
+pub const MENU_ACTION_SET_ARCHIVE_PATH: MenuActionId = MenuActionId(4);
+pub const MENU_ACTION_EDIT_EXCLUDE_PATTERNS: MenuActionId = MenuActionId(5);
+pub const MENU_ACTION_REFRESH_FILE_LIST: MenuActionId = MenuActionId(6);
+pub const MENU_ACTION_GENERATE_ARCHIVE: MenuActionId = MenuActionId(7);

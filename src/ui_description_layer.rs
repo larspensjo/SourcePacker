@@ -8,9 +8,7 @@
 use crate::app_logic::ui_constants;
 
 use crate::platform_layer::{
-    types::{
-        DockStyle, LabelClass, LayoutRule, MenuAction, MenuItemConfig, PlatformCommand, WindowId,
-    },
+    types::{DockStyle, LabelClass, LayoutRule, MenuItemConfig, PlatformCommand, WindowId},
     StyleId,
 };
 
@@ -30,7 +28,7 @@ pub const STATUS_BAR_HEIGHT: i32 = 25;
  * status bar, filter bar and other foundational UI elements. It also includes
  * `DefineLayout` commands to specify how these controls should be positioned and resized.
  * These commands are processed by the platform layer to construct the native UI.
- * Menu items use `MenuAction` for semantic identification.
+ * Menu items use `MenuActionId` constants for semantic identification.
  *
  * This function is intended to be called only once per window, during the initial
  * construction of the main window.
@@ -46,27 +44,27 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // 1. Define the "File" menu structure
     let file_menu_items = vec![
         MenuItemConfig {
-            action: Some(MenuAction::LoadProfile),
+            action: Some(ui_constants::MENU_ACTION_LOAD_PROFILE),
             text: "Load Profile...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            action: Some(MenuAction::NewProfile),
+            action: Some(ui_constants::MENU_ACTION_NEW_PROFILE),
             text: "New Profile...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            action: Some(MenuAction::SaveProfileAs),
+            action: Some(ui_constants::MENU_ACTION_SAVE_PROFILE_AS),
             text: "Save Profile As...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            action: Some(MenuAction::SetArchivePath),
+            action: Some(ui_constants::MENU_ACTION_SET_ARCHIVE_PATH),
             text: "Set Archive Path...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {
-            action: Some(MenuAction::EditExcludePatterns),
+            action: Some(ui_constants::MENU_ACTION_EDIT_EXCLUDE_PATTERNS),
             text: "Edit Exclude Patterns...".to_string(),
             children: Vec::new(),
         },
@@ -81,12 +79,12 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
                 children: file_menu_items,
             },
             MenuItemConfig {
-                action: Some(MenuAction::RefreshFileList),
+                action: Some(ui_constants::MENU_ACTION_REFRESH_FILE_LIST),
                 text: "&Refresh".to_string(),
                 children: Vec::new(),
             },
             MenuItemConfig {
-                action: Some(MenuAction::GenerateArchive),
+                action: Some(ui_constants::MENU_ACTION_GENERATE_ARCHIVE),
                 text: "&Generate Archive".to_string(),
                 children: Vec::new(),
             },

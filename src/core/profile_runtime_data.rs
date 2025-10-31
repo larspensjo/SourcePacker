@@ -712,8 +712,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
                         Ok(contents) => contents.to_lowercase().contains(&search_term_lower),
                         Err(err) => {
                             log::warn!(
-                                "ProfileRuntimeData: Failed to read {:?} during content search: {err:?}",
-                                path
+                                "ProfileRuntimeData: Failed to read {path:?} during content search: {err:?}"
                             );
                             false
                         }
