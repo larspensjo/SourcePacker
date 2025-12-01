@@ -1390,10 +1390,15 @@ mod tests {
             "Startup should show the main window after activating profile"
         );
 
+        let project_label = startup_project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| startup_project_root.to_string_lossy().into_owned());
         let expected_title = format!(
-            "SourcePacker - [{}] - [{}]",
+            "SourcePacker - [{}] - [{}] (Project: {})",
             last_profile_name_to_load,
-            startup_archive_path.display()
+            startup_archive_path.display(),
+            project_label
         );
         assert!(
             find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
@@ -2883,10 +2888,11 @@ mod tests {
             .lock()
             .unwrap()
             .set_profile_name_for_mock(None);
+        logic.test_set_active_project_root(PathBuf::from("/root/project"));
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds1 = logic.test_drain_commands();
         assert!(find_command(&cmds1, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded] (Project: project)")
         })
         .is_some());
 
@@ -2902,7 +2908,7 @@ mod tests {
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds2 = logic.test_drain_commands();
         assert!(find_command(&cmds2, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set] (Project: project)")
         })
         .is_some());
 
@@ -2914,7 +2920,7 @@ mod tests {
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds3 = logic.test_drain_commands();
         assert!(find_command(&cmds3, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt] (Project: project)")
         })
         .is_some());
     }
