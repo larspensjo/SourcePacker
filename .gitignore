@@ -1,3 +1,4 @@
 /target
+/.sourcepacker
 source_packer.log
 apply.patch
