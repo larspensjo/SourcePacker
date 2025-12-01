@@ -3,6 +3,12 @@ name = "source_packer"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = [
+    ".", # The root package (source_packer) is a member
+    "src/CommanDuctUI",
+]
+
 # These are your cross-platform dependencies.
 # They will be included in all builds (Windows, Linux, etc.).
 [dependencies]
