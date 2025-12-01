@@ -51,6 +51,7 @@ pub(crate) enum PendingAction {
     CreatingNewProfileGetName,
     CreatingNewProfileGetRoot,
     SettingArchivePath,
+    OpeningProjectFolder,
 }
 
 /*
@@ -1135,6 +1136,28 @@ impl MyAppLogic {
         self.initiate_profile_selection_or_creation(window_id);
     }
 
+    fn handle_menu_open_folder_clicked(&mut self) {
+        log::debug!(
+            "Menu action {:?} received by AppLogic.",
+            ui_constants::MENU_ACTION_OPEN_FOLDER
+        );
+        let ui_state_mut = match self.ui_state.as_mut() {
+            Some(s) => s,
+            None => {
+                log::warn!("Cannot handle OpenFolder: No UI state (main window).");
+                return;
+            }
+        };
+
+        ui_state_mut.set_pending_action(Some(PendingAction::OpeningProjectFolder));
+        self.synchronous_command_queue
+            .push_back(PlatformCommand::ShowFolderPickerDialog {
+                window_id: ui_state_mut.window_id(),
+                title: "Open Project Folder".to_string(),
+                initial_dir: None,
+            });
+    }
+
     /*
      * Starts the first step of the profile creation sequence when the user
      * chooses "File/New Profile".
@@ -1288,7 +1311,8 @@ impl MyAppLogic {
                 self._handle_file_save_dialog_for_saving_profile_as(window_id, result);
             }
             Some(PendingAction::CreatingNewProfileGetName)
-            | Some(PendingAction::CreatingNewProfileGetRoot) => {
+            | Some(PendingAction::CreatingNewProfileGetRoot)
+            | Some(PendingAction::OpeningProjectFolder) => {
                 app_error!(
                     self,
                     "FileSaveDialogCompleted received, but was expecting dialog for {:?}. This is a logic error.",
@@ -1975,68 +1999,111 @@ impl MyAppLogic {
             }
         };
 
-        log::debug!("FolderPickerDialogCompleted: path: {path:?}");
-        ui_state_mut.set_pending_action(None);
+        let pending_action = ui_state_mut.take_pending_action();
+        log::debug!(
+            "FolderPickerDialogCompleted: path: {path:?}, pending_action: {pending_action:?}"
+        );
 
         let root_folder_path = match path {
             Some(p) => p,
             None => {
-                log::debug!("Root folder selection cancelled. Returning to profile selection.");
-                ui_state_mut.set_pending_new_profile_name(None);
-                self.initiate_profile_selection_or_creation(window_id);
+                log::debug!("Folder selection cancelled.");
+                if matches!(
+                    pending_action,
+                    Some(PendingAction::CreatingNewProfileGetRoot)
+                ) {
+                    log::debug!("Root folder selection cancelled. Returning to profile selection.");
+                    ui_state_mut.set_pending_new_profile_name(None);
+                    self.initiate_profile_selection_or_creation(window_id);
+                }
                 return;
             }
         };
 
-        let profile_name = match ui_state_mut.take_pending_new_profile_name() {
-            Some(name) => name,
-            None => {
+        match pending_action {
+            Some(PendingAction::OpeningProjectFolder) => {
+                self.active_project = Some(ProjectContext {
+                    root: root_folder_path.clone(),
+                });
+
+                // Cancel any ongoing asynchronous work
+                self.cancel_token_recalculation();
+                self.cancel_content_search();
+
+                // Clear session data (Step 1.4: Replace current project and profile)
+                self.app_session_data_ops.lock().unwrap().clear();
+
+                // Update title
+                self._update_window_title_with_profile_and_archive(window_id);
+
+                // Update UI to reflect empty state
+                self.repopulate_tree_view(window_id);
+                self.update_current_archive_status();
+                self._update_token_count_and_request_display();
+
+                app_info!(self, "Opened project folder: {:?}", root_folder_path);
+            }
+            Some(PendingAction::CreatingNewProfileGetRoot) => {
+                let profile_name = match ui_state_mut.take_pending_new_profile_name() {
+                    Some(name) => name,
+                    None => {
+                        app_warn!(
+                            self,
+                            "FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection."
+                        );
+                        self.initiate_profile_selection_or_creation(window_id);
+                        return;
+                    }
+                };
+
+                log::debug!(
+                    "Creating new profile '{profile_name}' with root folder {root_folder_path:?}."
+                );
+                let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
+
+                match self
+                    .profile_manager
+                    .save_profile(&new_profile_dto, APP_NAME_FOR_PROFILES)
+                {
+                    Ok(_) => {
+                        log::debug!("Successfully saved new profile '{}'.", new_profile_dto.name);
+                        let operation_status_message =
+                            format!("New profile '{}' created and loaded.", new_profile_dto.name);
+
+                        if let Err(e) = self
+                            .config_manager
+                            .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile_dto.name)
+                        {
+                            app_warn!(
+                                self,
+                                "Failed to save last profile name '{}': {:?}",
+                                new_profile_dto.name,
+                                e
+                            );
+                        }
+                        self._activate_profile_and_show_window(
+                            window_id,
+                            new_profile_dto,
+                            operation_status_message,
+                        );
+                    }
+                    Err(e) => {
+                        app_error!(
+                            self,
+                            "Failed to save new profile '{}': {:?}. Please try again.",
+                            profile_name,
+                            e
+                        );
+                        self.initiate_profile_selection_or_creation(window_id);
+                    }
+                }
+            }
+            _ => {
                 app_warn!(
                     self,
-                    "FolderPickerDialogCompleted but no pending profile name. Re-initiating profile selection."
+                    "FolderPickerDialogCompleted with unexpected pending action: {:?}",
+                    pending_action
                 );
-                self.initiate_profile_selection_or_creation(window_id);
-                return;
-            }
-        };
-
-        log::debug!("Creating new profile '{profile_name}' with root folder {root_folder_path:?}.");
-        let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
-
-        match self
-            .profile_manager
-            .save_profile(&new_profile_dto, APP_NAME_FOR_PROFILES)
-        {
-            Ok(_) => {
-                log::debug!("Successfully saved new profile '{}'.", new_profile_dto.name);
-                let operation_status_message =
-                    format!("New profile '{}' created and loaded.", new_profile_dto.name);
-
-                if let Err(e) = self
-                    .config_manager
-                    .save_last_profile_name(APP_NAME_FOR_PROFILES, &new_profile_dto.name)
-                {
-                    app_warn!(
-                        self,
-                        "Failed to save last profile name '{}': {:?}",
-                        new_profile_dto.name,
-                        e
-                    );
-                }
-                self._activate_profile_and_show_window(
-                    window_id,
-                    new_profile_dto,
-                    operation_status_message,
-                );
-            }
-            Err(e) => {
-                app_error!(
-                    self,
-                    "Failed to save new profile '{}': {:?}. Please try again.",
-                    profile_name,
-                    e
-                );
-                self.initiate_profile_selection_or_creation(window_id);
             }
         }
     }
@@ -2455,6 +2522,7 @@ impl PlatformEventHandler for MyAppLogic {
             }
             AppEvent::MenuActionClicked { action_id } => match action_id {
                 ui_constants::MENU_ACTION_LOAD_PROFILE => self.handle_menu_load_profile_clicked(),
+                ui_constants::MENU_ACTION_OPEN_FOLDER => self.handle_menu_open_folder_clicked(),
                 ui_constants::MENU_ACTION_NEW_PROFILE => self.handle_menu_new_profile_clicked(),
                 ui_constants::MENU_ACTION_SAVE_PROFILE_AS => {
                     self.handle_menu_save_profile_as_clicked()

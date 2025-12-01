@@ -55,3 +55,4 @@ pub const MENU_ACTION_SET_ARCHIVE_PATH: MenuActionId = MenuActionId(4);
 pub const MENU_ACTION_EDIT_EXCLUDE_PATTERNS: MenuActionId = MenuActionId(5);
 pub const MENU_ACTION_REFRESH_FILE_LIST: MenuActionId = MenuActionId(6);
 pub const MENU_ACTION_GENERATE_ARCHIVE: MenuActionId = MenuActionId(7);
+pub const MENU_ACTION_OPEN_FOLDER: MenuActionId = MenuActionId(8);
