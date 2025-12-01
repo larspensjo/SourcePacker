@@ -28,6 +28,23 @@ pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 // These type aliases are used by MainWindowUiState.
 pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
 
+#[derive(Debug, Clone)]
+pub struct ProjectContext {
+    pub root: PathBuf,
+}
+
+impl ProjectContext {
+    pub fn config_dir(&self) -> PathBuf {
+        self.root.join(".sourcepacker")
+    }
+    pub fn profile_dir(&self) -> PathBuf {
+        self.config_dir().join("profiles")
+    }
+    pub fn last_profile_file(&self) -> PathBuf {
+        self.config_dir().join("last_profile.txt")
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PendingAction {
     SavingProfileAs,
@@ -93,6 +110,8 @@ pub struct MyAppLogic {
     // UI-specific state for the main window, present only when the window exists.
     ui_state: Option<MainWindowUiState>,
 
+    active_project: Option<ProjectContext>,
+
     // Dependencies (Managers and Services)
     config_manager: Arc<dyn ConfigManagerOperations>,
     profile_manager: Arc<dyn ProfileManagerOperations>,
@@ -124,6 +143,7 @@ impl MyAppLogic {
         MyAppLogic {
             app_session_data_ops,
             ui_state: None,
+            active_project: None,
             config_manager,
             profile_manager,
             file_system_scanner,
@@ -1666,7 +1686,9 @@ impl MyAppLogic {
             };
 
             if should_quit {
-                log::debug!("Profile selection was cancelled by user with no active profile. Quitting application.");
+                log::debug!(
+                    "Profile selection was cancelled by user with no active profile. Quitting application."
+                );
                 self.synchronous_command_queue
                     .push_back(PlatformCommand::QuitApplication);
             } else {
