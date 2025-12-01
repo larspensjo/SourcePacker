@@ -157,6 +157,19 @@ impl MyAppLogic {
         }
     }
 
+    fn require_active_project_root(&mut self, action_description: &str) -> Option<PathBuf> {
+        match self.active_project.as_ref() {
+            Some(ctx) => Some(ctx.root.clone()),
+            None => {
+                app_warn!(
+                    self,
+                    "Cannot {action_description}: No project folder is open."
+                );
+                None
+            }
+        }
+    }
+
     /*
      * Handles the completion of the initial static UI setup for the main window.
      * It instantiates `MainWindowUiState`, then attempts to load the last used profile.
@@ -170,16 +183,30 @@ impl MyAppLogic {
         );
         self.ui_state = Some(MainWindowUiState::new(window_id));
 
+        let project_root = match self.active_project.as_ref() {
+            Some(ctx) => ctx.root.clone(),
+            None => {
+                self.synchronous_command_queue
+                    .push_back(PlatformCommand::ShowWindow { window_id });
+                app_info!(
+                    self,
+                    "No project folder is open. Use File → Open Folder… to get started."
+                );
+                return;
+            }
+        };
+
         match self
             .config_manager
             .load_last_profile_name(APP_NAME_FOR_PROFILES)
         {
             Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
                 log::debug!("Found last used profile name: {last_profile_name}");
-                match self
-                    .profile_manager
-                    .load_profile(&last_profile_name, APP_NAME_FOR_PROFILES)
-                {
+                match self.profile_manager.load_profile(
+                    &project_root,
+                    &last_profile_name,
+                    APP_NAME_FOR_PROFILES,
+                ) {
                     Ok(profile) => {
                         app_info!(
                             self,
@@ -1174,6 +1201,11 @@ impl MyAppLogic {
             }
         };
 
+        if self.active_project.is_none() {
+            app_warn!(self, "Cannot create a profile: No project folder is open.");
+            return;
+        }
+
         log::debug!(
             "Menu action {:?} received by AppLogic.",
             ui_constants::MENU_ACTION_NEW_PROFILE
@@ -1247,6 +1279,10 @@ impl MyAppLogic {
             "Menu action {:?} received by AppLogic.",
             ui_constants::MENU_ACTION_SAVE_PROFILE_AS
         );
+        let Some(project_root) = self.require_active_project_root("save the profile") else {
+            return;
+        };
+
         let ui_state_mut = match self.ui_state.as_mut() {
             Some(s) => s,
             None => {
@@ -1257,7 +1293,7 @@ impl MyAppLogic {
 
         let profile_dir_opt = self
             .profile_manager
-            .get_profile_dir_path(APP_NAME_FOR_PROFILES);
+            .get_profile_dir_path(&project_root, APP_NAME_FOR_PROFILES);
         let base_name = self
             .app_session_data_ops
             .lock()
@@ -1368,10 +1404,15 @@ impl MyAppLogic {
             }
         };
 
-        match self
-            .profile_manager
-            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-        {
+        let Some(project_root) = self.require_active_project_root("save the profile") else {
+            return;
+        };
+
+        match self.profile_manager.save_profile(
+            &project_root,
+            &profile_to_save,
+            APP_NAME_FOR_PROFILES,
+        ) {
             Ok(_) => {
                 app_info!(
                     self,
@@ -1446,9 +1487,12 @@ impl MyAppLogic {
             profile_runtime_data.set_archive_path(None);
             profile_runtime_data.create_profile_snapshot()
         };
-        if let Err(e) = self
-            .profile_manager
-            .save_profile(&profile, APP_NAME_FOR_PROFILES)
+        let Some(project_root) = self.require_active_project_root("save the profile") else {
+            return;
+        };
+        if let Err(e) =
+            self.profile_manager
+                .save_profile(&project_root, &profile, APP_NAME_FOR_PROFILES)
         {
             app_error!(
                 self,
@@ -1640,7 +1684,14 @@ impl MyAppLogic {
             "initiate_profile_selection_or_creation called with mismatching window ID or no UI state."
         );
 
-        match self.profile_manager.list_profiles(APP_NAME_FOR_PROFILES) {
+        let Some(project_root) = self.require_active_project_root("list profiles") else {
+            return;
+        };
+
+        match self
+            .profile_manager
+            .list_profiles(&project_root, APP_NAME_FOR_PROFILES)
+        {
             Ok(available_profiles) => {
                 let (title, prompt) = if available_profiles.is_empty() {
                     (
@@ -1699,6 +1750,10 @@ impl MyAppLogic {
             return;
         }
 
+        let Some(project_root) = self.require_active_project_root("load profiles") else {
+            return;
+        };
+
         log::debug!(
             "ProfileSelectionDialogCompleted event received: chosen: {chosen_profile_name:?}, create_new: {create_new_requested}, cancelled: {user_cancelled}"
         );
@@ -1742,10 +1797,11 @@ impl MyAppLogic {
         };
 
         log::debug!("User chose profile '{profile_name_to_load}'. Attempting to load.");
-        match self
-            .profile_manager
-            .load_profile(&profile_name_to_load, APP_NAME_FOR_PROFILES)
-        {
+        match self.profile_manager.load_profile(
+            &project_root,
+            &profile_name_to_load,
+            APP_NAME_FOR_PROFILES,
+        ) {
             Ok(profile) => {
                 log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                 let operation_status_message = format!("Profile '{}' loaded.", profile.name);
@@ -1953,10 +2009,15 @@ impl MyAppLogic {
             }
         };
 
-        match self
-            .profile_manager
-            .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-        {
+        let Some(project_root) = self.require_active_project_root("save the profile") else {
+            return;
+        };
+
+        match self.profile_manager.save_profile(
+            &project_root,
+            &profile_to_save,
+            APP_NAME_FOR_PROFILES,
+        ) {
             Ok(_) => {
                 {
                     let mut data = self.app_session_data_ops.lock().unwrap();
@@ -2000,6 +2061,14 @@ impl MyAppLogic {
         };
 
         let pending_action = ui_state_mut.take_pending_action();
+        let pending_new_profile_name = if matches!(
+            pending_action,
+            Some(PendingAction::CreatingNewProfileGetRoot)
+        ) {
+            ui_state_mut.take_pending_new_profile_name()
+        } else {
+            None
+        };
         log::debug!(
             "FolderPickerDialogCompleted: path: {path:?}, pending_action: {pending_action:?}"
         );
@@ -2019,6 +2088,8 @@ impl MyAppLogic {
                 return;
             }
         };
+
+        drop(ui_state_mut);
 
         match pending_action {
             Some(PendingAction::OpeningProjectFolder) => {
@@ -2042,9 +2113,11 @@ impl MyAppLogic {
                 self._update_token_count_and_request_display();
 
                 app_info!(self, "Opened project folder: {:?}", root_folder_path);
+
+                self.initiate_profile_selection_or_creation(window_id);
             }
             Some(PendingAction::CreatingNewProfileGetRoot) => {
-                let profile_name = match ui_state_mut.take_pending_new_profile_name() {
+                let profile_name = match pending_new_profile_name {
                     Some(name) => name,
                     None => {
                         app_warn!(
@@ -2061,10 +2134,16 @@ impl MyAppLogic {
                 );
                 let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
 
-                match self
-                    .profile_manager
-                    .save_profile(&new_profile_dto, APP_NAME_FOR_PROFILES)
-                {
+                let Some(project_root) = self.require_active_project_root("create a profile")
+                else {
+                    return;
+                };
+
+                match self.profile_manager.save_profile(
+                    &project_root,
+                    &new_profile_dto,
+                    APP_NAME_FOR_PROFILES,
+                ) {
                     Ok(_) => {
                         log::debug!("Successfully saved new profile '{}'.", new_profile_dto.name);
                         let operation_status_message =
@@ -2125,6 +2204,11 @@ impl MyAppLogic {
     }
 
     fn handle_menu_set_archive_path_clicked(&mut self) {
+        if self.active_project.is_none() {
+            app_warn!(self, "Cannot set archive path: No project folder is open.");
+            return;
+        }
+
         let ui_state_mut = match self.ui_state.as_mut() {
             Some(s) => s,
             None => {
@@ -2605,6 +2689,7 @@ impl PlatformEventHandler for MyAppLogic {
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
         self.cancel_token_recalculation();
+        let project_root_on_exit = self.active_project.as_ref().map(|ctx| ctx.root.clone());
         let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
         let active_profile_name_opt = profile_runtime_data.get_profile_name();
@@ -2614,16 +2699,23 @@ impl PlatformEventHandler for MyAppLogic {
                 log::debug!(
                     "AppLogic: Attempting to save content of active profile '{active_profile_name}' on exit."
                 );
-                match self
-                    .profile_manager
-                    .save_profile(&profile_to_save, APP_NAME_FOR_PROFILES)
-                {
-                    Ok(_) => log::debug!(
-                        "AppLogic: Successfully saved content of profile '{active_profile_name}' to disk on exit."
-                    ),
-                    Err(e) => log::error!(
-                        "AppLogic: Error saving content of profile '{active_profile_name}' on exit: {e:?}"
-                    ),
+                if let Some(project_root) = project_root_on_exit.as_ref() {
+                    match self.profile_manager.save_profile(
+                        project_root,
+                        &profile_to_save,
+                        APP_NAME_FOR_PROFILES,
+                    ) {
+                        Ok(_) => log::debug!(
+                            "AppLogic: Successfully saved content of profile '{active_profile_name}' to disk on exit."
+                        ),
+                        Err(e) => log::error!(
+                            "AppLogic: Error saving content of profile '{active_profile_name}' on exit: {e:?}"
+                        ),
+                    }
+                } else {
+                    log::debug!(
+                        "AppLogic: Skipping auto-save for profile '{active_profile_name}' because no project is active."
+                    );
                 }
             }
         }
@@ -2711,6 +2803,14 @@ impl UiStateProvider for MyAppLogic {
 impl MyAppLogic {
     pub(crate) fn test_set_main_window_id_and_init_ui_state(&mut self, id: WindowId) {
         self.ui_state = Some(MainWindowUiState::new(id));
+    }
+
+    pub(crate) fn test_set_active_project_root<P: Into<PathBuf>>(&mut self, root: P) {
+        self.active_project = Some(ProjectContext { root: root.into() });
+    }
+
+    pub(crate) fn test_clear_active_project(&mut self) {
+        self.active_project = None;
     }
     pub(crate) fn test_pending_action(&self) -> Option<&PendingAction> {
         self.ui_state.as_ref().and_then(|s| s.pending_action())

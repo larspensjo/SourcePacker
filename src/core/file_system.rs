@@ -1,6 +1,7 @@
-use super::file_node::FileNode;
+use super::{file_node::FileNode, profiles::PROJECT_CONFIG_DIR_NAME};
 use crate::core::checksum_utils;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
+use std::ffi::OsStr;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -186,6 +187,15 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             }
 
             let path = entry.path().to_path_buf();
+
+            if is_internal_config_path(root_path, &path) {
+                log::trace!(
+                    "FileSystemScanner: Skipping internal config path {:?} during scan.",
+                    path
+                );
+                continue;
+            }
+
             // Use file_name from DirEntry as it's relative to its parent.
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
@@ -268,6 +278,20 @@ fn sort_file_nodes_recursively(nodes: &mut [FileNode]) {
             sort_file_nodes_recursively(&mut node.children);
         }
     }
+}
+
+fn is_internal_config_path(root_path: &Path, candidate_path: &Path) -> bool {
+    let config_component = OsStr::new(PROJECT_CONFIG_DIR_NAME);
+    if let Ok(relative) = candidate_path.strip_prefix(root_path) {
+        return relative
+            .components()
+            .any(|component| component.as_os_str() == config_component);
+    }
+
+    // Fallback: treat any absolute path containing the component as internal even if prefix stripping failed.
+    candidate_path
+        .components()
+        .any(|component| component.as_os_str() == config_component)
 }
 
 #[cfg(test)]
@@ -671,6 +695,46 @@ mod tests {
 
         let subdir_node = nodes.iter().find(|n| n.path() == subdir_path).unwrap();
         assert!(subdir_node.is_dir());
+        Ok(())
+    }
+
+    fn tree_contains_component(nodes: &[FileNode], target: &str) -> bool {
+        for node in nodes {
+            if node.name() == target {
+                return true;
+            }
+            if tree_contains_component(&node.children, target) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn test_scan_skips_internal_sourcepacker_directory() -> Result<()> {
+        let dir = tempdir()?;
+        let internal_dir = dir.path().join(PROJECT_CONFIG_DIR_NAME);
+        fs::create_dir_all(internal_dir.join("profiles"))?;
+        fs::write(internal_dir.join("profiles").join("hidden_profile.json"), "{ }")?;
+        fs::write(dir.path().join("visible.txt"), "visible content")?;
+
+        let scanner = CoreFileSystemScanner::new();
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
+
+        let top_level_names: Vec<&str> = nodes.iter().map(|n| n.name()).collect();
+        assert!(
+            top_level_names.contains(&"visible.txt"),
+            "Expected regular project files to remain in scan results."
+        );
+        assert!(
+            !top_level_names.contains(&PROJECT_CONFIG_DIR_NAME),
+            "Internal {PROJECT_CONFIG_DIR_NAME} directory should be excluded from scan results."
+        );
+        assert!(
+            !tree_contains_component(&nodes, PROJECT_CONFIG_DIR_NAME),
+            "Internal {PROJECT_CONFIG_DIR_NAME} directory should not appear in any subtree."
+        );
+
         Ok(())
     }
 }

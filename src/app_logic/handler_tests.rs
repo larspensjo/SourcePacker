@@ -775,20 +775,26 @@ mod tests {
     struct MockProfileManager {
         load_profile_results: Mutex<HashMap<String, Result<Profile, ProfileError>>>,
         load_profile_from_path_results: Mutex<HashMap<PathBuf, Result<Profile, ProfileError>>>,
-        save_profile_calls: Mutex<Vec<(Profile, String)>>,
+        load_profile_calls: Mutex<Vec<(PathBuf, String)>>,
+        save_profile_calls: Mutex<Vec<(PathBuf, Profile, String)>>,
         save_profile_result: Mutex<Result<(), ProfileError>>,
         list_profiles_result: Mutex<Result<Vec<String>, ProfileError>>,
+        list_profiles_calls: Mutex<Vec<PathBuf>>,
         get_profile_dir_path_result: Mutex<Option<PathBuf>>,
+        profile_dir_path_calls: Mutex<Vec<PathBuf>>,
     }
     impl MockProfileManager {
         fn new() -> Self {
             MockProfileManager {
                 load_profile_results: Mutex::new(HashMap::new()),
                 load_profile_from_path_results: Mutex::new(HashMap::new()),
+                load_profile_calls: Mutex::new(Vec::new()),
                 save_profile_calls: Mutex::new(Vec::new()),
                 save_profile_result: Mutex::new(Ok(())),
                 list_profiles_result: Mutex::new(Ok(Vec::new())),
+                list_profiles_calls: Mutex::new(Vec::new()),
                 get_profile_dir_path_result: Mutex::new(Some(PathBuf::from("/mock/profiles"))),
+                profile_dir_path_calls: Mutex::new(Vec::new()),
             }
         }
         fn set_load_profile_result(
@@ -824,16 +830,33 @@ mod tests {
             *self.get_profile_dir_path_result.lock().unwrap() = result;
         }
         #[allow(dead_code)]
-        fn get_save_profile_calls(&self) -> Vec<(Profile, String)> {
+        fn get_save_profile_calls(&self) -> Vec<(PathBuf, Profile, String)> {
             self.save_profile_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_load_profile_calls(&self) -> Vec<(PathBuf, String)> {
+            self.load_profile_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_list_profiles_calls(&self) -> Vec<PathBuf> {
+            self.list_profiles_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_profile_dir_path_calls(&self) -> Vec<PathBuf> {
+            self.profile_dir_path_calls.lock().unwrap().clone()
         }
     }
     impl ProfileManagerOperations for MockProfileManager {
         fn load_profile(
             &self,
+            project_root: &Path,
             profile_name: &str,
             _app_name: &str,
         ) -> Result<Profile, ProfileError> {
+            self.load_profile_calls
+                .lock()
+                .unwrap()
+                .push((project_root.to_path_buf(), profile_name.to_string()));
             let map = self.load_profile_results.lock().unwrap();
             match map.get(profile_name) {
                 Some(Ok(profile)) => Ok(profile.clone()),
@@ -852,7 +875,12 @@ mod tests {
                 ))),
             }
         }
-        fn save_profile(&self, profile: &Profile, app_name: &str) -> Result<(), ProfileError> {
+        fn save_profile(
+            &self,
+            project_root: &Path,
+            profile: &Profile,
+            app_name: &str,
+        ) -> Result<(), ProfileError> {
             let result_to_return = match *self.save_profile_result.lock().unwrap() {
                 Ok(_) => Ok(()),
                 Err(ref e) => Err(clone_profile_error(e)),
@@ -861,17 +889,33 @@ mod tests {
                 self.save_profile_calls
                     .lock()
                     .unwrap()
-                    .push((profile.clone(), app_name.to_string()));
+                    .push((project_root.to_path_buf(), profile.clone(), app_name.to_string()));
             }
             result_to_return
         }
-        fn list_profiles(&self, _app_name: &str) -> Result<Vec<String>, ProfileError> {
+        fn list_profiles(
+            &self,
+            project_root: &Path,
+            _app_name: &str,
+        ) -> Result<Vec<String>, ProfileError> {
+            self.list_profiles_calls
+                .lock()
+                .unwrap()
+                .push(project_root.to_path_buf());
             match *self.list_profiles_result.lock().unwrap() {
                 Ok(ref names) => Ok(names.clone()),
                 Err(ref e) => Err(clone_profile_error(e)),
             }
         }
-        fn get_profile_dir_path(&self, _app_name: &str) -> Option<PathBuf> {
+        fn get_profile_dir_path(
+            &self,
+            project_root: &Path,
+            _app_name: &str,
+        ) -> Option<PathBuf> {
+            self.profile_dir_path_calls
+                .lock()
+                .unwrap()
+                .push(project_root.to_path_buf());
             self.get_profile_dir_path_result.lock().unwrap().clone()
         }
     }
@@ -1170,7 +1214,7 @@ mod tests {
         let mock_state_manager_arc = Arc::new(MockStateManager::new());
         let mock_token_counter_arc = Arc::new(MockTokenCounter::new(1));
 
-        let logic = MyAppLogic::new(
+        let mut logic = MyAppLogic::new(
             Arc::clone(&mock_app_session_data_for_test)
                 as Arc<Mutex<dyn ProfileRuntimeDataOperations>>,
             Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
@@ -1180,6 +1224,7 @@ mod tests {
             Arc::clone(&mock_token_counter_arc) as Arc<dyn TokenCounterOperations>,
             Arc::clone(&mock_state_manager_arc) as Arc<dyn NodeStateApplicatorOperations>,
         );
+        logic.test_set_active_project_root(PathBuf::from("/mock/project_root"));
         (
             logic,
             mock_app_session_data_for_test,
@@ -1445,7 +1490,7 @@ mod tests {
         // Assert - profile save contains updated patterns
         let saved_profiles = mock_profile_manager_arc.get_save_profile_calls();
         assert_eq!(saved_profiles.len(), 1);
-        let (saved_profile, app_name) = &saved_profiles[0];
+        let (_project_root, saved_profile, app_name) = &saved_profiles[0];
         assert_eq!(app_name, APP_NAME_FOR_PROFILES);
         assert_eq!(saved_profile.exclude_patterns, expected_patterns_for_save);
 
@@ -2426,9 +2471,9 @@ mod tests {
             Some(&new_archive_path)
         );
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
-        assert_eq!(profile_mgr.get_save_profile_calls()[0].0.name, profile_name);
+        assert_eq!(profile_mgr.get_save_profile_calls()[0].1.name, profile_name);
         assert_eq!(
-            profile_mgr.get_save_profile_calls()[0].0.archive_path,
+            profile_mgr.get_save_profile_calls()[0].1.archive_path,
             Some(new_archive_path.clone())
         );
 
@@ -2472,6 +2517,46 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_ops_no_project_root_are_noop() {
+        let (mut logic, _session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(41);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        logic.test_clear_active_project();
+
+        logic.handle_event(AppEvent::MenuActionClicked {
+            action_id: ui_constants::MENU_ACTION_LOAD_PROFILE,
+        });
+
+        assert!(profile_mgr.get_list_profiles_calls().is_empty());
+        let cmds = logic.test_drain_commands();
+        assert!(find_command(&cmds, |cmd| matches!(
+            cmd,
+            PlatformCommand::UpdateLabelText { control_id, text, .. }
+                if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID
+                    && text.contains("No project folder is open")
+        )).
+            is_some());
+    }
+
+    #[test]
+    fn test_profile_ops_with_project_root_use_project_local_dir() {
+        let (mut logic, _session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(42);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::MenuActionClicked {
+            action_id: ui_constants::MENU_ACTION_SAVE_PROFILE_AS,
+        });
+
+        let dir_calls = profile_mgr.get_profile_dir_path_calls();
+        assert_eq!(
+            dir_calls,
+            vec![PathBuf::from("/mock/project_root")],
+            "Expected Save Profile As to query the current project's profile dir."
+        );
+    }
+
+    #[test]
     fn test_internal_handle_file_save_dialog_for_saving_profile_as() {
         let (mut logic, mock_app_session, cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
         let window_id = WindowId::new(1);
@@ -2511,7 +2596,7 @@ mod tests {
 
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
         assert_eq!(
-            profile_mgr.get_save_profile_calls()[0].0.name,
+            profile_mgr.get_save_profile_calls()[0].1.name,
             "New Profile Name"
         );
         assert_eq!(
