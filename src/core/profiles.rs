@@ -13,12 +13,13 @@
 use super::file_node::Profile;
 use serde_json;
 use std::fs::{self, File};
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const PROFILE_FILE_EXTENSION: &str = "json";
 const PROFILES_SUBFOLDER_NAME: &str = "profiles";
 pub const PROJECT_CONFIG_DIR_NAME: &str = ".sourcepacker";
+const LAST_PROFILE_FILENAME: &str = "last_profile.txt";
 
 #[derive(Debug)]
 pub enum ProfileError {
@@ -91,6 +92,12 @@ pub trait ProfileManagerOperations: Send + Sync {
     fn save_profile(&self, project_root: &Path, profile: &Profile, app_name: &str) -> Result<()>;
     fn list_profiles(&self, project_root: &Path, app_name: &str) -> Result<Vec<String>>;
     fn get_profile_dir_path(&self, project_root: &Path, app_name: &str) -> Option<PathBuf>;
+    fn save_last_profile_name_for_project(
+        &self,
+        project_root: &Path,
+        profile_name: &str,
+    ) -> Result<()>;
+    fn load_last_profile_name_for_project(&self, project_root: &Path) -> Result<Option<String>>;
 }
 
 pub struct CoreProfileManager {}
@@ -100,11 +107,7 @@ impl CoreProfileManager {
         CoreProfileManager {}
     }
 
-    /*
-     * Ensures the project-local profile storage directory exists under
-     * `<project_root>/.sourcepacker/profiles`.
-     */
-    fn get_profile_storage_dir_impl(project_root: &Path) -> Option<PathBuf> {
+    fn ensure_project_config_dir(project_root: &Path) -> Option<PathBuf> {
         let config_dir = project_root.join(PROJECT_CONFIG_DIR_NAME);
         if !config_dir.exists() {
             if let Err(e) = fs::create_dir_all(&config_dir) {
@@ -114,7 +117,20 @@ impl CoreProfileManager {
                 return None;
             }
             log::debug!("CoreProfileManager: Created project config directory: {config_dir:?}");
+        } else {
+            log::trace!(
+                "CoreProfileManager: Project config directory already exists: {config_dir:?}"
+            );
         }
+        Some(config_dir)
+    }
+
+    /*
+     * Ensures the project-local profile storage directory exists under
+     * `<project_root>/.sourcepacker/profiles`.
+     */
+    fn get_profile_storage_dir_impl(project_root: &Path) -> Option<PathBuf> {
+        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)?;
 
         let profiles_path = config_dir.join(PROFILES_SUBFOLDER_NAME);
         if !profiles_path.exists() {
@@ -269,6 +285,53 @@ impl ProfileManagerOperations for CoreProfileManager {
 
     fn get_profile_dir_path(&self, project_root: &Path, _app_name: &str) -> Option<PathBuf> {
         CoreProfileManager::get_profile_storage_dir_impl(project_root)
+    }
+
+    fn save_last_profile_name_for_project(
+        &self,
+        project_root: &Path,
+        profile_name: &str,
+    ) -> Result<()> {
+        if profile_name.trim().is_empty() || !profile_name.chars().all(is_valid_profile_name_char) {
+            return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
+        }
+
+        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)
+            .ok_or(ProfileError::NoProjectDirectory)?;
+        let file_path = config_dir.join(LAST_PROFILE_FILENAME);
+
+        let mut file = File::create(&file_path)?;
+        file.write_all(profile_name.as_bytes())?;
+        log::debug!(
+            "CoreProfileManager: Saved last profile '{profile_name}' for project at {:?}.",
+            project_root
+        );
+        Ok(())
+    }
+
+    fn load_last_profile_name_for_project(&self, project_root: &Path) -> Result<Option<String>> {
+        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)
+            .ok_or(ProfileError::NoProjectDirectory)?;
+        let file_path = config_dir.join(LAST_PROFILE_FILENAME);
+
+        if !file_path.exists() {
+            log::trace!(
+                "CoreProfileManager: No last profile file for project at {:?}.",
+                project_root
+            );
+            return Ok(None);
+        }
+
+        let mut file = File::open(&file_path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+
+        let trimmed = contents.trim();
+        if trimmed.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(trimmed.to_string()))
+        }
     }
 }
 
@@ -447,6 +510,49 @@ mod profile_tests {
             manager.load_profile(project_root, "My/MockProfile", APP_NAME_FOR_TESTS),
             Err(ProfileError::InvalidProfileName(_))
         ));
+    }
+
+    #[test]
+    fn test_save_and_load_last_profile_name_for_project() -> Result<()> {
+        // Arrange
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let project_root = temp_dir.path();
+        let manager = CoreProfileManager::new();
+        let profile_name = "RecentProfile";
+
+        // Act
+        manager.save_last_profile_name_for_project(project_root, profile_name)?;
+
+        // Assert
+        let loaded = manager.load_last_profile_name_for_project(project_root)?;
+        assert_eq!(loaded, Some(profile_name.to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_last_profile_name_for_project_none_when_missing_or_empty() -> Result<()> {
+        // Arrange
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let project_root = temp_dir.path();
+        let manager = CoreProfileManager::new();
+
+        // Act & Assert: missing file yields None
+        let loaded_missing = manager.load_last_profile_name_for_project(project_root)?;
+        assert!(loaded_missing.is_none());
+
+        // Arrange: create empty file
+        let empty_file_path = project_root
+            .join(PROJECT_CONFIG_DIR_NAME)
+            .join(LAST_PROFILE_FILENAME);
+        if let Some(parent) = empty_file_path.parent() {
+            fs::create_dir_all(parent).expect("Failed to create config dir for empty file test");
+        }
+        File::create(&empty_file_path).expect("Failed to create empty last profile file");
+
+        // Act & Assert: empty contents treated as None
+        let loaded_empty = manager.load_last_profile_name_for_project(project_root)?;
+        assert!(loaded_empty.is_none());
+        Ok(())
     }
 
     #[test]

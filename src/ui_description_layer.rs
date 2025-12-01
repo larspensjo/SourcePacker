@@ -8,8 +8,8 @@
 use crate::app_logic::ui_constants;
 
 use crate::platform_layer::{
-    types::{DockStyle, LabelClass, LayoutRule, MenuItemConfig, PlatformCommand, WindowId},
     StyleId,
+    types::{DockStyle, LabelClass, LayoutRule, MenuItemConfig, PlatformCommand, WindowId},
 };
 
 mod theme;

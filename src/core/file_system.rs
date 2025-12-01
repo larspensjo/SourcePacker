@@ -1,8 +1,8 @@
 use super::{file_node::FileNode, profiles::PROJECT_CONFIG_DIR_NAME};
 use crate::core::checksum_utils;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
-use std::ffi::OsStr;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -715,7 +715,10 @@ mod tests {
         let dir = tempdir()?;
         let internal_dir = dir.path().join(PROJECT_CONFIG_DIR_NAME);
         fs::create_dir_all(internal_dir.join("profiles"))?;
-        fs::write(internal_dir.join("profiles").join("hidden_profile.json"), "{ }")?;
+        fs::write(
+            internal_dir.join("profiles").join("hidden_profile.json"),
+            "{ }",
+        )?;
         fs::write(dir.path().join("visible.txt"), "visible content")?;
 
         let scanner = CoreFileSystemScanner::new();
