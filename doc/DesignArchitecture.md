@@ -4,6 +4,32 @@
 
 This project emphasizes modularity, with each module aimed at a specific responsibility and accompanied by comprehensive tests. Module-level documentation will explain its purpose and rationale, focusing on why it exists and its role, rather than volatile internal details, to ensure comments remain relevant over time.
 
+## Project Context
+
+* **Project root:** The folder the user opens via **File → Open Folder**. It is the anchor for all project state and never inferred implicitly.
+* **Profile scan root:** Each profile still declares its own scan root. It often matches the project root but can point elsewhere when needed.
+* **Archive target path:** The destination for the generated archive. It may live inside or outside the project tree.
+
+The `ProjectContext` helper centralizes project-local paths so UI and core code do not hand-craft `.sourcepacker` locations. It resolves:
+
+* `.sourcepacker/` – project-local configuration directory.
+* `.sourcepacker/profiles/` – storage for profile JSON files.
+* `.sourcepacker/last_profile.txt` – remembers the last profile used for this project.
+
+The file system scanner hard-ignores `.sourcepacker` so SourcePacker never surfaces its own metadata in the tree view.
+
+## Project-Centric Startup Flow
+
+1. On UI setup completion, the application loads the last project path from global config (AppData). If the path exists, it becomes the active project.
+2. For the active project, the application loads the project-local `last_profile.txt` to restore the last profile, if present.
+3. If the stored project path is missing or invalid, the entry is cleared and the user is immediately prompted to pick a project folder before profile actions become available.
+4. When no project is open, profile-related operations no-op with a clear log/status message; the main window prompts for folder selection.
+
+## Configuration Boundaries
+
+* **Global (AppData):** Cross-project data such as the last project path (and future recent-project lists) remain in AppData so they are available before any project is chosen.
+* **Project-local (`.sourcepacker`):** Profiles, last-profile tracking, and any future project-scoped configuration live under the opened project's `.sourcepacker` directory, keeping projects portable.
+
 ## User Interface Architecture: Model-View-Presenter (MVP)
 
 SourcePacker's UI architecture is structured around the Model-View-Presenter (MVP) pattern. This pattern enhances testability, maintainability, and separates concerns effectively.
