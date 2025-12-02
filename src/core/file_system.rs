@@ -1,4 +1,4 @@
-use super::{file_node::FileNode, profiles::PROJECT_CONFIG_DIR_NAME};
+use super::{file_node::FileNode, project_context::PROJECT_CONFIG_DIR_NAME};
 use crate::core::checksum_utils;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use std::collections::HashMap;

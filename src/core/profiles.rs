@@ -11,15 +11,13 @@
  * under which a "profiles" subfolder is used.
  */
 use super::file_node::Profile;
+use crate::core::project_context::{
+    LAST_PROFILE_FILENAME, PROFILE_FILE_EXTENSION, PROFILES_SUBFOLDER_NAME, PROJECT_CONFIG_DIR_NAME,
+};
 use serde_json;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-
-pub const PROFILE_FILE_EXTENSION: &str = "json";
-const PROFILES_SUBFOLDER_NAME: &str = "profiles";
-pub const PROJECT_CONFIG_DIR_NAME: &str = ".sourcepacker";
-const LAST_PROFILE_FILENAME: &str = "last_profile.txt";
 
 #[derive(Debug)]
 pub enum ProfileError {

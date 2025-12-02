@@ -1,8 +1,8 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, ContentSearchProgress,
     FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations, TokenProgress,
-    TokenProgressChannel,
+    ProfileRuntimeDataOperations, ProjectContext, SelectionState, TokenCounterOperations,
+    TokenProgress, TokenProgressChannel,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
@@ -27,36 +27,6 @@ pub(crate) const APP_NAME_FOR_PROFILES: &str = "SourcePacker";
 
 // These type aliases are used by MainWindowUiState.
 pub(crate) type PathToTreeItemIdMap = HashMap<PathBuf, TreeItemId>;
-
-#[derive(Debug, Clone)]
-pub struct ProjectContext {
-    root: PathBuf,
-}
-
-impl ProjectContext {
-    pub fn display_name(&self) -> String {
-        self.root
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.root.to_string_lossy().into_owned())
-    }
-    pub fn config_dir(&self) -> PathBuf {
-        self.root.join(".sourcepacker")
-    }
-    pub fn profile_dir(&self) -> PathBuf {
-        self.config_dir().join("profiles")
-    }
-    pub fn last_profile_file(&self) -> PathBuf {
-        self.config_dir().join("last_profile.txt")
-    }
-}
-
-// TODO: DO away with this impl when possible. It means we need to use ProjectContext instead of a path, and that more member functions are added to ProjectContext.
-impl AsRef<Path> for ProjectContext {
-    fn as_ref(&self) -> &Path {
-        &self.root
-    }
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum PendingAction {
@@ -277,9 +247,7 @@ impl MyAppLogic {
             }
         };
 
-        self.active_project = Some(ProjectContext {
-            root: project_root.clone(),
-        });
+        self.active_project = Some(ProjectContext::new(project_root.clone()));
 
         match self
             .profile_manager
@@ -1329,8 +1297,8 @@ impl MyAppLogic {
                     "Successfully loaded profile '{profile_name_clone}' via manager from path."
                 );
 
-                self.persist_last_project_path(project_ctx.as_ref());
-                self.persist_last_profile_for_project(project_ctx.as_ref(), &profile_name_clone);
+                self.persist_last_project_path(project_ctx.root_path());
+                self.persist_last_profile_for_project(project_ctx.root_path(), &profile_name_clone);
                 let status_msg = format!("Profile '{profile_name_clone}' loaded and scanned.");
                 self._activate_profile_and_show_window(window_id, loaded_profile, status_msg);
             }
@@ -1369,7 +1337,7 @@ impl MyAppLogic {
 
         let profile_dir_opt = self
             .profile_manager
-            .get_profile_dir_path(project_ctx.as_ref(), APP_NAME_FOR_PROFILES);
+            .get_profile_dir_path(project_ctx.root_path(), APP_NAME_FOR_PROFILES);
         let base_name = self
             .app_session_data_ops
             .lock()
@@ -1485,7 +1453,7 @@ impl MyAppLogic {
         };
 
         match self.profile_manager.save_profile(
-            project_ctx.as_ref(),
+            project_ctx.root_path(),
             &profile_to_save,
             APP_NAME_FOR_PROFILES,
         ) {
@@ -1566,10 +1534,11 @@ impl MyAppLogic {
         let Some(project_ctx) = self.require_active_project("save the profile") else {
             return;
         };
-        if let Err(e) =
-            self.profile_manager
-                .save_profile(project_ctx.as_ref(), &profile, APP_NAME_FOR_PROFILES)
-        {
+        if let Err(e) = self.profile_manager.save_profile(
+            project_ctx.root_path(),
+            &profile,
+            APP_NAME_FOR_PROFILES,
+        ) {
             app_error!(
                 self,
                 "Failed to save profile '{}' in 'Save Profile As': {}",
@@ -1580,8 +1549,8 @@ impl MyAppLogic {
             // Current logic does not. For now, matching existing behavior.
         } else {
             // Only update persisted references if save was successful
-            self.persist_last_project_path(project_ctx.as_ref());
-            self.persist_last_profile_for_project(project_ctx.as_ref(), &profile.name);
+            self.persist_last_project_path(project_ctx.root_path());
+            self.persist_last_profile_for_project(project_ctx.root_path(), &profile.name);
         }
         // These UI updates happen regardless of save success in current logic.
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1723,8 +1692,11 @@ impl MyAppLogic {
         };
 
         if let Some(project_ctx) = self.active_project.as_ref() {
-            self.persist_last_project_path(project_ctx.as_ref());
-            self.persist_last_profile_for_project(project_ctx.as_ref(), &profile_name_for_persist);
+            self.persist_last_project_path(project_ctx.root_path());
+            self.persist_last_profile_for_project(
+                project_ctx.root_path(),
+                &profile_name_for_persist,
+            );
         }
 
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1763,7 +1735,7 @@ impl MyAppLogic {
 
         match self
             .profile_manager
-            .list_profiles(project_ctx.as_ref(), APP_NAME_FOR_PROFILES)
+            .list_profiles(project_ctx.root_path(), APP_NAME_FOR_PROFILES)
         {
             Ok(available_profiles) => {
                 let (title, prompt) = if available_profiles.is_empty() {
@@ -1871,15 +1843,15 @@ impl MyAppLogic {
 
         log::debug!("User chose profile '{profile_name_to_load}'. Attempting to load.");
         match self.profile_manager.load_profile(
-            project_ctx.as_ref(),
+            project_ctx.root_path(),
             &profile_name_to_load,
             APP_NAME_FOR_PROFILES,
         ) {
             Ok(profile) => {
                 log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                 let operation_status_message = format!("Profile '{}' loaded.", profile.name);
-                self.persist_last_project_path(project_ctx.as_ref());
-                self.persist_last_profile_for_project(project_ctx.as_ref(), &profile.name);
+                self.persist_last_project_path(project_ctx.root_path());
+                self.persist_last_profile_for_project(project_ctx.root_path(), &profile.name);
                 self._activate_profile_and_show_window(
                     window_id,
                     profile,
@@ -2078,7 +2050,7 @@ impl MyAppLogic {
         };
 
         match self.profile_manager.save_profile(
-            project_ctx.as_ref(),
+            project_ctx.root_path(),
             &profile_to_save,
             APP_NAME_FOR_PROFILES,
         ) {
@@ -2157,9 +2129,7 @@ impl MyAppLogic {
 
         match pending_action {
             Some(PendingAction::OpeningProjectFolder) => {
-                let ctx = ProjectContext {
-                    root: root_folder_path.clone(),
-                };
+                let ctx = ProjectContext::new(root_folder_path.clone());
 
                 if let Err(e) = fs::create_dir_all(ctx.config_dir()) {
                     app_error!(
@@ -2232,7 +2202,7 @@ impl MyAppLogic {
                 };
 
                 match self.profile_manager.save_profile(
-                    project_ctx.as_ref(),
+                    project_ctx.root_path(),
                     &new_profile_dto,
                     APP_NAME_FOR_PROFILES,
                 ) {
@@ -2241,9 +2211,9 @@ impl MyAppLogic {
                         let operation_status_message =
                             format!("New profile '{}' created and loaded.", new_profile_dto.name);
 
-                        self.persist_last_project_path(project_ctx.as_ref());
+                        self.persist_last_project_path(project_ctx.root_path());
                         self.persist_last_profile_for_project(
-                            project_ctx.as_ref(),
+                            project_ctx.root_path(),
                             &new_profile_dto.name,
                         );
                         self._activate_profile_and_show_window(
@@ -2782,7 +2752,7 @@ impl PlatformEventHandler for MyAppLogic {
         let project_root_on_exit = self
             .active_project
             .as_ref()
-            .map(|ctx| ctx.as_ref().to_path_buf());
+            .map(|ctx| ctx.root_path().to_path_buf());
         let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
         let active_profile_name_opt = profile_runtime_data.get_profile_name();
@@ -2889,7 +2859,7 @@ impl MyAppLogic {
     }
 
     pub(crate) fn test_set_active_project_root<P: Into<PathBuf>>(&mut self, root: P) {
-        self.active_project = Some(ProjectContext { root: root.into() });
+        self.active_project = Some(ProjectContext::new(root.into()));
     }
 
     pub(crate) fn test_clear_active_project(&mut self) {
