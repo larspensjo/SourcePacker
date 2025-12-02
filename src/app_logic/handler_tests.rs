@@ -599,10 +599,9 @@ mod tests {
         fn create_profile_snapshot(&self) -> Profile {
             self.create_profile_snapshot_calls
                 .fetch_add(1, Ordering::Relaxed);
-            let mut profile = Profile::new(
-                self.profile_name.clone().unwrap_or_default(),
-                self.root_path_for_scan.clone(),
-            );
+            let name = ProfileName::new(self.profile_name.clone().unwrap_or_default())
+                .unwrap_or_else(|_| ProfileName::new("Unnamed").unwrap());
+            let mut profile = Profile::new(name, self.root_path_for_scan.clone());
             profile.archive_path = self.archive_path.clone();
             profile.file_details = self.cached_file_token_details.clone();
 
@@ -653,7 +652,7 @@ mod tests {
                 &loaded_profile.exclude_patterns,
             ) {
                 Ok(scanned_nodes) => {
-                    self.profile_name = Some(loaded_profile.name.clone());
+                    self.profile_name = Some(loaded_profile.name.as_str().to_string());
                     self.archive_path = loaded_profile.archive_path.clone();
                     self.root_path_for_scan = loaded_profile.root_folder.clone();
                     self.snapshot_nodes = scanned_nodes; // <<< KEY CHANGE: Populate snapshot_nodes from scanner
@@ -1337,7 +1336,7 @@ mod tests {
         selected_paths_for_profile.insert(mock_file_path.clone());
 
         let mock_loaded_profile_dto = Profile {
-            name: last_profile_name_to_load.to_string(),
+            name: ProfileName::new(last_profile_name_to_load).unwrap(),
             root_folder: startup_project_root.clone(),
             selected_paths: selected_paths_for_profile.clone(),
             deselected_paths: HashSet::new(),
@@ -1624,7 +1623,7 @@ mod tests {
             PathBuf::from(format!("/dummy/profiles/{profile_name}.json"));
 
         let mock_profile_to_load_dto = Profile {
-            name: profile_name.to_string(),
+            name: ProfileName::new(profile_name).unwrap(),
             root_folder: root_folder_for_profile.clone(),
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
@@ -2576,7 +2575,10 @@ mod tests {
             Some(&new_archive_path)
         );
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
-        assert_eq!(profile_mgr.get_save_profile_calls()[0].1.name, profile_name);
+        assert_eq!(
+            profile_mgr.get_save_profile_calls()[0].1.name,
+            ProfileName::new(profile_name).unwrap()
+        );
         assert_eq!(
             profile_mgr.get_save_profile_calls()[0].1.archive_path,
             Some(new_archive_path.clone())
@@ -2704,7 +2706,7 @@ mod tests {
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
         assert_eq!(
             profile_mgr.get_save_profile_calls()[0].1.name,
-            "New Profile Name"
+            ProfileName::new("New Profile Name").unwrap()
         );
         assert_eq!(
             cfg_mgr.save_last_project_path_calls.load(Ordering::Relaxed),
@@ -2750,7 +2752,7 @@ mod tests {
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let mut profile = Profile::new(
-            "ActivatedProfile".to_string(),
+            ProfileName::new("ActivatedProfile").unwrap(),
             PathBuf::from("/root/active"),
         );
         let selected_file_path = profile.root_folder.join("file.txt");

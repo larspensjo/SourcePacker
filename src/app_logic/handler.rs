@@ -2197,6 +2197,17 @@ impl MyAppLogic {
                 log::debug!(
                     "Creating new profile '{profile_name}' with root folder {root_folder_path:?}."
                 );
+                let profile_name = match ProfileName::new(profile_name) {
+                    Ok(pn) => pn,
+                    Err(_) => {
+                        app_error!(
+                            self,
+                            "Invalid profile name. Please use letters, numbers, spaces, underscores, or hyphens."
+                        );
+                        return;
+                    }
+                };
+
                 let new_profile_dto = Profile::new(profile_name.clone(), root_folder_path.clone());
 
                 let Some(project_ctx) = self.require_active_project("create a profile") else {

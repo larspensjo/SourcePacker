@@ -395,7 +395,7 @@ mod profile_tests {
         selected.insert(root.join("src/mock_main.rs"));
 
         let original_profile = Profile {
-            name: profile_name.clone(),
+            name: ProfileName::new(profile_name.clone()).unwrap(),
             root_folder: root.clone(),
             selected_paths: selected.clone(),
             deselected_paths: HashSet::new(),
@@ -426,8 +426,11 @@ mod profile_tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
         let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
-        let profile = Profile::new("My Profile".to_string(), PathBuf::from("/tmp/mock"));
-        let profile_name = ProfileName::new(&profile.name).unwrap();
+        let profile = Profile::new(
+            ProfileName::new("My Profile").unwrap(),
+            PathBuf::from("/tmp/mock"),
+        );
+        let profile_name = profile.name.clone();
         let expected_path = project.resolve_profile_file(&profile_name);
 
         // Act
@@ -452,7 +455,7 @@ mod profile_tests {
         let profile_name = "DirectLoadProfile".to_string();
         let root = PathBuf::from("/direct/load/project");
         let profile_to_save = Profile {
-            name: profile_name.clone(),
+            name: ProfileName::new(profile_name.clone()).unwrap(),
             root_folder: root.clone(),
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
@@ -473,7 +476,7 @@ mod profile_tests {
 
         let loaded_profile = manager.load_profile_from_path(&direct_path)?;
 
-        assert_eq!(loaded_profile.name, profile_name);
+        assert_eq!(loaded_profile.name, ProfileName::new(profile_name).unwrap());
         assert_eq!(loaded_profile.root_folder, root);
         Ok(())
     }
@@ -489,7 +492,10 @@ mod profile_tests {
 
         let profiles_to_create = vec!["Mock Alpha", "Mock_Beta", "Mock-Gamma"];
         for name_str in &profiles_to_create {
-            let p = Profile::new(name_str.to_string(), PathBuf::from("/tmp_mock"));
+            let p = Profile::new(
+                ProfileName::new(name_str.to_string()).unwrap(),
+                PathBuf::from("/tmp_mock"),
+            );
             manager.save_profile(&project, &p, APP_NAME_FOR_TESTS)?;
         }
 
@@ -522,20 +528,8 @@ mod profile_tests {
 
     #[test]
     fn test_invalid_profile_names_save_project_local() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project = ProjectContext::new(temp_dir.path().to_path_buf());
-        let manager = CoreProfileManager::new();
-        let p_empty = Profile::new("".to_string(), PathBuf::from("/tmp_mock"));
-        let p_invalid_char = Profile::new("My/MockProfile".to_string(), PathBuf::from("/tmp_mock"));
-
-        assert!(matches!(
-            manager.save_profile(&project, &p_empty, APP_NAME_FOR_TESTS),
-            Err(ProfileError::InvalidProfileName(_))
-        ));
-        assert!(matches!(
-            manager.save_profile(&project, &p_invalid_char, APP_NAME_FOR_TESTS),
-            Err(ProfileError::InvalidProfileName(_))
-        ));
+        assert!(ProfileName::new("").is_err());
+        assert!(ProfileName::new("My/MockProfile").is_err());
     }
 
     #[test]

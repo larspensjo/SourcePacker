@@ -6,6 +6,7 @@
  * higher layers work with the opaque `ProjectContext` value.
  */
 use crate::core::profiles::sanitize_profile_name;
+use serde::{Deserialize, Deserializer, Serialize, de};
 use std::path::{Component, Path, PathBuf};
 
 pub(super) const PROJECT_CONFIG_DIR_NAME: &str = ".sourcepacker";
@@ -37,6 +38,19 @@ pub enum ProfileNameError {
     Empty,
     InvalidChars(String),
 }
+
+impl std::fmt::Display for ProfileNameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProfileNameError::Empty => write!(f, "Profile name is empty"),
+            ProfileNameError::InvalidChars(s) => {
+                write!(f, "Profile name contains invalid characters: {s}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ProfileNameError {}
 
 impl ProjectContext {
     pub fn new(root: PathBuf) -> Self {
@@ -118,6 +132,31 @@ impl std::fmt::Display for ProfileName {
 impl From<ProfileName> for String {
     fn from(value: ProfileName) -> Self {
         value.inner
+    }
+}
+
+impl AsRef<str> for ProfileName {
+    fn as_ref(&self) -> &str {
+        &self.inner
+    }
+}
+
+impl Serialize for ProfileName {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for ProfileName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        ProfileName::new(s).map_err(de::Error::custom)
     }
 }
 

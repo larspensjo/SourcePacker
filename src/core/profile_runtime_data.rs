@@ -7,7 +7,7 @@
  */
 use crate::core::{
     ContentSearchProgress, ContentSearchResult, FileNode, FileSystemScannerOperations,
-    NodeStateApplicatorOperations, Profile, SelectionState, TokenCounterOperations,
+    NodeStateApplicatorOperations, Profile, ProfileName, SelectionState, TokenCounterOperations,
     file_node::FileTokenDetails,
     token_progress::{TokenProgress, TokenProgressEntry},
 };
@@ -840,8 +840,14 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             &mut file_details_for_save,
         );
 
+        let name = self
+            .profile_name
+            .as_ref()
+            .and_then(|n| ProfileName::new(n.clone()).ok())
+            .unwrap_or_else(|| ProfileName::new("Unnamed").unwrap());
+
         Profile {
-            name: self.profile_name.clone().unwrap_or_default(),
+            name,
             root_folder: self.root_path_for_scan.clone(),
             selected_paths: selected_paths_for_profile,
             deselected_paths: deselected_paths_for_profile,
@@ -869,7 +875,7 @@ impl ProfileRuntimeDataOperations for ProfileRuntimeData {
             "ProfileRuntimeData: Loading profile '{}' into session.",
             loaded_profile.name
         );
-        self.profile_name = Some(loaded_profile.name.clone());
+        self.profile_name = Some(loaded_profile.name.as_str().to_string());
         self.root_path_for_scan = loaded_profile.root_folder.clone();
         self.archive_path = loaded_profile.archive_path.clone();
         self.cached_file_token_details = loaded_profile.file_details.clone(); // Initial copy
@@ -1237,10 +1243,10 @@ mod tests {
 
         // Act
         let mut new_profile = session_data.create_profile_snapshot();
-        new_profile.name = "NewProfile".to_string(); // Simulate renaming on save as
+        new_profile.name = ProfileName::new("NewProfile").unwrap(); // Simulate renaming on save as
 
         // Assert
-        assert_eq!(new_profile.name, "NewProfile");
+        assert_eq!(new_profile.name, ProfileName::new("NewProfile").unwrap());
         assert_eq!(new_profile.root_folder, temp_dir.path().join("new_root"));
         assert!(new_profile.selected_paths.contains(&file1_path));
         assert!(!new_profile.selected_paths.contains(&file2_path));
@@ -1457,7 +1463,7 @@ mod tests {
         );
 
         let mut loaded_profile = Profile {
-            name: profile_name.to_string(),
+            name: ProfileName::new(profile_name).unwrap(),
             root_folder: root_folder.clone(),
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),

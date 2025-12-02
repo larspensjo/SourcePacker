@@ -4,6 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::app_logic::{handler::PathToTreeItemIdMap, ui_constants};
+use crate::core::project_context::ProfileName;
 use crate::platform_layer::{CheckState, TreeItemDescriptor, TreeItemId};
 /*
  * Represents the selection state of a file or folder.
@@ -348,7 +349,7 @@ pub struct FileTokenDetails {
  */
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
-    pub name: String,
+    pub name: ProfileName,
     pub root_folder: PathBuf,
     // Store actual paths for selected/deselected items.
     // This is simpler than trying to persist the state of every node in a tree,
@@ -372,7 +373,7 @@ impl Profile {
      * Initializes with empty selection sets and no specific archive path. The archive path
      * will typically be set later, either by user interaction or when loading a profile.
      */
-    pub fn new(name: String, root_folder: PathBuf) -> Self {
+    pub fn new(name: ProfileName, root_folder: PathBuf) -> Self {
         Profile {
             name,
             root_folder,
@@ -403,6 +404,7 @@ pub enum ArchiveStatus {
 #[cfg(test)]
 mod tests {
     use super::{FileNode, FileTokenDetails, Profile, SelectionState};
+    use crate::core::project_context::ProfileName;
     use crate::platform_layer::{CheckState, TreeItemId};
     use std::collections::{HashMap, HashSet};
     use std::path::{Path, PathBuf}; // Added for ArchiveStatus::ErrorChecking
@@ -422,9 +424,12 @@ mod tests {
     fn test_profile_new_defaults() {
         let profile_name = "TestProfile".to_string();
         let root_path = PathBuf::from("/test/root");
-        let profile = Profile::new(profile_name.clone(), root_path.clone());
+        let profile = Profile::new(
+            ProfileName::new(profile_name.clone()).unwrap(),
+            root_path.clone(),
+        );
 
-        assert_eq!(profile.name, profile_name);
+        assert_eq!(profile.name, ProfileName::new(profile_name).unwrap());
         assert_eq!(profile.root_folder, root_path);
         assert!(profile.selected_paths.is_empty());
         assert!(profile.deselected_paths.is_empty());
@@ -435,7 +440,10 @@ mod tests {
 
     #[test]
     fn test_profile_serialization_with_file_details() {
-        let mut profile = Profile::new("TestProfile".to_string(), PathBuf::from("/test/root"));
+        let mut profile = Profile::new(
+            ProfileName::new("TestProfile").unwrap(),
+            PathBuf::from("/test/root"),
+        );
         profile.file_details.insert(
             PathBuf::from("/test/root/file1.txt"),
             FileTokenDetails {
