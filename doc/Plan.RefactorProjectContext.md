@@ -122,7 +122,7 @@ pub use project_context::ProjectContext;
 
 ---
 
-### Phase 2: Refactor Core Managers (Trusted Consumers)
+### Phase 2: Refactor Core Managers (Trusted Consumers) (COMPLETE)
 
 #### Step 2.1: Update `ProfileManagerOperations` trait
 
@@ -240,7 +240,7 @@ All serialization/deserialization logic continues to operate on `&Path`, but onl
 
 ---
 
-### Phase 3: Refactor Application Logic (Controller)
+### Phase 3: Refactor Application Logic (Controller) (COMPLETE)
 
 #### Step 3.1: Cleanup `handler.rs`
 
@@ -311,7 +311,7 @@ self.active_project = Some(project_ctx);
 
 ---
 
-### Phase 4: Test Suite and Invariant Lock-in
+### Phase 4: Test Suite and Invariant Lock-in (COMPLETE)
 
 #### Step 4.1: New `ProjectContext` unit tests
 
@@ -401,7 +401,7 @@ Add or adapt tests:
 
 ---
 
-### Phase 5: Verification and Manual QA
+### Phase 5: Verification and Manual QA (COMPLETE)
 
 #### Step 5.1: Compilation and code search
 

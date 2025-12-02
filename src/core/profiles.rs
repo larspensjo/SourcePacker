@@ -412,6 +412,28 @@ mod profile_tests {
     }
 
     #[test]
+    fn test_save_profile_uses_project_context_layout() -> Result<()> {
+        // Arrange
+        let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
+        let manager = CoreProfileManager::new();
+        let profile = Profile::new("My Profile".to_string(), PathBuf::from("/tmp/mock"));
+        let expected_path = project.resolve_profile_file(&profile.name);
+
+        // Act
+        manager.save_profile(&project, &profile, APP_NAME_FOR_TESTS)?;
+
+        // Assert
+        assert!(
+            expected_path.exists(),
+            "profile should be written at resolved path"
+        );
+        let loaded = manager.load_profile(&project, &profile.name, APP_NAME_FOR_TESTS)?;
+        assert_eq!(loaded.name, profile.name);
+        Ok(())
+    }
+
+    #[test]
     fn test_load_profile_from_path_project_local() -> Result<()> {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
         let project = ProjectContext::new(temp_dir.path().to_path_buf());

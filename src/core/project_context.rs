@@ -66,3 +66,69 @@ impl ProjectContext {
             .join(format!("{sanitized}.{PROFILE_FILE_EXTENSION}"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolvers_from_simple_root() {
+        // Arrange
+        let root = PathBuf::from(r"C:\project");
+        let ctx = ProjectContext::new(root.clone());
+
+        // Act
+        let config_dir = ctx.resolve_config_dir();
+        let profiles_dir = ctx.resolve_profiles_dir();
+        let last_profile_file = ctx.resolve_last_profile_pointer_file();
+
+        // Assert
+        assert_eq!(config_dir, root.join(PROJECT_CONFIG_DIR_NAME));
+        assert_eq!(
+            profiles_dir,
+            root.join(PROJECT_CONFIG_DIR_NAME)
+                .join(PROFILES_SUBFOLDER_NAME)
+        );
+        assert_eq!(
+            last_profile_file,
+            root.join(PROJECT_CONFIG_DIR_NAME)
+                .join(LAST_PROFILE_FILENAME)
+        );
+    }
+
+    #[test]
+    fn test_resolve_profile_file_uses_sanitization() {
+        // Arrange
+        let root = PathBuf::from(r"C:\project");
+        let ctx = ProjectContext::new(root.clone());
+        let profile_name = "My Profile!";
+
+        // Act
+        let resolved = ctx.resolve_profile_file(profile_name);
+
+        // Assert
+        let expected_file_name = format!(
+            "{}.{}",
+            sanitize_profile_name(profile_name),
+            PROFILE_FILE_EXTENSION
+        );
+        let expected_path = root
+            .join(PROJECT_CONFIG_DIR_NAME)
+            .join(PROFILES_SUBFOLDER_NAME)
+            .join(expected_file_name);
+        assert_eq!(resolved, expected_path);
+    }
+
+    #[test]
+    fn test_display_name_returns_folder_name() {
+        // Arrange
+        let root = PathBuf::from(r"C:\work\my_project");
+        let ctx = ProjectContext::new(root);
+
+        // Act
+        let display = ctx.display_name();
+
+        // Assert
+        assert_eq!(display, "my_project");
+    }
+}
