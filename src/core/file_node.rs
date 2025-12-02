@@ -78,6 +78,7 @@ impl FileNode {
         &self.checksum
     }
 
+    #[allow(dead_code)]
     pub fn new_file_token_details(&self, token_count: usize) -> FileTokenDetails {
         FileTokenDetails {
             checksum: self.checksum.clone(),
@@ -136,6 +137,7 @@ impl FileNode {
         }
     }
 
+    #[allow(dead_code)]
     pub fn checksum_match(&self, file: Option<&FileTokenDetails>) -> bool {
         if let Some(details) = file {
             self.checksum == details.checksum

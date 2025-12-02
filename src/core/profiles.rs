@@ -263,14 +263,12 @@ impl ProfileManagerOperations for CoreProfileManager {
             for entry_result in fs::read_dir(dir)? {
                 let entry = entry_result?;
                 let path = entry.path();
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if ext == PROFILE_FILE_EXTENSION {
-                            if let Some(stem) = path.file_stem() {
-                                profile_names.push(stem.to_string_lossy().into_owned());
-                            }
-                        }
-                    }
+                if path.is_file()
+                    && let Some(ext) = path.extension()
+                    && ext == PROFILE_FILE_EXTENSION
+                    && let Some(stem) = path.file_stem()
+                {
+                    profile_names.push(stem.to_string_lossy().into_owned());
                 }
             }
         }

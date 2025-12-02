@@ -471,10 +471,10 @@ impl MyAppLogic {
     fn cancel_token_recalculation(&mut self) {
         if let Some(mut driver) = self.token_recalc_driver.take() {
             // Drop the receiver first by letting `driver` go out of scope after join.
-            if let Some(handle) = driver.worker_handle.take() {
-                if let Err(err) = handle.join() {
-                    log::warn!("Token worker join failed during cancel: {err:?}");
-                }
+            if let Some(handle) = driver.worker_handle.take()
+                && let Err(err) = handle.join()
+            {
+                log::warn!("Token worker join failed during cancel: {err:?}");
             }
         }
     }
@@ -595,10 +595,10 @@ impl MyAppLogic {
             }
 
             if finished {
-                if let Some(handle) = driver.worker_handle.take() {
-                    if let Err(err) = handle.join() {
-                        log::warn!("Token worker join failed: {err:?}");
-                    }
+                if let Some(handle) = driver.worker_handle.take()
+                    && let Err(err) = handle.join()
+                {
+                    log::warn!("Token worker join failed: {err:?}");
                 }
                 let (total_tokens, total_files) =
                     final_totals.unwrap_or((driver.latest_total_tokens, driver.total_files));
@@ -2786,30 +2786,30 @@ impl PlatformEventHandler for MyAppLogic {
         let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
         let active_profile_name_opt = profile_runtime_data.get_profile_name();
-        if let Some(active_profile_name) = active_profile_name_opt.as_ref() {
-            if !active_profile_name.is_empty() {
-                let profile_to_save = profile_runtime_data.create_profile_snapshot();
-                log::debug!(
-                    "AppLogic: Attempting to save content of active profile '{active_profile_name}' on exit."
-                );
-                if let Some(project_root) = project_root_on_exit.as_ref() {
-                    match self.profile_manager.save_profile(
-                        project_root,
-                        &profile_to_save,
-                        APP_NAME_FOR_PROFILES,
-                    ) {
-                        Ok(_) => log::debug!(
-                            "AppLogic: Successfully saved content of profile '{active_profile_name}' to disk on exit."
-                        ),
-                        Err(e) => log::error!(
-                            "AppLogic: Error saving content of profile '{active_profile_name}' on exit: {e:?}"
-                        ),
-                    }
-                } else {
-                    log::debug!(
-                        "AppLogic: Skipping auto-save for profile '{active_profile_name}' because no project is active."
-                    );
+        if let Some(active_profile_name) = active_profile_name_opt.as_ref()
+            && !active_profile_name.is_empty()
+        {
+            let profile_to_save = profile_runtime_data.create_profile_snapshot();
+            log::debug!(
+                "AppLogic: Attempting to save content of active profile '{active_profile_name}' on exit."
+            );
+            if let Some(project_root) = project_root_on_exit.as_ref() {
+                match self.profile_manager.save_profile(
+                    project_root,
+                    &profile_to_save,
+                    APP_NAME_FOR_PROFILES,
+                ) {
+                    Ok(_) => log::debug!(
+                        "AppLogic: Successfully saved content of profile '{active_profile_name}' to disk on exit."
+                    ),
+                    Err(e) => log::error!(
+                        "AppLogic: Error saving content of profile '{active_profile_name}' on exit: {e:?}"
+                    ),
                 }
+            } else {
+                log::debug!(
+                    "AppLogic: Skipping auto-save for profile '{active_profile_name}' because no project is active."
+                );
             }
         }
 

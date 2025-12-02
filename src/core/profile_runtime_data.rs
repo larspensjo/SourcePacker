@@ -207,15 +207,16 @@ impl ProfileRuntimeData {
      * Asserts that node.checksum is Some, as this function is only valid in that context.
      * Returns None if the file cannot be read.
      */
+    #[allow(dead_code)]
     fn get_token_count_with_cache(
         token_counter_service: &dyn TokenCounterOperations,
         node: &FileNode,
         cache: &mut HashMap<PathBuf, FileTokenDetails>,
     ) -> Option<usize> {
-        if let Some(details) = cache.get(node.path()) {
-            if node.checksum_match(Some(details)) {
-                return Some(details.token_count);
-            }
+        if let Some(details) = cache.get(node.path())
+            && node.checksum_match(Some(details))
+        {
+            return Some(details.token_count);
         }
 
         let content = match fs::read_to_string(node.path()) {
@@ -246,12 +247,12 @@ impl ProfileRuntimeData {
             if node.path() == path_to_find {
                 return Some(node);
             }
-            if node.is_dir() && !node.children.is_empty() {
-                if let Some(found_in_child) =
+            if node.is_dir()
+                && !node.children.is_empty()
+                && let Some(found_in_child) =
                     Self::find_node_recursive_ref(&node.children, path_to_find)
-                {
-                    return Some(found_in_child);
-                }
+            {
+                return Some(found_in_child);
             }
         }
         None
@@ -266,12 +267,12 @@ impl ProfileRuntimeData {
             if node.path() == path_to_find {
                 return Some(node);
             }
-            if node.is_dir() && !node.children.is_empty() {
-                if let Some(found_in_child) =
+            if node.is_dir()
+                && !node.children.is_empty()
+                && let Some(found_in_child) =
                     Self::find_node_recursive_mut(&mut node.children, path_to_find)
-                {
-                    return Some(found_in_child);
-                }
+            {
+                return Some(found_in_child);
             }
         }
         None

@@ -225,28 +225,31 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         // Tree reconstruction logic:
         // Iterate backwards to build from leaves up to direct children of root_path.
         for child_path_ref in entry_paths_in_discovery_order.iter().rev() {
-            if let Some(parent_path) = child_path_ref.parent() {
-                // We only want to add children to parents that are *also* part of the scan
-                // (i.e., not the root_path itself, which acts as the implicit parent of top-level nodes).
-                if parent_path != root_path {
-                    if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
-                        if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
-                            parent_node_mut.children.push(child_node_owned);
-                        } else {
-                            // This case implies the parent_path was ignored or not part of the scan results.
-                            // The child_node_owned was not ignored, so it becomes a top-level node.
-                            // This can happen if a .gitignore rule ignores a directory but un-ignores a file within it.
-                            // e.g., `ignored_dir/` and `!ignored_dir/important_file.txt`
-                            // In such a scenario, important_file.txt might appear without its explicit parent
-                            // if `ignored_dir` itself is not yielded by the walker.
-                            // However, `ignore` crate usually yields directories if they contain non-ignored content.
-                            // So, we re-insert it into nodes_map to be collected as a top-level node.
-                            log::error!(
-                                "FileSystemScanner: Parent {parent_path:?} not found in map for child {child_path_ref:?}. Re-inserting child as potential top-level."
-                            );
-                            nodes_map.insert(child_path_ref.clone(), child_node_owned);
-                        }
-                    }
+            let Some(parent_path) = child_path_ref.parent() else {
+                continue;
+            };
+            // We only want to add children to parents that are *also* part of the scan
+            // (i.e., not the root_path itself, which acts as the implicit parent of top-level nodes).
+            if parent_path == root_path {
+                continue;
+            }
+
+            if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
+                if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
+                    parent_node_mut.children.push(child_node_owned);
+                } else {
+                    // This case implies the parent_path was ignored or not part of the scan results.
+                    // The child_node_owned was not ignored, so it becomes a top-level node.
+                    // This can happen if a .gitignore rule ignores a directory but un-ignores a file within it.
+                    // e.g., `ignored_dir/` and `!ignored_dir/important_file.txt`
+                    // In such a scenario, important_file.txt might appear without its explicit parent
+                    // if `ignored_dir` itself is not yielded by the walker.
+                    // However, `ignore` crate usually yields directories if they contain non-ignored content.
+                    // So, we re-insert it into nodes_map to be collected as a top-level node.
+                    log::error!(
+                        "FileSystemScanner: Parent {parent_path:?} not found in map for child {child_path_ref:?}. Re-inserting child as potential top-level."
+                    );
+                    nodes_map.insert(child_path_ref.clone(), child_node_owned);
                 }
             }
         }
