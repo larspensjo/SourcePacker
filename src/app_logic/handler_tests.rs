@@ -7,8 +7,9 @@ mod tests {
         ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
         ContentSearchProgress, ContentSearchResult, FileNode, FileSystemError,
         FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileError,
-        ProfileManagerOperations, ProfileRuntimeDataOperations, ProjectContext, SelectionState,
-        TokenCounterOperations, TokenProgress, TokenProgressChannel, file_node::FileTokenDetails,
+        ProfileManagerOperations, ProfileName, ProfileRuntimeDataOperations, ProjectContext,
+        SelectionState, TokenCounterOperations, TokenProgress, TokenProgressChannel,
+        file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
         AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
@@ -871,18 +872,20 @@ mod tests {
         fn load_profile(
             &self,
             project: &ProjectContext,
-            profile_name: &str,
+            profile_name: &ProfileName,
             _app_name: &str,
         ) -> Result<Profile, ProfileError> {
-            self.load_profile_calls
-                .lock()
-                .unwrap()
-                .push((project.root_path().to_path_buf(), profile_name.to_string()));
+            self.load_profile_calls.lock().unwrap().push((
+                project.root_path().to_path_buf(),
+                profile_name.as_str().to_string(),
+            ));
             let map = self.load_profile_results.lock().unwrap();
-            match map.get(profile_name) {
+            match map.get(profile_name.as_str()) {
                 Some(Ok(profile)) => Ok(profile.clone()),
                 Some(Err(e)) => Err(clone_profile_error(e)),
-                None => Err(ProfileError::ProfileNotFound(profile_name.to_string())),
+                None => Err(ProfileError::ProfileNotFound(
+                    profile_name.as_str().to_string(),
+                )),
             }
         }
         fn load_profile_from_path(&self, path: &Path) -> Result<Profile, ProfileError> {
@@ -919,13 +922,16 @@ mod tests {
             &self,
             project: &ProjectContext,
             _app_name: &str,
-        ) -> Result<Vec<String>, ProfileError> {
+        ) -> Result<Vec<ProfileName>, ProfileError> {
             self.list_profiles_calls
                 .lock()
                 .unwrap()
                 .push(project.root_path().to_path_buf());
             match *self.list_profiles_result.lock().unwrap() {
-                Ok(ref names) => Ok(names.clone()),
+                Ok(ref names) => Ok(names
+                    .iter()
+                    .filter_map(|s| ProfileName::new(s).ok())
+                    .collect()),
                 Err(ref e) => Err(clone_profile_error(e)),
             }
         }
@@ -943,24 +949,27 @@ mod tests {
         fn save_last_profile_name_for_project(
             &self,
             project: &ProjectContext,
-            profile_name: &str,
+            profile_name: &ProfileName,
         ) -> Result<(), ProfileError> {
             self.save_last_profile_name_for_project_calls
                 .lock()
                 .unwrap()
-                .push((project.root_path().to_path_buf(), profile_name.to_string()));
+                .push((
+                    project.root_path().to_path_buf(),
+                    profile_name.as_str().to_string(),
+                ));
             Ok(())
         }
         fn load_last_profile_name_for_project(
             &self,
             _project: &ProjectContext,
-        ) -> Result<Option<String>, ProfileError> {
+        ) -> Result<Option<ProfileName>, ProfileError> {
             let guard = self
                 .load_last_profile_name_for_project_result
                 .lock()
                 .unwrap();
             match guard.as_ref() {
-                Ok(v) => Ok(v.clone()),
+                Ok(v) => Ok(v.clone().and_then(|s| ProfileName::new(&s).ok())),
                 Err(e) => Err(clone_profile_error(e)),
             }
         }

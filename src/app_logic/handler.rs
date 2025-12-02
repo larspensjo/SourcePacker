@@ -1,8 +1,8 @@
 use crate::core::{
     self, ArchiveStatus, ArchiverOperations, ConfigManagerOperations, ContentSearchProgress,
     FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileManagerOperations,
-    ProfileRuntimeDataOperations, ProjectContext, SelectionState, TokenCounterOperations,
-    TokenProgress, TokenProgressChannel,
+    ProfileName, ProfileRuntimeDataOperations, ProjectContext, SelectionState,
+    TokenCounterOperations, TokenProgress, TokenProgressChannel,
 };
 use crate::platform_layer::{
     AppEvent, CheckState, Color, ControlStyle, FontDescription, FontWeight, MessageSeverity,
@@ -178,7 +178,11 @@ impl MyAppLogic {
         }
     }
 
-    fn persist_last_profile_for_project(&self, project: &ProjectContext, profile_name: &str) {
+    fn persist_last_profile_for_project(
+        &self,
+        project: &ProjectContext,
+        profile_name: &ProfileName,
+    ) {
         if let Err(e) = self
             .profile_manager
             .save_last_profile_name_for_project(project, profile_name)
@@ -257,8 +261,8 @@ impl MyAppLogic {
             .profile_manager
             .load_last_profile_name_for_project(project_ctx)
         {
-            Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
-                log::debug!("Found last used profile for project: {last_profile_name}");
+            Ok(Some(last_profile_name)) => {
+                log::debug!("Found last used profile for project: {}", last_profile_name);
                 match self.profile_manager.load_profile(
                     project_ctx,
                     &last_profile_name,
@@ -282,7 +286,7 @@ impl MyAppLogic {
                         app_error!(
                             self,
                             "Failed to load last profile '{}': {:?}. Initiating selection.",
-                            last_profile_name,
+                            last_profile_name.as_str(),
                             e
                         );
                         self.initiate_profile_selection_or_creation(window_id);
@@ -1302,7 +1306,9 @@ impl MyAppLogic {
                 );
 
                 self.persist_last_project_path(&project_ctx);
-                self.persist_last_profile_for_project(&project_ctx, &profile_name_clone);
+                if let Ok(pn) = ProfileName::new(&profile_name_clone) {
+                    self.persist_last_profile_for_project(&project_ctx, &pn);
+                }
                 let status_msg = format!("Profile '{profile_name_clone}' loaded and scanned.");
                 self._activate_profile_and_show_window(window_id, loaded_profile, status_msg);
             }
@@ -1553,7 +1559,9 @@ impl MyAppLogic {
         } else {
             // Only update persisted references if save was successful
             self.persist_last_project_path(&project_ctx);
-            self.persist_last_profile_for_project(&project_ctx, &profile.name);
+            if let Ok(pn) = ProfileName::new(&profile.name) {
+                self.persist_last_profile_for_project(&project_ctx, &pn);
+            }
         }
         // These UI updates happen regardless of save success in current logic.
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1696,7 +1704,9 @@ impl MyAppLogic {
 
         if let Some(project_ctx) = self.active_project.as_ref() {
             self.persist_last_project_path(project_ctx);
-            self.persist_last_profile_for_project(project_ctx, &profile_name_for_persist);
+            if let Ok(pn) = ProfileName::new(&profile_name_for_persist) {
+                self.persist_last_profile_for_project(project_ctx, &pn);
+            }
         }
 
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1737,7 +1747,11 @@ impl MyAppLogic {
             .profile_manager
             .list_profiles(&project_ctx, APP_NAME_FOR_PROFILES)
         {
-            Ok(available_profiles) => {
+            Ok(profile_names) => {
+                let available_profiles: Vec<String> = profile_names
+                    .iter()
+                    .map(|p| p.as_str().to_string())
+                    .collect();
                 let (title, prompt) = if available_profiles.is_empty() {
                     (
                         "Welcome to SourcePacker!".to_string(),
@@ -1830,7 +1844,18 @@ impl MyAppLogic {
         }
 
         let profile_name_to_load = match chosen_profile_name {
-            Some(name) => name,
+            Some(name) => match ProfileName::new(&name) {
+                Ok(pn) => pn,
+                Err(_) => {
+                    app_error!(
+                        self,
+                        "Invalid profile name '{}'. Please choose a different name.",
+                        name
+                    );
+                    self.initiate_profile_selection_or_creation(window_id);
+                    return;
+                }
+            },
             None => {
                 app_warn!(
                     self,
@@ -1851,7 +1876,9 @@ impl MyAppLogic {
                 log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                 let operation_status_message = format!("Profile '{}' loaded.", profile.name);
                 self.persist_last_project_path(&project_ctx);
-                self.persist_last_profile_for_project(&project_ctx, &profile.name);
+                if let Ok(pn) = ProfileName::new(&profile.name) {
+                    self.persist_last_profile_for_project(&project_ctx, &pn);
+                }
                 self._activate_profile_and_show_window(
                     window_id,
                     profile,
@@ -2187,7 +2214,9 @@ impl MyAppLogic {
                             format!("New profile '{}' created and loaded.", new_profile_dto.name);
 
                         self.persist_last_project_path(&project_ctx);
-                        self.persist_last_profile_for_project(&project_ctx, &new_profile_dto.name);
+                        if let Ok(pn) = ProfileName::new(&new_profile_dto.name) {
+                            self.persist_last_profile_for_project(&project_ctx, &pn);
+                        }
                         self._activate_profile_and_show_window(
                             window_id,
                             new_profile_dto,
@@ -2757,7 +2786,9 @@ impl PlatformEventHandler for MyAppLogic {
         if let Some(project_ctx) = project_ctx_on_exit.as_ref() {
             self.persist_last_project_path(project_ctx);
             if let Some(profile_name) = active_profile_name_opt.as_ref() {
-                self.persist_last_profile_for_project(project_ctx, profile_name);
+                if let Ok(pn) = ProfileName::new(profile_name) {
+                    self.persist_last_profile_for_project(project_ctx, &pn);
+                }
             }
         } else if let Err(e) = self
             .config_manager

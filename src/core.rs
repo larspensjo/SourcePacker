@@ -36,6 +36,8 @@ pub use profiles::{CoreProfileManager, ProfileManagerOperations};
 pub use profiles::ProfileError;
 
 pub use project_context::ProjectContext;
+#[allow(unused_imports)]
+pub use project_context::{ProfileName, ProjectRelativePath};
 
 // Re-export archiver related items
 pub use archiver::{ArchiverOperations, CoreArchiver};
