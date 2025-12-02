@@ -44,19 +44,6 @@ impl ProjectContext {
         &self.root
     }
 
-    // Legacy helpers maintained while the refactor is rolled out.
-    pub(crate) fn config_dir(&self) -> PathBuf {
-        self.root.join(PROJECT_CONFIG_DIR_NAME)
-    }
-
-    pub(crate) fn profile_dir(&self) -> PathBuf {
-        self.config_dir().join(PROFILES_SUBFOLDER_NAME)
-    }
-
-    pub(crate) fn last_profile_file(&self) -> PathBuf {
-        self.config_dir().join(LAST_PROFILE_FILENAME)
-    }
-
     pub(super) fn resolve_root_for_serialization(&self) -> &Path {
         &self.root
     }

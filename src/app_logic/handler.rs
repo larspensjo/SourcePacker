@@ -2130,32 +2130,7 @@ impl MyAppLogic {
         match pending_action {
             Some(PendingAction::OpeningProjectFolder) => {
                 let ctx = ProjectContext::new(root_folder_path.clone());
-
-                if let Err(e) = fs::create_dir_all(ctx.config_dir()) {
-                    app_error!(
-                        self,
-                        "Failed to create project config directory {:?}: {:?}",
-                        ctx.config_dir(),
-                        e
-                    );
-                    return;
-                }
-                if let Err(e) = fs::create_dir_all(ctx.profile_dir()) {
-                    app_error!(
-                        self,
-                        "Failed to create project profiles directory {:?}: {:?}",
-                        ctx.profile_dir(),
-                        e
-                    );
-                    return;
-                }
-                let last_profile_file_exists = ctx.last_profile_file().exists();
-                log::debug!(
-                    "Opened project config dir {:?}; profiles dir {:?}; last_profile exists: {}",
-                    ctx.config_dir(),
-                    ctx.profile_dir(),
-                    last_profile_file_exists
-                );
+                log::debug!("Opened project folder: {:?}", ctx.display_name());
 
                 self.persist_last_project_path(&ctx);
                 self.active_project = Some(ctx);
