@@ -1,4 +1,9 @@
-use super::{file_node::FileNode, project_context::PROJECT_CONFIG_DIR_NAME};
+use super::{
+    file_node::FileNode,
+    project_context::{
+        PROJECT_CONFIG_DIR_NAME, ProjectContext, ProjectRelativePath, ProjectRelativePathError,
+    },
+};
 use crate::core::checksum_utils;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use std::collections::HashMap;
@@ -121,6 +126,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         if !root_path.is_dir() {
             return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
         }
+        let project_ctx = ProjectContext::new(root_path.to_path_buf());
         log::debug!(
             "FileSystemScanner: Scanning directory {root_path:?}, respecting local .gitignore files."
         );
@@ -187,6 +193,15 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             }
 
             let path = entry.path().to_path_buf();
+
+            // Enforce that entries stay under the root; skip anything outside.
+            if validate_under_root(&project_ctx, &path).is_none() {
+                log::warn!(
+                    "FileSystemScanner: Skipping path outside project root: {:?}",
+                    path
+                );
+                continue;
+            }
 
             if is_internal_config_path(root_path, &path) {
                 log::trace!(
@@ -265,6 +280,28 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
     }
 }
 
+fn validate_under_root(project: &ProjectContext, abs_path: &Path) -> Option<ProjectRelativePath> {
+    match ProjectRelativePath::try_from_absolute(project, abs_path) {
+        Ok(rel) => Some(rel),
+        Err(ProjectRelativePathError::OutsideRoot(p)) => {
+            log::warn!(
+                "Path {:?} is outside project root {:?}",
+                p,
+                project.root_path()
+            );
+            None
+        }
+        Err(ProjectRelativePathError::NotRelative(p)) => {
+            log::warn!(
+                "Path {:?} is not relative to project root {:?}",
+                p,
+                project.root_path()
+            );
+            None
+        }
+    }
+}
+
 fn sort_file_nodes_recursively(nodes: &mut [FileNode]) {
     nodes.sort_by(|a, b| {
         if a.is_dir() && !b.is_dir() {
@@ -304,7 +341,7 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     fn setup_test_dir(base_path: &Path) -> io::Result<()> {
@@ -368,6 +405,13 @@ mod tests {
         // .gitignore in data/
         create_gitignore(base_path.join("data").as_path(), "sensitive/\n")?;
         Ok(())
+    }
+
+    #[test]
+    fn validate_under_root_rejects_outside_paths() {
+        let project = ProjectContext::new(PathBuf::from("/root/project"));
+        let outside = PathBuf::from("/root/other/file.txt");
+        assert!(validate_under_root(&project, &outside).is_none());
     }
 
     #[test]
