@@ -11,9 +11,10 @@
  * now utilizing a shared path utility for determining the base configuration directory.
  */
 use crate::core::path_utils; // Import the new path_utils module
+use crate::core::project_context::ProjectContext;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const LAST_PROJECT_PATH_FILENAME: &str = "last_project_path.txt";
 
@@ -62,7 +63,11 @@ pub type Result<T> = std::result::Result<T, ConfigError>;
 
 pub trait ConfigManagerOperations: Send + Sync {
     fn load_last_project_path(&self, app_name: &str) -> Result<Option<PathBuf>>;
-    fn save_last_project_path(&self, app_name: &str, project_path: Option<&Path>) -> Result<()>;
+    fn save_last_project_path(
+        &self,
+        app_name: &str,
+        project: Option<&ProjectContext>,
+    ) -> Result<()>;
 }
 
 pub struct CoreConfigManager {}
@@ -123,24 +128,29 @@ impl ConfigManagerOperations for CoreConfigManager {
      * `last_project_path.txt` within that directory. Passing `None` clears the
      * stored value.
      */
-    fn save_last_project_path(&self, app_name: &str, project_path: Option<&Path>) -> Result<()> {
+    fn save_last_project_path(
+        &self,
+        app_name: &str,
+        project: Option<&ProjectContext>,
+    ) -> Result<()> {
         log::trace!(
             "CoreConfigManager: Saving last project path '{:?}' for app '{app_name}'",
-            project_path
+            project.as_ref().map(|p| p.resolve_root_for_serialization())
         );
         let config_dir = path_utils::get_base_app_config_local_dir(app_name)
             .ok_or(ConfigError::NoProjectDirectory)?;
         let file_path = config_dir.join(LAST_PROJECT_PATH_FILENAME);
 
         let mut file = File::create(&file_path)?;
-        if let Some(path) = project_path {
+        if let Some(project_ctx) = project {
+            let path = project_ctx.resolve_root_for_serialization();
             file.write_all(path.to_string_lossy().as_bytes())?;
         } else {
             file.write_all(b"")?;
         }
         log::debug!(
             "CoreConfigManager: Saved last project path '{:?}' to {file_path:?}.",
-            project_path
+            project.map(|p| p.resolve_root_for_serialization())
         );
         Ok(())
     }
@@ -202,7 +212,7 @@ mod tests {
         fn save_last_project_path(
             &self,
             app_name: &str,
-            project_path: Option<&Path>,
+            project: Option<&ProjectContext>,
         ) -> Result<()> {
             let config_dir = self
                 .get_mock_app_config_dir(app_name) // Use the test version
@@ -210,7 +220,8 @@ mod tests {
             let file_path = config_dir.join(LAST_PROJECT_PATH_FILENAME);
 
             let mut file = File::create(file_path)?;
-            if let Some(path) = project_path {
+            if let Some(project_ctx) = project {
+                let path = project_ctx.resolve_root_for_serialization();
                 file.write_all(path.to_string_lossy().as_bytes())?;
             } else {
                 file.write_all(b"")?;
@@ -225,6 +236,7 @@ mod tests {
         let unique_app_name = format!("TestApp_CoreConfig_{}", rand::random::<u64>());
         let manager = CoreConfigManager::new();
         let project_path = PathBuf::from(format!(r"C:\\tmp\\{}", unique_app_name));
+        let project_ctx = ProjectContext::new(project_path.clone());
 
         // Ensure the directory does not exist before save (relying on path_utils to create it)
         if let Some(base_dir) = path_utils::get_base_app_config_local_dir(&unique_app_name) {
@@ -239,7 +251,7 @@ mod tests {
         // Act & Assert Save
         assert!(
             manager
-                .save_last_project_path(&unique_app_name, Some(&project_path))
+                .save_last_project_path(&unique_app_name, Some(&project_ctx))
                 .is_ok(),
             "Saving last project path should succeed."
         );
@@ -285,12 +297,13 @@ mod tests {
         let mock_dir_path = dir.path().to_path_buf();
         let manager = TestConfigManager::new(mock_dir_path);
         let project_path = PathBuf::from("/tmp/project_path");
+        let project_ctx = ProjectContext::new(project_path.clone());
         let app_name = "AnyApp";
 
         // Act & Assert Save
         assert!(
             manager
-                .save_last_project_path(app_name, Some(project_path.as_path()))
+                .save_last_project_path(app_name, Some(&project_ctx))
                 .is_ok()
         );
 
@@ -346,17 +359,19 @@ mod tests {
         let app_name = "AnyApp";
         let first_project_path = PathBuf::from("/tmp/project_one");
         let second_project_path = PathBuf::from("/tmp/project_two");
+        let first_ctx = ProjectContext::new(first_project_path.clone());
+        let second_ctx = ProjectContext::new(second_project_path.clone());
 
         // Act & Assert First Save/Load
         manager
-            .save_last_project_path(app_name, Some(first_project_path.as_path()))
+            .save_last_project_path(app_name, Some(&first_ctx))
             .unwrap();
         let loaded_path1 = manager.load_last_project_path(app_name).unwrap().unwrap();
         assert_eq!(loaded_path1, first_project_path);
 
         // Act & Assert Second Save/Load (Overwrite)
         manager
-            .save_last_project_path(app_name, Some(second_project_path.as_path()))
+            .save_last_project_path(app_name, Some(&second_ctx))
             .unwrap();
         let loaded_path2 = manager.load_last_project_path(app_name).unwrap().unwrap();
         assert_eq!(loaded_path2, second_project_path);

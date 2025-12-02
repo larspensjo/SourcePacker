@@ -7,7 +7,7 @@ mod tests {
         ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
         ContentSearchProgress, ContentSearchResult, FileNode, FileSystemError,
         FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileError,
-        ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
+        ProfileManagerOperations, ProfileRuntimeDataOperations, ProjectContext, SelectionState,
         TokenCounterOperations, TokenProgress, TokenProgressChannel, file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
@@ -762,12 +762,14 @@ mod tests {
         fn save_last_project_path(
             &self,
             app_name: &str,
-            project_path: Option<&Path>,
+            project: Option<&ProjectContext>,
         ) -> Result<(), ConfigError> {
             self.save_last_project_path_calls
                 .fetch_add(1, Ordering::Relaxed);
-            *self.saved_project_path.lock().unwrap() =
-                Some((app_name.to_string(), project_path.map(|p| p.to_path_buf())));
+            *self.saved_project_path.lock().unwrap() = Some((
+                app_name.to_string(),
+                project.map(|p| p.root_path().to_path_buf()),
+            ));
             Ok(())
         }
     }
@@ -868,14 +870,14 @@ mod tests {
     impl ProfileManagerOperations for MockProfileManager {
         fn load_profile(
             &self,
-            project_root: &Path,
+            project: &ProjectContext,
             profile_name: &str,
             _app_name: &str,
         ) -> Result<Profile, ProfileError> {
             self.load_profile_calls
                 .lock()
                 .unwrap()
-                .push((project_root.to_path_buf(), profile_name.to_string()));
+                .push((project.root_path().to_path_buf(), profile_name.to_string()));
             let map = self.load_profile_results.lock().unwrap();
             match map.get(profile_name) {
                 Some(Ok(profile)) => Ok(profile.clone()),
@@ -896,7 +898,7 @@ mod tests {
         }
         fn save_profile(
             &self,
-            project_root: &Path,
+            project: &ProjectContext,
             profile: &Profile,
             app_name: &str,
         ) -> Result<(), ProfileError> {
@@ -906,7 +908,7 @@ mod tests {
             };
             if result_to_return.is_ok() {
                 self.save_profile_calls.lock().unwrap().push((
-                    project_root.to_path_buf(),
+                    project.root_path().to_path_buf(),
                     profile.clone(),
                     app_name.to_string(),
                 ));
@@ -915,39 +917,43 @@ mod tests {
         }
         fn list_profiles(
             &self,
-            project_root: &Path,
+            project: &ProjectContext,
             _app_name: &str,
         ) -> Result<Vec<String>, ProfileError> {
             self.list_profiles_calls
                 .lock()
                 .unwrap()
-                .push(project_root.to_path_buf());
+                .push(project.root_path().to_path_buf());
             match *self.list_profiles_result.lock().unwrap() {
                 Ok(ref names) => Ok(names.clone()),
                 Err(ref e) => Err(clone_profile_error(e)),
             }
         }
-        fn get_profile_dir_path(&self, project_root: &Path, _app_name: &str) -> Option<PathBuf> {
+        fn get_profile_dir_path(
+            &self,
+            project: &ProjectContext,
+            _app_name: &str,
+        ) -> Option<PathBuf> {
             self.profile_dir_path_calls
                 .lock()
                 .unwrap()
-                .push(project_root.to_path_buf());
+                .push(project.root_path().to_path_buf());
             self.get_profile_dir_path_result.lock().unwrap().clone()
         }
         fn save_last_profile_name_for_project(
             &self,
-            project_root: &Path,
+            project: &ProjectContext,
             profile_name: &str,
         ) -> Result<(), ProfileError> {
             self.save_last_profile_name_for_project_calls
                 .lock()
                 .unwrap()
-                .push((project_root.to_path_buf(), profile_name.to_string()));
+                .push((project.root_path().to_path_buf(), profile_name.to_string()));
             Ok(())
         }
         fn load_last_profile_name_for_project(
             &self,
-            _project_root: &Path,
+            _project: &ProjectContext,
         ) -> Result<Option<String>, ProfileError> {
             let guard = self
                 .load_last_profile_name_for_project_result

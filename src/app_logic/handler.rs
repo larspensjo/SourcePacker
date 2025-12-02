@@ -165,28 +165,28 @@ impl MyAppLogic {
             });
     }
 
-    fn persist_last_project_path(&self, project_root: &Path) {
+    fn persist_last_project_path(&self, project: &ProjectContext) {
         if let Err(e) = self
             .config_manager
-            .save_last_project_path(APP_NAME_FOR_PROFILES, Some(project_root))
+            .save_last_project_path(APP_NAME_FOR_PROFILES, Some(project))
         {
             log::warn!(
                 "AppLogic: Failed to persist last project path {:?}: {:?}",
-                project_root,
+                project.root_path(),
                 e
             );
         }
     }
 
-    fn persist_last_profile_for_project(&self, project_root: &Path, profile_name: &str) {
+    fn persist_last_profile_for_project(&self, project: &ProjectContext, profile_name: &str) {
         if let Err(e) = self
             .profile_manager
-            .save_last_profile_name_for_project(project_root, profile_name)
+            .save_last_profile_name_for_project(project, profile_name)
         {
             log::warn!(
                 "AppLogic: Failed to persist last profile '{}' for project {:?}: {:?}",
                 profile_name,
-                project_root,
+                project.root_path(),
                 e
             );
         }
@@ -248,15 +248,19 @@ impl MyAppLogic {
         };
 
         self.active_project = Some(ProjectContext::new(project_root.clone()));
+        let project_ctx = self
+            .active_project
+            .as_ref()
+            .expect("active_project just set should be Some");
 
         match self
             .profile_manager
-            .load_last_profile_name_for_project(&project_root)
+            .load_last_profile_name_for_project(project_ctx)
         {
             Ok(Some(last_profile_name)) if !last_profile_name.is_empty() => {
                 log::debug!("Found last used profile for project: {last_profile_name}");
                 match self.profile_manager.load_profile(
-                    &project_root,
+                    project_ctx,
                     &last_profile_name,
                     APP_NAME_FOR_PROFILES,
                 ) {
@@ -1297,8 +1301,8 @@ impl MyAppLogic {
                     "Successfully loaded profile '{profile_name_clone}' via manager from path."
                 );
 
-                self.persist_last_project_path(project_ctx.root_path());
-                self.persist_last_profile_for_project(project_ctx.root_path(), &profile_name_clone);
+                self.persist_last_project_path(&project_ctx);
+                self.persist_last_profile_for_project(&project_ctx, &profile_name_clone);
                 let status_msg = format!("Profile '{profile_name_clone}' loaded and scanned.");
                 self._activate_profile_and_show_window(window_id, loaded_profile, status_msg);
             }
@@ -1337,7 +1341,7 @@ impl MyAppLogic {
 
         let profile_dir_opt = self
             .profile_manager
-            .get_profile_dir_path(project_ctx.root_path(), APP_NAME_FOR_PROFILES);
+            .get_profile_dir_path(&project_ctx, APP_NAME_FOR_PROFILES);
         let base_name = self
             .app_session_data_ops
             .lock()
@@ -1453,7 +1457,7 @@ impl MyAppLogic {
         };
 
         match self.profile_manager.save_profile(
-            project_ctx.root_path(),
+            &project_ctx,
             &profile_to_save,
             APP_NAME_FOR_PROFILES,
         ) {
@@ -1534,11 +1538,10 @@ impl MyAppLogic {
         let Some(project_ctx) = self.require_active_project("save the profile") else {
             return;
         };
-        if let Err(e) = self.profile_manager.save_profile(
-            project_ctx.root_path(),
-            &profile,
-            APP_NAME_FOR_PROFILES,
-        ) {
+        if let Err(e) =
+            self.profile_manager
+                .save_profile(&project_ctx, &profile, APP_NAME_FOR_PROFILES)
+        {
             app_error!(
                 self,
                 "Failed to save profile '{}' in 'Save Profile As': {}",
@@ -1549,8 +1552,8 @@ impl MyAppLogic {
             // Current logic does not. For now, matching existing behavior.
         } else {
             // Only update persisted references if save was successful
-            self.persist_last_project_path(project_ctx.root_path());
-            self.persist_last_profile_for_project(project_ctx.root_path(), &profile.name);
+            self.persist_last_project_path(&project_ctx);
+            self.persist_last_profile_for_project(&project_ctx, &profile.name);
         }
         // These UI updates happen regardless of save success in current logic.
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1692,11 +1695,8 @@ impl MyAppLogic {
         };
 
         if let Some(project_ctx) = self.active_project.as_ref() {
-            self.persist_last_project_path(project_ctx.root_path());
-            self.persist_last_profile_for_project(
-                project_ctx.root_path(),
-                &profile_name_for_persist,
-            );
+            self.persist_last_project_path(project_ctx);
+            self.persist_last_profile_for_project(project_ctx, &profile_name_for_persist);
         }
 
         self._update_window_title_with_profile_and_archive(window_id);
@@ -1735,7 +1735,7 @@ impl MyAppLogic {
 
         match self
             .profile_manager
-            .list_profiles(project_ctx.root_path(), APP_NAME_FOR_PROFILES)
+            .list_profiles(&project_ctx, APP_NAME_FOR_PROFILES)
         {
             Ok(available_profiles) => {
                 let (title, prompt) = if available_profiles.is_empty() {
@@ -1843,15 +1843,15 @@ impl MyAppLogic {
 
         log::debug!("User chose profile '{profile_name_to_load}'. Attempting to load.");
         match self.profile_manager.load_profile(
-            project_ctx.root_path(),
+            &project_ctx,
             &profile_name_to_load,
             APP_NAME_FOR_PROFILES,
         ) {
             Ok(profile) => {
                 log::debug!("Successfully loaded chosen profile '{}'.", profile.name);
                 let operation_status_message = format!("Profile '{}' loaded.", profile.name);
-                self.persist_last_project_path(project_ctx.root_path());
-                self.persist_last_profile_for_project(project_ctx.root_path(), &profile.name);
+                self.persist_last_project_path(&project_ctx);
+                self.persist_last_profile_for_project(&project_ctx, &profile.name);
                 self._activate_profile_and_show_window(
                     window_id,
                     profile,
@@ -2050,7 +2050,7 @@ impl MyAppLogic {
         };
 
         match self.profile_manager.save_profile(
-            project_ctx.root_path(),
+            &project_ctx,
             &profile_to_save,
             APP_NAME_FOR_PROFILES,
         ) {
@@ -2157,8 +2157,8 @@ impl MyAppLogic {
                     last_profile_file_exists
                 );
 
+                self.persist_last_project_path(&ctx);
                 self.active_project = Some(ctx);
-                self.persist_last_project_path(&root_folder_path);
 
                 // Cancel any ongoing asynchronous work
                 self.cancel_token_recalculation();
@@ -2202,7 +2202,7 @@ impl MyAppLogic {
                 };
 
                 match self.profile_manager.save_profile(
-                    project_ctx.root_path(),
+                    &project_ctx,
                     &new_profile_dto,
                     APP_NAME_FOR_PROFILES,
                 ) {
@@ -2211,11 +2211,8 @@ impl MyAppLogic {
                         let operation_status_message =
                             format!("New profile '{}' created and loaded.", new_profile_dto.name);
 
-                        self.persist_last_project_path(project_ctx.root_path());
-                        self.persist_last_profile_for_project(
-                            project_ctx.root_path(),
-                            &new_profile_dto.name,
-                        );
+                        self.persist_last_project_path(&project_ctx);
+                        self.persist_last_profile_for_project(&project_ctx, &new_profile_dto.name);
                         self._activate_profile_and_show_window(
                             window_id,
                             new_profile_dto,
@@ -2749,10 +2746,7 @@ impl PlatformEventHandler for MyAppLogic {
     fn on_quit(&mut self) {
         log::debug!("AppLogic: on_quit called by platform. Application is exiting.");
         self.cancel_token_recalculation();
-        let project_root_on_exit = self
-            .active_project
-            .as_ref()
-            .map(|ctx| ctx.root_path().to_path_buf());
+        let project_ctx_on_exit = self.active_project.clone();
         let profile_runtime_data = self.app_session_data_ops.lock().unwrap();
 
         let active_profile_name_opt = profile_runtime_data.get_profile_name();
@@ -2763,9 +2757,9 @@ impl PlatformEventHandler for MyAppLogic {
             log::debug!(
                 "AppLogic: Attempting to save content of active profile '{active_profile_name}' on exit."
             );
-            if let Some(project_root) = project_root_on_exit.as_ref() {
+            if let Some(project_ctx) = project_ctx_on_exit.as_ref() {
                 match self.profile_manager.save_profile(
-                    project_root,
+                    project_ctx,
                     &profile_to_save,
                     APP_NAME_FOR_PROFILES,
                 ) {
@@ -2785,10 +2779,10 @@ impl PlatformEventHandler for MyAppLogic {
 
         drop(profile_runtime_data);
 
-        if let Some(project_root) = project_root_on_exit.as_ref() {
-            self.persist_last_project_path(project_root);
+        if let Some(project_ctx) = project_ctx_on_exit.as_ref() {
+            self.persist_last_project_path(project_ctx);
             if let Some(profile_name) = active_profile_name_opt.as_ref() {
-                self.persist_last_profile_for_project(project_root, profile_name);
+                self.persist_last_profile_for_project(project_ctx, profile_name);
             }
         } else if let Err(e) = self
             .config_manager

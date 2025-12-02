@@ -10,10 +10,8 @@
  * Profile storage now leverages the active project's `.sourcepacker` directory,
  * under which a "profiles" subfolder is used.
  */
-use super::file_node::Profile;
-use crate::core::project_context::{
-    LAST_PROFILE_FILENAME, PROFILE_FILE_EXTENSION, PROFILES_SUBFOLDER_NAME, PROJECT_CONFIG_DIR_NAME,
-};
+use super::{file_node::Profile, project_context::ProjectContext};
+use crate::core::project_context::PROFILE_FILE_EXTENSION;
 use serde_json;
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Write};
@@ -82,20 +80,28 @@ pub fn is_valid_profile_name_char(c: char) -> bool {
 pub trait ProfileManagerOperations: Send + Sync {
     fn load_profile(
         &self,
-        project_root: &Path,
+        project: &ProjectContext,
         profile_name: &str,
         app_name: &str,
     ) -> Result<Profile>;
     fn load_profile_from_path(&self, path: &Path) -> Result<Profile>;
-    fn save_profile(&self, project_root: &Path, profile: &Profile, app_name: &str) -> Result<()>;
-    fn list_profiles(&self, project_root: &Path, app_name: &str) -> Result<Vec<String>>;
-    fn get_profile_dir_path(&self, project_root: &Path, app_name: &str) -> Option<PathBuf>;
+    fn save_profile(
+        &self,
+        project: &ProjectContext,
+        profile: &Profile,
+        app_name: &str,
+    ) -> Result<()>;
+    fn list_profiles(&self, project: &ProjectContext, app_name: &str) -> Result<Vec<String>>;
+    fn get_profile_dir_path(&self, project: &ProjectContext, app_name: &str) -> Option<PathBuf>;
     fn save_last_profile_name_for_project(
         &self,
-        project_root: &Path,
+        project: &ProjectContext,
         profile_name: &str,
     ) -> Result<()>;
-    fn load_last_profile_name_for_project(&self, project_root: &Path) -> Result<Option<String>>;
+    fn load_last_profile_name_for_project(
+        &self,
+        project: &ProjectContext,
+    ) -> Result<Option<String>>;
 }
 
 pub struct CoreProfileManager {}
@@ -105,8 +111,8 @@ impl CoreProfileManager {
         CoreProfileManager {}
     }
 
-    fn ensure_project_config_dir(project_root: &Path) -> Option<PathBuf> {
-        let config_dir = project_root.join(PROJECT_CONFIG_DIR_NAME);
+    fn ensure_project_config_dir(project: &ProjectContext) -> Option<PathBuf> {
+        let config_dir = project.resolve_config_dir();
         if !config_dir.exists() {
             if let Err(e) = fs::create_dir_all(&config_dir) {
                 log::error!(
@@ -127,10 +133,10 @@ impl CoreProfileManager {
      * Ensures the project-local profile storage directory exists under
      * `<project_root>/.sourcepacker/profiles`.
      */
-    fn get_profile_storage_dir_impl(project_root: &Path) -> Option<PathBuf> {
-        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)?;
+    fn get_profile_storage_dir_impl(project: &ProjectContext) -> Option<PathBuf> {
+        let _config_dir = CoreProfileManager::ensure_project_config_dir(project)?;
 
-        let profiles_path = config_dir.join(PROFILES_SUBFOLDER_NAME);
+        let profiles_path = project.resolve_profiles_dir();
         if !profiles_path.exists() {
             if let Err(e) = fs::create_dir_all(&profiles_path) {
                 log::error!(
@@ -163,7 +169,7 @@ impl ProfileManagerOperations for CoreProfileManager {
      */
     fn load_profile(
         &self,
-        project_root: &Path,
+        project: &ProjectContext,
         profile_name: &str,
         app_name: &str,
     ) -> Result<Profile> {
@@ -172,10 +178,9 @@ impl ProfileManagerOperations for CoreProfileManager {
             return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
         }
 
-        let dir = CoreProfileManager::get_profile_storage_dir_impl(project_root)
+        let _dir = CoreProfileManager::get_profile_storage_dir_impl(project)
             .ok_or(ProfileError::NoProjectDirectory)?;
-        let sanitized_filename = sanitize_profile_name(profile_name);
-        let file_path = dir.join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
+        let file_path = project.resolve_profile_file(profile_name);
 
         if !file_path.exists() {
             log::debug!(
@@ -213,7 +218,12 @@ impl ProfileManagerOperations for CoreProfileManager {
      * It uses `get_profile_storage_dir_impl` to determine the profile storage directory.
      * The profile's name is sanitized to derive the filename.
      */
-    fn save_profile(&self, project_root: &Path, profile: &Profile, app_name: &str) -> Result<()> {
+    fn save_profile(
+        &self,
+        project: &ProjectContext,
+        profile: &Profile,
+        app_name: &str,
+    ) -> Result<()> {
         log::trace!(
             "CoreProfileManager: Saving profile '{}' for app '{}'",
             profile.name,
@@ -223,10 +233,9 @@ impl ProfileManagerOperations for CoreProfileManager {
             return Err(ProfileError::InvalidProfileName(profile.name.clone()));
         }
 
-        let dir = CoreProfileManager::get_profile_storage_dir_impl(project_root)
+        let _dir = CoreProfileManager::get_profile_storage_dir_impl(project)
             .ok_or(ProfileError::NoProjectDirectory)?;
-        let sanitized_filename = sanitize_profile_name(&profile.name);
-        let file_path = dir.join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
+        let file_path = project.resolve_profile_file(&profile.name);
 
         let file = File::create(&file_path)?;
         let writer = BufWriter::new(file);
@@ -243,9 +252,9 @@ impl ProfileManagerOperations for CoreProfileManager {
      * Lists the names of all available profiles for a given application.
      * It scans the directory returned by `get_profile_storage_dir_impl`.
      */
-    fn list_profiles(&self, project_root: &Path, app_name: &str) -> Result<Vec<String>> {
+    fn list_profiles(&self, project: &ProjectContext, app_name: &str) -> Result<Vec<String>> {
         log::trace!("CoreProfileManager: Listing profiles for app '{app_name}'");
-        let dir = match CoreProfileManager::get_profile_storage_dir_impl(project_root) {
+        let dir = match CoreProfileManager::get_profile_storage_dir_impl(project) {
             Some(d) => d,
             None => {
                 log::debug!(
@@ -279,41 +288,44 @@ impl ProfileManagerOperations for CoreProfileManager {
         Ok(profile_names)
     }
 
-    fn get_profile_dir_path(&self, project_root: &Path, _app_name: &str) -> Option<PathBuf> {
-        CoreProfileManager::get_profile_storage_dir_impl(project_root)
+    fn get_profile_dir_path(&self, project: &ProjectContext, _app_name: &str) -> Option<PathBuf> {
+        CoreProfileManager::get_profile_storage_dir_impl(project)
     }
 
     fn save_last_profile_name_for_project(
         &self,
-        project_root: &Path,
+        project: &ProjectContext,
         profile_name: &str,
     ) -> Result<()> {
         if profile_name.trim().is_empty() || !profile_name.chars().all(is_valid_profile_name_char) {
             return Err(ProfileError::InvalidProfileName(profile_name.to_string()));
         }
 
-        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)
+        let _config_dir = CoreProfileManager::ensure_project_config_dir(project)
             .ok_or(ProfileError::NoProjectDirectory)?;
-        let file_path = config_dir.join(LAST_PROFILE_FILENAME);
+        let file_path = project.resolve_last_profile_pointer_file();
 
         let mut file = File::create(&file_path)?;
         file.write_all(profile_name.as_bytes())?;
         log::debug!(
             "CoreProfileManager: Saved last profile '{profile_name}' for project at {:?}.",
-            project_root
+            project.resolve_root_for_serialization()
         );
         Ok(())
     }
 
-    fn load_last_profile_name_for_project(&self, project_root: &Path) -> Result<Option<String>> {
-        let config_dir = CoreProfileManager::ensure_project_config_dir(project_root)
+    fn load_last_profile_name_for_project(
+        &self,
+        project: &ProjectContext,
+    ) -> Result<Option<String>> {
+        let _config_dir = CoreProfileManager::ensure_project_config_dir(project)
             .ok_or(ProfileError::NoProjectDirectory)?;
-        let file_path = config_dir.join(LAST_PROFILE_FILENAME);
+        let file_path = project.resolve_last_profile_pointer_file();
 
         if !file_path.exists() {
             log::trace!(
                 "CoreProfileManager: No last profile file for project at {:?}.",
-                project_root
+                project.resolve_root_for_serialization()
             );
             return Ok(None);
         }
@@ -334,6 +346,7 @@ impl ProfileManagerOperations for CoreProfileManager {
 #[cfg(test)]
 mod profile_tests {
     use super::*;
+    use crate::core::project_context::{PROFILES_SUBFOLDER_NAME, PROJECT_CONFIG_DIR_NAME};
     use std::collections::{HashMap, HashSet};
     use tempfile::TempDir;
 
@@ -342,10 +355,10 @@ mod profile_tests {
     #[test]
     fn test_core_profile_manager_get_profile_dir_path_creates_if_not_exists() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
 
-        let dir_opt = manager.get_profile_dir_path(project_root, APP_NAME_FOR_TESTS);
+        let dir_opt = manager.get_profile_dir_path(&project, APP_NAME_FOR_TESTS);
 
         assert!(dir_opt.is_some(), "Profile directory should be determined");
         let dir_path = dir_opt.unwrap();
@@ -366,7 +379,7 @@ mod profile_tests {
     #[test]
     fn test_save_and_load_profile_project_local() -> Result<()> {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
 
         let profile_name = "My Mocked Profile".to_string();
@@ -384,10 +397,9 @@ mod profile_tests {
             exclude_patterns: Vec::new(),
         };
 
-        manager.save_profile(project_root, &original_profile, APP_NAME_FOR_TESTS)?;
+        manager.save_profile(&project, &original_profile, APP_NAME_FOR_TESTS)?;
 
-        let loaded_profile =
-            manager.load_profile(project_root, &profile_name, APP_NAME_FOR_TESTS)?;
+        let loaded_profile = manager.load_profile(&project, &profile_name, APP_NAME_FOR_TESTS)?;
 
         assert_eq!(loaded_profile.name, original_profile.name);
         assert_eq!(loaded_profile.root_folder, original_profile.root_folder);
@@ -402,7 +414,7 @@ mod profile_tests {
     #[test]
     fn test_load_profile_from_path_project_local() -> Result<()> {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
 
         let profile_name = "DirectLoadProfile".to_string();
@@ -417,11 +429,11 @@ mod profile_tests {
             exclude_patterns: Vec::new(),
         };
 
-        manager.save_profile(project_root, &profile_to_save, APP_NAME_FOR_TESTS)?;
+        manager.save_profile(&project, &profile_to_save, APP_NAME_FOR_TESTS)?;
 
         let sanitized_filename = sanitize_profile_name(&profile_name);
         let direct_path = manager
-            .get_profile_dir_path(project_root, APP_NAME_FOR_TESTS)
+            .get_profile_dir_path(&project, APP_NAME_FOR_TESTS)
             .expect("profiles dir should exist")
             .join(format!("{sanitized_filename}.{PROFILE_FILE_EXTENSION}"));
 
@@ -437,19 +449,19 @@ mod profile_tests {
     #[test]
     fn test_list_profiles_project_local() -> Result<()> {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
 
-        let initial_listed_names = manager.list_profiles(project_root, APP_NAME_FOR_TESTS)?;
+        let initial_listed_names = manager.list_profiles(&project, APP_NAME_FOR_TESTS)?;
         assert!(initial_listed_names.is_empty());
 
         let profiles_to_create = vec!["Mock Alpha", "Mock_Beta", "Mock-Gamma"];
         for name_str in &profiles_to_create {
             let p = Profile::new(name_str.to_string(), PathBuf::from("/tmp_mock"));
-            manager.save_profile(project_root, &p, APP_NAME_FOR_TESTS)?;
+            manager.save_profile(&project, &p, APP_NAME_FOR_TESTS)?;
         }
 
-        let mut listed_names = manager.list_profiles(project_root, APP_NAME_FOR_TESTS)?;
+        let mut listed_names = manager.list_profiles(&project, APP_NAME_FOR_TESTS)?;
 
         let mut expected_sanitized_names: Vec<String> = profiles_to_create
             .iter()
@@ -465,30 +477,27 @@ mod profile_tests {
     #[test]
     fn test_load_non_existent_profile_project_local() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
-        let result = manager.load_profile(
-            project_root,
-            "This Profile Does Not Exist",
-            APP_NAME_FOR_TESTS,
-        );
+        let result =
+            manager.load_profile(&project, "This Profile Does Not Exist", APP_NAME_FOR_TESTS);
         assert!(matches!(result, Err(ProfileError::ProfileNotFound(_))));
     }
 
     #[test]
     fn test_invalid_profile_names_save_project_local() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
         let p_empty = Profile::new("".to_string(), PathBuf::from("/tmp_mock"));
         let p_invalid_char = Profile::new("My/MockProfile".to_string(), PathBuf::from("/tmp_mock"));
 
         assert!(matches!(
-            manager.save_profile(project_root, &p_empty, APP_NAME_FOR_TESTS),
+            manager.save_profile(&project, &p_empty, APP_NAME_FOR_TESTS),
             Err(ProfileError::InvalidProfileName(_))
         ));
         assert!(matches!(
-            manager.save_profile(project_root, &p_invalid_char, APP_NAME_FOR_TESTS),
+            manager.save_profile(&project, &p_invalid_char, APP_NAME_FOR_TESTS),
             Err(ProfileError::InvalidProfileName(_))
         ));
     }
@@ -496,14 +505,14 @@ mod profile_tests {
     #[test]
     fn test_invalid_profile_names_load_project_local() {
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
         assert!(matches!(
-            manager.load_profile(project_root, "", APP_NAME_FOR_TESTS),
+            manager.load_profile(&project, "", APP_NAME_FOR_TESTS),
             Err(ProfileError::InvalidProfileName(_))
         ));
         assert!(matches!(
-            manager.load_profile(project_root, "My/MockProfile", APP_NAME_FOR_TESTS),
+            manager.load_profile(&project, "My/MockProfile", APP_NAME_FOR_TESTS),
             Err(ProfileError::InvalidProfileName(_))
         ));
     }
@@ -512,15 +521,15 @@ mod profile_tests {
     fn test_save_and_load_last_profile_name_for_project() -> Result<()> {
         // Arrange
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
         let profile_name = "RecentProfile";
 
         // Act
-        manager.save_last_profile_name_for_project(project_root, profile_name)?;
+        manager.save_last_profile_name_for_project(&project, profile_name)?;
 
         // Assert
-        let loaded = manager.load_last_profile_name_for_project(project_root)?;
+        let loaded = manager.load_last_profile_name_for_project(&project)?;
         assert_eq!(loaded, Some(profile_name.to_string()));
         Ok(())
     }
@@ -529,24 +538,22 @@ mod profile_tests {
     fn test_load_last_profile_name_for_project_none_when_missing_or_empty() -> Result<()> {
         // Arrange
         let temp_dir = TempDir::new().expect("Failed to create temp dir for test");
-        let project_root = temp_dir.path();
+        let project = ProjectContext::new(temp_dir.path().to_path_buf());
         let manager = CoreProfileManager::new();
 
         // Act & Assert: missing file yields None
-        let loaded_missing = manager.load_last_profile_name_for_project(project_root)?;
+        let loaded_missing = manager.load_last_profile_name_for_project(&project)?;
         assert!(loaded_missing.is_none());
 
         // Arrange: create empty file
-        let empty_file_path = project_root
-            .join(PROJECT_CONFIG_DIR_NAME)
-            .join(LAST_PROFILE_FILENAME);
+        let empty_file_path = project.resolve_last_profile_pointer_file();
         if let Some(parent) = empty_file_path.parent() {
             fs::create_dir_all(parent).expect("Failed to create config dir for empty file test");
         }
         File::create(&empty_file_path).expect("Failed to create empty last profile file");
 
         // Act & Assert: empty contents treated as None
-        let loaded_empty = manager.load_last_profile_name_for_project(project_root)?;
+        let loaded_empty = manager.load_last_profile_name_for_project(&project)?;
         assert!(loaded_empty.is_none());
         Ok(())
     }
