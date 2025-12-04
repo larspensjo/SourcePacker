@@ -477,3 +477,8 @@ These tasks build on the new foundation and can be implemented independently.
 #### Task H: Implement a "Generate All" button.
 
 This will generate all archives from the current project.
+
+#### Task I: The struct ProjectContext usage
+
+It should be used everywhere, instead of extracting the path and forward it to sub functions.
+That means several member functions will be needed.

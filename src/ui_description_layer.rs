@@ -8,8 +8,8 @@
 use crate::app_logic::ui_constants;
 
 use crate::platform_layer::{
-    types::{DockStyle, LabelClass, LayoutRule, MenuItemConfig, PlatformCommand, WindowId},
     StyleId,
+    types::{DockStyle, LabelClass, LayoutRule, MenuItemConfig, PlatformCommand, WindowId},
 };
 
 mod theme;
@@ -44,8 +44,8 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // 1. Define the "File" menu structure
     let file_menu_items = vec![
         MenuItemConfig {
-            action: Some(ui_constants::MENU_ACTION_LOAD_PROFILE),
-            text: "Load Profile...".to_string(),
+            action: Some(ui_constants::MENU_ACTION_OPEN_FOLDER),
+            text: "Open Folder...".to_string(),
             children: Vec::new(),
         },
         MenuItemConfig {

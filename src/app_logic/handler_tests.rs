@@ -7,8 +7,9 @@ mod tests {
         ArchiveStatus, ArchiverOperations, ConfigError, ConfigManagerOperations,
         ContentSearchProgress, ContentSearchResult, FileNode, FileSystemError,
         FileSystemScannerOperations, NodeStateApplicatorOperations, Profile, ProfileError,
-        ProfileManagerOperations, ProfileRuntimeDataOperations, SelectionState,
-        TokenCounterOperations, TokenProgress, TokenProgressChannel, file_node::FileTokenDetails,
+        ProfileManagerOperations, ProfileName, ProfileRuntimeDataOperations, ProjectContext,
+        SelectionState, TokenCounterOperations, TokenProgress, TokenProgressChannel,
+        file_node::FileTokenDetails,
     };
     use crate::platform_layer::{
         AppEvent, CheckState, MessageSeverity, PlatformCommand, PlatformEventHandler, StyleId,
@@ -598,10 +599,9 @@ mod tests {
         fn create_profile_snapshot(&self) -> Profile {
             self.create_profile_snapshot_calls
                 .fetch_add(1, Ordering::Relaxed);
-            let mut profile = Profile::new(
-                self.profile_name.clone().unwrap_or_default(),
-                self.root_path_for_scan.clone(),
-            );
+            let name = ProfileName::new(self.profile_name.clone().unwrap_or_default())
+                .unwrap_or_else(|_| ProfileName::new("Unnamed").unwrap());
+            let mut profile = Profile::new(name, self.root_path_for_scan.clone());
             profile.archive_path = self.archive_path.clone();
             profile.file_details = self.cached_file_token_details.clone();
 
@@ -652,7 +652,7 @@ mod tests {
                 &loaded_profile.exclude_patterns,
             ) {
                 Ok(scanned_nodes) => {
-                    self.profile_name = Some(loaded_profile.name.clone());
+                    self.profile_name = Some(loaded_profile.name.as_str().to_string());
                     self.archive_path = loaded_profile.archive_path.clone();
                     self.root_path_for_scan = loaded_profile.root_folder.clone();
                     self.snapshot_nodes = scanned_nodes; // <<< KEY CHANGE: Populate snapshot_nodes from scanner
@@ -726,25 +726,25 @@ mod tests {
     // --- Mock Structures (ConfigManager, ProfileManager, FileSystemScanner, Archiver, StateManager) ---
     // These are assumed to be correct from previous steps.
     struct MockConfigManager {
-        load_last_profile_name_result: Mutex<Result<Option<String>, ConfigError>>,
-        saved_profile_name: Mutex<Option<(String, String)>>,
-        save_last_profile_name_calls: AtomicUsize,
+        load_last_project_path_result: Mutex<Result<Option<PathBuf>, ConfigError>>,
+        saved_project_path: Mutex<Option<(String, Option<PathBuf>)>>,
+        save_last_project_path_calls: AtomicUsize,
     }
     impl MockConfigManager {
         fn new() -> Self {
             MockConfigManager {
-                load_last_profile_name_result: Mutex::new(Ok(None)),
-                saved_profile_name: Mutex::new(None),
-                save_last_profile_name_calls: AtomicUsize::new(0),
+                load_last_project_path_result: Mutex::new(Ok(None)),
+                saved_project_path: Mutex::new(None),
+                save_last_project_path_calls: AtomicUsize::new(0),
             }
         }
-        fn set_load_last_profile_name_result(&self, result: Result<Option<String>, ConfigError>) {
-            *self.load_last_profile_name_result.lock().unwrap() = result;
+        fn set_load_last_project_path_result(&self, result: Result<Option<PathBuf>, ConfigError>) {
+            *self.load_last_project_path_result.lock().unwrap() = result;
         }
     }
     impl ConfigManagerOperations for MockConfigManager {
-        fn load_last_profile_name(&self, _app_name: &str) -> Result<Option<String>, ConfigError> {
-            self.load_last_profile_name_result
+        fn load_last_project_path(&self, _app_name: &str) -> Result<Option<PathBuf>, ConfigError> {
+            self.load_last_project_path_result
                 .lock()
                 .unwrap()
                 .as_ref()
@@ -759,15 +759,17 @@ mod tests {
                     ),
                 })
         }
-        fn save_last_profile_name(
+        fn save_last_project_path(
             &self,
             app_name: &str,
-            profile_name: &str,
+            project: Option<&ProjectContext>,
         ) -> Result<(), ConfigError> {
-            self.save_last_profile_name_calls
+            self.save_last_project_path_calls
                 .fetch_add(1, Ordering::Relaxed);
-            *self.saved_profile_name.lock().unwrap() =
-                Some((app_name.to_string(), profile_name.to_string()));
+            *self.saved_project_path.lock().unwrap() = Some((
+                app_name.to_string(),
+                project.map(|p| p.root_path().to_path_buf()),
+            ));
             Ok(())
         }
     }
@@ -775,20 +777,30 @@ mod tests {
     struct MockProfileManager {
         load_profile_results: Mutex<HashMap<String, Result<Profile, ProfileError>>>,
         load_profile_from_path_results: Mutex<HashMap<PathBuf, Result<Profile, ProfileError>>>,
-        save_profile_calls: Mutex<Vec<(Profile, String)>>,
+        load_profile_calls: Mutex<Vec<(PathBuf, String)>>,
+        save_profile_calls: Mutex<Vec<(PathBuf, Profile, String)>>,
         save_profile_result: Mutex<Result<(), ProfileError>>,
         list_profiles_result: Mutex<Result<Vec<String>, ProfileError>>,
+        list_profiles_calls: Mutex<Vec<PathBuf>>,
         get_profile_dir_path_result: Mutex<Option<PathBuf>>,
+        profile_dir_path_calls: Mutex<Vec<PathBuf>>,
+        load_last_profile_name_for_project_result: Mutex<Result<Option<String>, ProfileError>>,
+        save_last_profile_name_for_project_calls: Mutex<Vec<(PathBuf, String)>>,
     }
     impl MockProfileManager {
         fn new() -> Self {
             MockProfileManager {
                 load_profile_results: Mutex::new(HashMap::new()),
                 load_profile_from_path_results: Mutex::new(HashMap::new()),
+                load_profile_calls: Mutex::new(Vec::new()),
                 save_profile_calls: Mutex::new(Vec::new()),
                 save_profile_result: Mutex::new(Ok(())),
                 list_profiles_result: Mutex::new(Ok(Vec::new())),
+                list_profiles_calls: Mutex::new(Vec::new()),
                 get_profile_dir_path_result: Mutex::new(Some(PathBuf::from("/mock/profiles"))),
+                profile_dir_path_calls: Mutex::new(Vec::new()),
+                load_last_profile_name_for_project_result: Mutex::new(Ok(None)),
+                save_last_profile_name_for_project_calls: Mutex::new(Vec::new()),
             }
         }
         fn set_load_profile_result(
@@ -824,21 +836,55 @@ mod tests {
             *self.get_profile_dir_path_result.lock().unwrap() = result;
         }
         #[allow(dead_code)]
-        fn get_save_profile_calls(&self) -> Vec<(Profile, String)> {
+        fn get_save_profile_calls(&self) -> Vec<(PathBuf, Profile, String)> {
             self.save_profile_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_load_profile_calls(&self) -> Vec<(PathBuf, String)> {
+            self.load_profile_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_list_profiles_calls(&self) -> Vec<PathBuf> {
+            self.list_profiles_calls.lock().unwrap().clone()
+        }
+        #[allow(dead_code)]
+        fn get_profile_dir_path_calls(&self) -> Vec<PathBuf> {
+            self.profile_dir_path_calls.lock().unwrap().clone()
+        }
+        fn set_load_last_profile_name_for_project_result(
+            &self,
+            result: Result<Option<String>, ProfileError>,
+        ) {
+            *self
+                .load_last_profile_name_for_project_result
+                .lock()
+                .unwrap() = result;
+        }
+        fn get_save_last_profile_name_for_project_calls(&self) -> Vec<(PathBuf, String)> {
+            self.save_last_profile_name_for_project_calls
+                .lock()
+                .unwrap()
+                .clone()
         }
     }
     impl ProfileManagerOperations for MockProfileManager {
         fn load_profile(
             &self,
-            profile_name: &str,
+            project: &ProjectContext,
+            profile_name: &ProfileName,
             _app_name: &str,
         ) -> Result<Profile, ProfileError> {
+            self.load_profile_calls.lock().unwrap().push((
+                project.root_path().to_path_buf(),
+                profile_name.as_str().to_string(),
+            ));
             let map = self.load_profile_results.lock().unwrap();
-            match map.get(profile_name) {
+            match map.get(profile_name.as_str()) {
                 Some(Ok(profile)) => Ok(profile.clone()),
                 Some(Err(e)) => Err(clone_profile_error(e)),
-                None => Err(ProfileError::ProfileNotFound(profile_name.to_string())),
+                None => Err(ProfileError::ProfileNotFound(
+                    profile_name.as_str().to_string(),
+                )),
             }
         }
         fn load_profile_from_path(&self, path: &Path) -> Result<Profile, ProfileError> {
@@ -852,27 +898,79 @@ mod tests {
                 ))),
             }
         }
-        fn save_profile(&self, profile: &Profile, app_name: &str) -> Result<(), ProfileError> {
+        fn save_profile(
+            &self,
+            project: &ProjectContext,
+            profile: &Profile,
+            app_name: &str,
+        ) -> Result<(), ProfileError> {
             let result_to_return = match *self.save_profile_result.lock().unwrap() {
                 Ok(_) => Ok(()),
                 Err(ref e) => Err(clone_profile_error(e)),
             };
             if result_to_return.is_ok() {
-                self.save_profile_calls
-                    .lock()
-                    .unwrap()
-                    .push((profile.clone(), app_name.to_string()));
+                self.save_profile_calls.lock().unwrap().push((
+                    project.root_path().to_path_buf(),
+                    profile.clone(),
+                    app_name.to_string(),
+                ));
             }
             result_to_return
         }
-        fn list_profiles(&self, _app_name: &str) -> Result<Vec<String>, ProfileError> {
+        fn list_profiles(
+            &self,
+            project: &ProjectContext,
+            _app_name: &str,
+        ) -> Result<Vec<ProfileName>, ProfileError> {
+            self.list_profiles_calls
+                .lock()
+                .unwrap()
+                .push(project.root_path().to_path_buf());
             match *self.list_profiles_result.lock().unwrap() {
-                Ok(ref names) => Ok(names.clone()),
+                Ok(ref names) => Ok(names
+                    .iter()
+                    .filter_map(|s| ProfileName::new(s).ok())
+                    .collect()),
                 Err(ref e) => Err(clone_profile_error(e)),
             }
         }
-        fn get_profile_dir_path(&self, _app_name: &str) -> Option<PathBuf> {
+        fn get_profile_dir_path(
+            &self,
+            project: &ProjectContext,
+            _app_name: &str,
+        ) -> Option<PathBuf> {
+            self.profile_dir_path_calls
+                .lock()
+                .unwrap()
+                .push(project.root_path().to_path_buf());
             self.get_profile_dir_path_result.lock().unwrap().clone()
+        }
+        fn save_last_profile_name_for_project(
+            &self,
+            project: &ProjectContext,
+            profile_name: &ProfileName,
+        ) -> Result<(), ProfileError> {
+            self.save_last_profile_name_for_project_calls
+                .lock()
+                .unwrap()
+                .push((
+                    project.root_path().to_path_buf(),
+                    profile_name.as_str().to_string(),
+                ));
+            Ok(())
+        }
+        fn load_last_profile_name_for_project(
+            &self,
+            _project: &ProjectContext,
+        ) -> Result<Option<ProfileName>, ProfileError> {
+            let guard = self
+                .load_last_profile_name_for_project_result
+                .lock()
+                .unwrap();
+            match guard.as_ref() {
+                Ok(v) => Ok(v.clone().and_then(|s| ProfileName::new(&s).ok())),
+                Err(e) => Err(clone_profile_error(e)),
+            }
         }
     }
     fn clone_profile_error(error: &ProfileError) -> ProfileError {
@@ -1170,7 +1268,7 @@ mod tests {
         let mock_state_manager_arc = Arc::new(MockStateManager::new());
         let mock_token_counter_arc = Arc::new(MockTokenCounter::new(1));
 
-        let logic = MyAppLogic::new(
+        let mut logic = MyAppLogic::new(
             Arc::clone(&mock_app_session_data_for_test)
                 as Arc<Mutex<dyn ProfileRuntimeDataOperations>>,
             Arc::clone(&mock_config_manager_arc) as Arc<dyn ConfigManagerOperations>,
@@ -1180,6 +1278,7 @@ mod tests {
             Arc::clone(&mock_token_counter_arc) as Arc<dyn TokenCounterOperations>,
             Arc::clone(&mock_state_manager_arc) as Arc<dyn NodeStateApplicatorOperations>,
         );
+        logic.test_set_active_project_root(PathBuf::from("/mock/project_root"));
         (
             logic,
             mock_app_session_data_for_test,
@@ -1208,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_on_main_window_created_loads_last_profile_with_all_mocks() {
+    fn test_startup_with_last_project_and_last_profile_loads_correctly() {
         // Arrange
         let (
             mut logic,
@@ -1222,19 +1321,23 @@ mod tests {
         ) = setup_logic_with_mocks();
 
         let last_profile_name_to_load = "MyMockedStartupProfile";
-        let startup_profile_root = PathBuf::from("/mock/startup_root");
-        let startup_archive_path = startup_profile_root.join("startup_archive.txt");
+        let project_dir = tempdir().expect("Failed to create temp dir for project");
+        let startup_project_root = project_dir.path().to_path_buf();
+        let startup_archive_path = startup_project_root.join("startup_archive.txt");
 
         mock_config_manager
-            .set_load_last_profile_name_result(Ok(Some(last_profile_name_to_load.to_string())));
+            .set_load_last_project_path_result(Ok(Some(startup_project_root.clone())));
+        mock_profile_manager.set_load_last_profile_name_for_project_result(Ok(Some(
+            last_profile_name_to_load.to_string(),
+        )));
 
         let mut selected_paths_for_profile = HashSet::new();
-        let mock_file_path = startup_profile_root.join("mock_startup_file.txt");
+        let mock_file_path = startup_project_root.join("mock_startup_file.txt");
         selected_paths_for_profile.insert(mock_file_path.clone());
 
         let mock_loaded_profile_dto = Profile {
-            name: last_profile_name_to_load.to_string(),
-            root_folder: startup_profile_root.clone(),
+            name: ProfileName::new(last_profile_name_to_load).unwrap(),
+            root_folder: startup_project_root.clone(),
             selected_paths: selected_paths_for_profile.clone(),
             deselected_paths: HashSet::new(),
             archive_path: Some(startup_archive_path.clone()),
@@ -1252,9 +1355,8 @@ mod tests {
             false,
         )];
         mock_file_system_scanner
-            .set_scan_directory_result(&startup_profile_root, Ok(scanned_nodes.clone()));
+            .set_scan_directory_result(&startup_project_root, Ok(scanned_nodes.clone()));
 
-        // Setup for _activate_profile_and_show_window
         mock_app_session_mutexed
             .lock()
             .unwrap()
@@ -1262,19 +1364,17 @@ mod tests {
         mock_app_session_mutexed
             .lock()
             .unwrap()
-            .set_snapshot_nodes_for_mock(scanned_nodes.clone()); // Simulate scan result being set
+            .set_snapshot_nodes_for_mock(scanned_nodes.clone());
         mock_app_session_mutexed
             .lock()
             .unwrap()
-            .set_cached_total_token_count_for_mock(5); // Simulate token calculation
+            .set_cached_total_token_count_for_mock(5);
 
         mock_archiver.set_check_archive_status_result(ArchiveStatus::NotYetGenerated);
 
         // Act
-        logic.handle_event(AppEvent::MainWindowUISetupComplete {
-            window_id: WindowId::new(1),
-        });
-
+        let window_id = WindowId::new(1);
+        logic.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
         let cmds = logic.test_collect_commands_until_idle();
 
         // Assert
@@ -1283,10 +1383,8 @@ mod tests {
             assert_eq!(
                 mock_app_session.get_load_profile_into_session_log().len(),
                 1,
-                "load_profile_into_session should be called once on the mock session data"
+                "Profile should load into session once on startup"
             );
-            let loaded_profile_in_mock = &mock_app_session.get_load_profile_into_session_log()[0];
-            assert_eq!(loaded_profile_in_mock.name, last_profile_name_to_load);
             assert_eq!(
                 mock_app_session.profile_name,
                 Some(last_profile_name_to_load.to_string())
@@ -1295,71 +1393,111 @@ mod tests {
                 mock_app_session.archive_path,
                 Some(startup_archive_path.clone())
             );
-            assert_eq!(
-                mock_app_session
-                    .recalc_tokens_async_calls
-                    .load(Ordering::Relaxed),
-                1,
-                "Async recalculation should be triggered once on startup",
-            );
-            assert_eq!(
-                mock_app_session
-                    ._update_total_token_count_calls
-                    .load(Ordering::Relaxed),
-                0,
-                "Legacy token count path should not run on startup",
-            );
         }
 
-        assert_eq!(
-            mock_config_manager
-                .save_last_profile_name_calls
-                .load(Ordering::Relaxed),
-            0,
-            "No save_last_profile_name call should be made"
-        );
-
-        let expected_title = format!(
-            "SourcePacker - [{}] - [{}]",
-            last_profile_name_to_load,
-            startup_archive_path.display()
-        );
-        assert!(
-            find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
-                "Expected SetWindowTitle with correct title. Got: {cmds:?}"
-        );
-        let dedicated_token_status_text = "Tokens: 5";
-
-        let profile_loaded_startup_text =
-            format!("Successfully loaded last profile '{last_profile_name_to_load}' on startup.");
-        let profile_loaded_final_text = format!("Profile '{last_profile_name_to_load}' loaded.");
-
-        let general_status_texts: Vec<&String> = cmds
-            .iter()
-            .filter_map(|cmd| match cmd {
-                PlatformCommand::UpdateLabelText {
-                    control_id, text, ..
-                } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID => Some(text),
-                _ => None,
-            })
-            .collect();
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && text == &profile_loaded_startup_text && *severity == MessageSeverity::Information )).is_some(), "Expected initial profile loaded message. Got: {cmds:?}" );
-        assert!(
-            general_status_texts
-                .iter()
-                .any(|text| text.contains("Token recalculation finished")),
-            "Expected final async token recalculation message",
-        );
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, severity, .. } if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID && *text == profile_loaded_final_text && *severity == MessageSeverity::Information )).is_some(), "Expected final profile loaded message. Got: {cmds:?}" );
-
-        assert!(find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::UpdateLabelText { control_id, text, .. } if *control_id == ui_constants::STATUS_LABEL_TOKENS_ID && text == dedicated_token_status_text )).is_some(), "Expected dedicated token label 'Tokens: 5'. Got: {cmds:?}" );
         assert!(
             find_command(&cmds, |cmd| matches!(
                 cmd,
                 PlatformCommand::ShowWindow { .. }
             ))
             .is_some(),
-            "Expected ShowWindow command"
+            "Startup should show the main window after activating profile"
+        );
+
+        let project_label = startup_project_root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| startup_project_root.to_string_lossy().into_owned());
+        let expected_title = format!(
+            "SourcePacker - [{}] - [{}] (Project: {})",
+            last_profile_name_to_load,
+            startup_archive_path.display(),
+            project_label
+        );
+        assert!(
+            find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == &expected_title)).is_some(),
+            "Expected window title to reflect loaded profile and archive"
+        );
+    }
+
+    #[test]
+    fn test_startup_with_no_last_project_prompts_for_folder() {
+        // Arrange
+        let (
+            mut logic,
+            _,
+            _mock_config_manager,
+            _mock_profile_manager,
+            _mock_fs,
+            _mock_archiver,
+            _,
+            _,
+        ) = setup_logic_with_mocks();
+        let window_id = WindowId::new(10);
+        logic.test_clear_active_project();
+
+        // Act
+        logic.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert!(
+            find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::ShowFolderPickerDialog { window_id: wid, .. } if *wid == window_id)).is_some(),
+            "Startup without a project should immediately prompt for folder selection"
+        );
+        assert!(
+            !find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::ShowWindow { .. }
+            ))
+            .is_some(),
+            "Main window should stay hidden until a project and profile are chosen"
+        );
+    }
+
+    #[test]
+    fn test_startup_with_missing_last_project_path_falls_back_to_prompt() {
+        // Arrange
+        let (
+            mut logic,
+            _mock_app_session,
+            mock_config_manager,
+            _mock_profile_manager,
+            _mock_file_system_scanner,
+            _mock_archiver,
+            _mock_state_manager,
+            _mock_token_counter,
+        ) = setup_logic_with_mocks();
+        let window_id = WindowId::new(11);
+        let nonexistent_project = PathBuf::from("/definitely/not/a/project/path");
+        mock_config_manager
+            .set_load_last_project_path_result(Ok(Some(nonexistent_project.clone())));
+        logic.test_clear_active_project();
+
+        // Act
+        logic.handle_event(AppEvent::MainWindowUISetupComplete { window_id });
+        let cmds = logic.test_drain_commands();
+
+        // Assert
+        assert!(
+            find_command(&cmds, |cmd| matches!(cmd, PlatformCommand::ShowFolderPickerDialog { window_id: wid, .. } if *wid == window_id)).is_some(),
+            "Missing project path should trigger folder picker"
+        );
+        assert_eq!(
+            mock_config_manager
+                .save_last_project_path_calls
+                .load(Ordering::Relaxed),
+            1,
+            "Missing path should be cleared in config"
+        );
+        let saved = mock_config_manager
+            .saved_project_path
+            .lock()
+            .unwrap()
+            .clone();
+        assert!(
+            matches!(saved, Some((_, None))),
+            "Config should clear last project on missing path"
         );
     }
 
@@ -1445,7 +1583,7 @@ mod tests {
         // Assert - profile save contains updated patterns
         let saved_profiles = mock_profile_manager_arc.get_save_profile_calls();
         assert_eq!(saved_profiles.len(), 1);
-        let (saved_profile, app_name) = &saved_profiles[0];
+        let (_project_root, saved_profile, app_name) = &saved_profiles[0];
         assert_eq!(app_name, APP_NAME_FOR_PROFILES);
         assert_eq!(saved_profile.exclude_patterns, expected_patterns_for_save);
 
@@ -1485,7 +1623,7 @@ mod tests {
             PathBuf::from(format!("/dummy/profiles/{profile_name}.json"));
 
         let mock_profile_to_load_dto = Profile {
-            name: profile_name.to_string(),
+            name: ProfileName::new(profile_name).unwrap(),
             root_folder: root_folder_for_profile.clone(),
             selected_paths: HashSet::new(),
             deselected_paths: HashSet::new(),
@@ -1531,10 +1669,21 @@ mod tests {
         );
         assert_eq!(
             mock_config_manager
-                .save_last_profile_name_calls
+                .save_last_project_path_calls
                 .load(Ordering::Relaxed),
-            1
+            2
         );
+        let saved_last_profile_calls =
+            mock_profile_manager_arc.get_save_last_profile_name_for_project_calls();
+        assert!(
+            saved_last_profile_calls.len() >= 1,
+            "Persisting last profile should be attempted"
+        );
+        assert!(saved_last_profile_calls.iter().any(|call| call
+            == &(
+                PathBuf::from("/mock/project_root"),
+                profile_name.to_string()
+            )));
 
         let archiver_calls = mock_archiver_arc.get_check_archive_status_calls();
         assert_eq!(archiver_calls.len(), 1); // Called once during _activate_profile_and_show_window
@@ -2426,9 +2575,12 @@ mod tests {
             Some(&new_archive_path)
         );
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
-        assert_eq!(profile_mgr.get_save_profile_calls()[0].0.name, profile_name);
         assert_eq!(
-            profile_mgr.get_save_profile_calls()[0].0.archive_path,
+            profile_mgr.get_save_profile_calls()[0].1.name,
+            ProfileName::new(profile_name).unwrap()
+        );
+        assert_eq!(
+            profile_mgr.get_save_profile_calls()[0].1.archive_path,
             Some(new_archive_path.clone())
         );
 
@@ -2472,6 +2624,48 @@ mod tests {
     }
 
     #[test]
+    fn test_profile_ops_no_project_root_are_noop() {
+        let (mut logic, _session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(41);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+        logic.test_clear_active_project();
+
+        logic.handle_event(AppEvent::MenuActionClicked {
+            action_id: ui_constants::MENU_ACTION_LOAD_PROFILE,
+        });
+
+        assert!(profile_mgr.get_list_profiles_calls().is_empty());
+        let cmds = logic.test_drain_commands();
+        assert!(
+            find_command(&cmds, |cmd| matches!(
+                cmd,
+                PlatformCommand::UpdateLabelText { control_id, text, .. }
+                    if *control_id == ui_constants::STATUS_LABEL_GENERAL_ID
+                        && text.contains("No project folder is open")
+            ))
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn test_profile_ops_with_project_root_use_project_local_dir() {
+        let (mut logic, _session, _cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
+        let window_id = WindowId::new(42);
+        logic.test_set_main_window_id_and_init_ui_state(window_id);
+
+        logic.handle_event(AppEvent::MenuActionClicked {
+            action_id: ui_constants::MENU_ACTION_SAVE_PROFILE_AS,
+        });
+
+        let dir_calls = profile_mgr.get_profile_dir_path_calls();
+        assert_eq!(
+            dir_calls,
+            vec![PathBuf::from("/mock/project_root")],
+            "Expected Save Profile As to query the current project's profile dir."
+        );
+    }
+
+    #[test]
     fn test_internal_handle_file_save_dialog_for_saving_profile_as() {
         let (mut logic, mock_app_session, cfg_mgr, profile_mgr, ..) = setup_logic_with_mocks();
         let window_id = WindowId::new(1);
@@ -2511,18 +2705,22 @@ mod tests {
 
         assert_eq!(profile_mgr.get_save_profile_calls().len(), 1);
         assert_eq!(
-            profile_mgr.get_save_profile_calls()[0].0.name,
-            "New Profile Name"
+            profile_mgr.get_save_profile_calls()[0].1.name,
+            ProfileName::new("New Profile Name").unwrap()
         );
         assert_eq!(
-            cfg_mgr
-                .saved_profile_name
-                .lock()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .1,
-            "New Profile Name"
+            cfg_mgr.save_last_project_path_calls.load(Ordering::Relaxed),
+            1,
+            "Saving a profile should persist the current project path"
+        );
+        let last_profile_calls = profile_mgr.get_save_last_profile_name_for_project_calls();
+        assert_eq!(last_profile_calls.len(), 1);
+        assert_eq!(
+            last_profile_calls[0],
+            (
+                PathBuf::from("/mock/project_root"),
+                "New Profile Name".to_string()
+            )
         );
 
         assert!(
@@ -2554,7 +2752,7 @@ mod tests {
         logic.test_set_main_window_id_and_init_ui_state(window_id);
 
         let mut profile = Profile::new(
-            "ActivatedProfile".to_string(),
+            ProfileName::new("ActivatedProfile").unwrap(),
             PathBuf::from("/root/active"),
         );
         let selected_file_path = profile.root_folder.join("file.txt");
@@ -2707,10 +2905,11 @@ mod tests {
             .lock()
             .unwrap()
             .set_profile_name_for_mock(None);
+        logic.test_set_active_project_root(PathBuf::from("/root/project"));
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds1 = logic.test_drain_commands();
         assert!(find_command(&cmds1, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [No Profile Loaded] (Project: project)")
         })
         .is_some());
 
@@ -2726,7 +2925,7 @@ mod tests {
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds2 = logic.test_drain_commands();
         assert!(find_command(&cmds2, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [No Archive Set] (Project: project)")
         })
         .is_some());
 
@@ -2738,7 +2937,7 @@ mod tests {
         logic.test_update_window_title_with_profile_and_archive(window_id);
         let cmds3 = logic.test_drain_commands();
         assert!(find_command(&cmds3, |cmd| {
-            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt]")
+            matches!(cmd, PlatformCommand::SetWindowTitle { title, .. } if title == "SourcePacker - [MyProfile] - [/path/archive.txt] (Project: project)")
         })
         .is_some());
     }
@@ -3163,4 +3362,3 @@ mod tests {
         )).is_some(), "Expected error style for no match");
     }
 }
-

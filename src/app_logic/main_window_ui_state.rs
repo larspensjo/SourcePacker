@@ -380,8 +380,9 @@ impl MainWindowUiState {
 mod tests {
     use super::*;
     use crate::core::{
-        ContentSearchProgress, FileNode, FileSystemScannerOperations, NodeStateApplicatorOperations, Profile,
-        ProfileRuntimeDataOperations, SelectionState, TokenCounterOperations,
+        ContentSearchProgress, FileNode, FileSystemScannerOperations,
+        NodeStateApplicatorOperations, Profile, ProfileRuntimeDataOperations, SelectionState,
+        TokenCounterOperations,
     };
     use crate::platform_layer::WindowId;
     use std::collections::HashSet;
@@ -687,4 +688,3 @@ mod tests {
         );
     }
 }
-

@@ -1,7 +1,13 @@
-use super::file_node::FileNode;
+use super::{
+    file_node::FileNode,
+    project_context::{
+        PROJECT_CONFIG_DIR_NAME, ProjectContext, ProjectRelativePath, ProjectRelativePathError,
+    },
+};
 use crate::core::checksum_utils;
 use ignore::{WalkBuilder, overrides::OverrideBuilder};
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -120,6 +126,7 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         if !root_path.is_dir() {
             return Err(FileSystemError::InvalidPath(root_path.to_path_buf()));
         }
+        let project_ctx = ProjectContext::new(root_path.to_path_buf());
         log::debug!(
             "FileSystemScanner: Scanning directory {root_path:?}, respecting local .gitignore files."
         );
@@ -186,6 +193,24 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             }
 
             let path = entry.path().to_path_buf();
+
+            // Enforce that entries stay under the root; skip anything outside.
+            if validate_under_root(&project_ctx, &path).is_none() {
+                log::warn!(
+                    "FileSystemScanner: Skipping path outside project root: {:?}",
+                    path
+                );
+                continue;
+            }
+
+            if is_internal_config_path(root_path, &path) {
+                log::trace!(
+                    "FileSystemScanner: Skipping internal config path {:?} during scan.",
+                    path
+                );
+                continue;
+            }
+
             // Use file_name from DirEntry as it's relative to its parent.
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
@@ -215,28 +240,31 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
         // Tree reconstruction logic:
         // Iterate backwards to build from leaves up to direct children of root_path.
         for child_path_ref in entry_paths_in_discovery_order.iter().rev() {
-            if let Some(parent_path) = child_path_ref.parent() {
-                // We only want to add children to parents that are *also* part of the scan
-                // (i.e., not the root_path itself, which acts as the implicit parent of top-level nodes).
-                if parent_path != root_path {
-                    if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
-                        if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
-                            parent_node_mut.children.push(child_node_owned);
-                        } else {
-                            // This case implies the parent_path was ignored or not part of the scan results.
-                            // The child_node_owned was not ignored, so it becomes a top-level node.
-                            // This can happen if a .gitignore rule ignores a directory but un-ignores a file within it.
-                            // e.g., `ignored_dir/` and `!ignored_dir/important_file.txt`
-                            // In such a scenario, important_file.txt might appear without its explicit parent
-                            // if `ignored_dir` itself is not yielded by the walker.
-                            // However, `ignore` crate usually yields directories if they contain non-ignored content.
-                            // So, we re-insert it into nodes_map to be collected as a top-level node.
-                            log::error!(
-                                "FileSystemScanner: Parent {parent_path:?} not found in map for child {child_path_ref:?}. Re-inserting child as potential top-level."
-                            );
-                            nodes_map.insert(child_path_ref.clone(), child_node_owned);
-                        }
-                    }
+            let Some(parent_path) = child_path_ref.parent() else {
+                continue;
+            };
+            // We only want to add children to parents that are *also* part of the scan
+            // (i.e., not the root_path itself, which acts as the implicit parent of top-level nodes).
+            if parent_path == root_path {
+                continue;
+            }
+
+            if let Some(child_node_owned) = nodes_map.remove(child_path_ref) {
+                if let Some(parent_node_mut) = nodes_map.get_mut(parent_path) {
+                    parent_node_mut.children.push(child_node_owned);
+                } else {
+                    // This case implies the parent_path was ignored or not part of the scan results.
+                    // The child_node_owned was not ignored, so it becomes a top-level node.
+                    // This can happen if a .gitignore rule ignores a directory but un-ignores a file within it.
+                    // e.g., `ignored_dir/` and `!ignored_dir/important_file.txt`
+                    // In such a scenario, important_file.txt might appear without its explicit parent
+                    // if `ignored_dir` itself is not yielded by the walker.
+                    // However, `ignore` crate usually yields directories if they contain non-ignored content.
+                    // So, we re-insert it into nodes_map to be collected as a top-level node.
+                    log::error!(
+                        "FileSystemScanner: Parent {parent_path:?} not found in map for child {child_path_ref:?}. Re-inserting child as potential top-level."
+                    );
+                    nodes_map.insert(child_path_ref.clone(), child_node_owned);
                 }
             }
         }
@@ -249,6 +277,28 @@ impl FileSystemScannerOperations for CoreFileSystemScanner {
             root_path
         );
         Ok(top_level_nodes)
+    }
+}
+
+fn validate_under_root(project: &ProjectContext, abs_path: &Path) -> Option<ProjectRelativePath> {
+    match ProjectRelativePath::try_from_absolute(project, abs_path) {
+        Ok(rel) => Some(rel),
+        Err(ProjectRelativePathError::OutsideRoot(p)) => {
+            log::warn!(
+                "Path {:?} is outside project root {:?}",
+                p,
+                project.root_path()
+            );
+            None
+        }
+        Err(ProjectRelativePathError::NotRelative(p)) => {
+            log::warn!(
+                "Path {:?} is not relative to project root {:?}",
+                p,
+                project.root_path()
+            );
+            None
+        }
     }
 }
 
@@ -270,6 +320,20 @@ fn sort_file_nodes_recursively(nodes: &mut [FileNode]) {
     }
 }
 
+fn is_internal_config_path(root_path: &Path, candidate_path: &Path) -> bool {
+    let config_component = OsStr::new(PROJECT_CONFIG_DIR_NAME);
+    if let Ok(relative) = candidate_path.strip_prefix(root_path) {
+        return relative
+            .components()
+            .any(|component| component.as_os_str() == config_component);
+    }
+
+    // Fallback: treat any absolute path containing the component as internal even if prefix stripping failed.
+    candidate_path
+        .components()
+        .any(|component| component.as_os_str() == config_component)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::core::file_node::FileTokenDetails;
@@ -277,7 +341,7 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
 
     fn setup_test_dir(base_path: &Path) -> io::Result<()> {
@@ -341,6 +405,13 @@ mod tests {
         // .gitignore in data/
         create_gitignore(base_path.join("data").as_path(), "sensitive/\n")?;
         Ok(())
+    }
+
+    #[test]
+    fn validate_under_root_rejects_outside_paths() {
+        let project = ProjectContext::new(PathBuf::from("/root/project"));
+        let outside = PathBuf::from("/root/other/file.txt");
+        assert!(validate_under_root(&project, &outside).is_none());
     }
 
     #[test]
@@ -671,6 +742,49 @@ mod tests {
 
         let subdir_node = nodes.iter().find(|n| n.path() == subdir_path).unwrap();
         assert!(subdir_node.is_dir());
+        Ok(())
+    }
+
+    fn tree_contains_component(nodes: &[FileNode], target: &str) -> bool {
+        for node in nodes {
+            if node.name() == target {
+                return true;
+            }
+            if tree_contains_component(&node.children, target) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn test_scan_skips_internal_sourcepacker_directory() -> Result<()> {
+        let dir = tempdir()?;
+        let internal_dir = dir.path().join(PROJECT_CONFIG_DIR_NAME);
+        fs::create_dir_all(internal_dir.join("profiles"))?;
+        fs::write(
+            internal_dir.join("profiles").join("hidden_profile.json"),
+            "{ }",
+        )?;
+        fs::write(dir.path().join("visible.txt"), "visible content")?;
+
+        let scanner = CoreFileSystemScanner::new();
+        let nodes = test_scan_with_scanner(&scanner, dir.path())?;
+
+        let top_level_names: Vec<&str> = nodes.iter().map(|n| n.name()).collect();
+        assert!(
+            top_level_names.contains(&"visible.txt"),
+            "Expected regular project files to remain in scan results."
+        );
+        assert!(
+            !top_level_names.contains(&PROJECT_CONFIG_DIR_NAME),
+            "Internal {PROJECT_CONFIG_DIR_NAME} directory should be excluded from scan results."
+        );
+        assert!(
+            !tree_contains_component(&nodes, PROJECT_CONFIG_DIR_NAME),
+            "Internal {PROJECT_CONFIG_DIR_NAME} directory should not appear in any subtree."
+        );
+
         Ok(())
     }
 }

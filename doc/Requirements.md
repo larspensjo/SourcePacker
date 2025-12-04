@@ -10,6 +10,7 @@ All requirements have a unique tag, in the form `[NameVn]`, where 'Vn' is the ve
 [FileSystemMonitorTreeViewV1] The application must be able to scan a user-specified root directory (defined by the active profile), detect file/folder additions, removals, and modifications (primarily via a manual "Refresh" action initially), and display its relevant file and folder structure in a tree view.
 [FileStateNewDetectedV2] New files detected within the monitored directory (e.g., after a "Refresh," or when no profile is loaded) that are not already part of the current profile's explicit selection state shall initially be presented in a distinct "New" state, requiring user classification.
 [FileSystemIgnoreUserPatternsV1] The file system scan must ignore all files and directories that match the exclude patterns defined in the active profile.
+[ProjectScannerIgnoreToolConfigDirV1] The file system scanner shall always ignore the project-local `.sourcepacker` directory so SourcePacker metadata never appears in scan results.
 
 ## File Selection
 The application shall support three distinct states for files and folders within the tree view regarding their inclusion in an archive:
@@ -47,7 +48,7 @@ A profile encapsulates:
 
 ## Profile Storage
 [ProfileStoreJsonFilesV1] * Profiles shall be saved as individual JSON files.
-[ProfileStoreAppdataLocationV2] * Profiles shall be stored in a local application-specific directory (e.g., `%LOCALAPPDATA%\SourcePacker\profiles\` on Windows).
+[ProfileStoreProjectLocalV3] * Profiles shall be stored under `<project_root>/.sourcepacker/profiles/`, keeping project state portable and co-located with the project.
 
 ## Profile Operations
 [ProfileOpLoadSwitchV2] * **Load/Switch:** Users can switch between different profiles (e.g., via a "Switch Profile..." menu or initial selection dialog). Loading a profile will apply its settings (root folder, persisted selections, archive path) to the view and scan its root folder.
@@ -60,10 +61,10 @@ A profile encapsulates:
 [ProfileOpDeleteExistingV1] * **Delete:** Users can delete existing profiles.
 
 ## Startup and Profile State
-[ProfileDefaultLoadRecentV2] * On application start, the most recently used profile (name stored in application configuration) shall be loaded by default.
-[ProfileDefaultNoPreviousBlankV2] * If no previous profile exists or the last used profile cannot be loaded, the application will guide the user to select an existing profile or create a new one before the main UI is fully shown. The main window remains hidden or minimally functional until a profile is active.
+[ProjectFolderSelectionOnStartupV3] * On application start, a project folder must be selected before profile operations are enabled. The application attempts to restore the last project path; if it is missing or invalid, it prompts the user to pick a project folder immediately.
+[ProfileDefaultNoPreviousBlankV3] * If no previous profile exists for the active project or the last used profile cannot be loaded, the application will guide the user to select an existing profile or create a new one before the main UI is fully shown. The main window remains hidden or minimally functional until a profile is active.
+[ProjectLocalLastProfileTrackingV1] * The name of the last active profile is stored per project in `<project_root>/.sourcepacker/last_profile.txt` and restored when that project is reopened.
 [ProfileSaveOnExplicitActionV2] * The selection state of files within a profile is persisted to its file when the user explicitly saves the profile (e.g., "Save Profile As") or when the associated archive path is set/updated (which also triggers a profile save). There is no automatic save of selection changes on application exit without an explicit save action during the session.
-[ProfileConfigSaveOnExitV2] * The name of the currently active profile is saved to the application's configuration on exit, so it can be loaded by [ProfileDefaultLoadRecentV2].
 
 ## Handling Missing Files
 [ProfileMissingFileIndicateOrRemoveV1] * When loading a profile, if a previously selected/deselected file or folder no longer exists in the monitored directory, it should be indicated in the UI (e.g., greyed out, marked with an icon) or silently removed from the profile's selection set. The profile itself should persist the path until explicitly removed by the user.
@@ -99,10 +100,12 @@ Display relevant information such as:
 
 ## Menu/Toolbar
 Provide access to functions like:
+[UiMenuOpenProjectFolderV1] * A **File → Open Folder** action to select the active project folder; choosing a new project replaces the current one and cancels any project-scoped background work.
 [UiMenuProfileManagementV2] * Profile management (Switch Profile..., Save Profile As..., New Profile flow initiated from startup dialog).
 [UiMenuSetRootFolderV2] * (Future/Part of Edit Profile) Set/Change Root Folder for existing profiles; for new profiles, this is part of the creation flow.
 [UiMenuGenerateArchiveV1] * Generate/Update Archive for the current profile.
 [UiMenuTriggerScanV1] * Manually trigger a re-scan/re-evaluation of the monitored directory ("Refresh").
+[UiMenuOpenRecentProjectsFutureV1] * (Future) Provide an **Open Recent** submenu listing recently opened project folders for quick switching.
 
 # Technical Requirements
 

@@ -16,6 +16,7 @@ pub mod node_state_applicator;
 pub mod path_utils;
 pub mod profile_runtime_data;
 pub mod profiles;
+mod project_context;
 pub mod token_progress;
 pub mod tokenizer_utils;
 
@@ -33,6 +34,10 @@ pub use profiles::{CoreProfileManager, ProfileManagerOperations};
 
 #[cfg(test)]
 pub use profiles::ProfileError;
+
+pub use project_context::ProjectContext;
+#[allow(unused_imports)]
+pub use project_context::{ProfileName, ProjectRelativePath};
 
 // Re-export archiver related items
 pub use archiver::{ArchiverOperations, CoreArchiver};

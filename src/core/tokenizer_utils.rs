@@ -74,6 +74,7 @@ impl TokenCounterOperations for CoreTikTokenCounter {
  * by counting words separated by whitespace. This is a very basic estimation.
  * TODO: Unused today, maybe allow the user to switch?
  */
+#[allow(dead_code)]
 pub struct SimpleWhitespaceTokenCounter;
 
 #[cfg(test)]
