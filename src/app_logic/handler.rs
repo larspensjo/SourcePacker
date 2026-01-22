@@ -2755,6 +2755,18 @@ impl PlatformEventHandler for MyAppLogic {
                     );
                 }
             }
+            AppEvent::ControlScrolled {
+                window_id,
+                control_id,
+                vertical_pos,
+                horizontal_pos,
+            } => {
+                log::trace!(
+                    "ControlScrolled event for control {} in window {window_id:?}, vertical: {vertical_pos}, horizontal: {horizontal_pos}",
+                    control_id.raw()
+                );
+                // Handle scroll events if needed in the future
+            }
         }
     }
 

@@ -108,6 +108,7 @@ impl FileNode {
                 true => CheckState::Checked,
                 false => CheckState::Unchecked,
             },
+            style_override: None,
         }
     }
 

@@ -151,6 +151,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     commands.push(PlatformCommand::CreateButton {
         window_id,
+        parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::SEARCH_MODE_TOGGLE_BUTTON_ID,
         text: "Name".to_string(),
     });
@@ -163,6 +164,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // Create Clear Filter button
     commands.push(PlatformCommand::CreateButton {
         window_id,
+        parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::FILTER_CLEAR_BUTTON_ID,
         text: "X".to_string(),
     });
@@ -175,6 +177,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // Create "Expand Filtered/All" Button within the Filter Panel
     commands.push(PlatformCommand::CreateButton {
         window_id,
+        parent_control_id: Some(ui_constants::FILTER_PANEL_ID),
         control_id: ui_constants::FILTER_EXPAND_BUTTON_ID,
         text: "Expand All".to_string(), // Initial text, might change based on filter state
     });
@@ -210,7 +213,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
     // Create Labels within the Status Bar Panel and apply styles
     commands.push(PlatformCommand::CreateLabel {
         window_id,
-        parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
+        parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
         control_id: ui_constants::STATUS_LABEL_GENERAL_ID,
         initial_text: "Status: Initial".to_string(),
         class: LabelClass::StatusBar, // This class is for font, colors are now from style
@@ -223,7 +226,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     commands.push(PlatformCommand::CreateLabel {
         window_id,
-        parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
+        parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
         control_id: ui_constants::STATUS_LABEL_ARCHIVE_ID,
         initial_text: "Archive: Initial".to_string(),
         class: LabelClass::StatusBar,
@@ -236,7 +239,7 @@ pub fn build_main_window_static_layout(window_id: WindowId) -> Vec<PlatformComma
 
     commands.push(PlatformCommand::CreateLabel {
         window_id,
-        parent_panel_id: ui_constants::STATUS_BAR_PANEL_ID,
+        parent_control_id: Some(ui_constants::STATUS_BAR_PANEL_ID),
         control_id: ui_constants::STATUS_LABEL_TOKENS_ID,
         initial_text: "Tokens: Initial".to_string(),
         class: LabelClass::StatusBar,
